@@ -957,8 +957,9 @@ export const BORZ_RESIDENTS = [
    * name a HOOD, which is the other half of the wardrobe and the half the
    * Order does not share: the envoy travels in the deep travelling hood and
    * the acolyte wears the Sith cut, tight to the skull with a standing collar
-   * at the nape. `hoods.mjs` measures those two apart from the Jedi cowl at
-   * 48.3 cm and 68° respectively, and the silhouette check below sees both.
+   * at the nape. `hoods.mjs`'s "the kinds read apart at a glance" already
+   * holds those two apart from the Jedi cowl, and `characters.mjs`'s "off
+   * duty is not the Order's robe repainted" sees the difference on the body.
    */
   { id: 'jedi', label: 'Jedi envoy', species: 'human', home: 30, job: 'diplomat', haunt: 22,
     hood: 'cloak',

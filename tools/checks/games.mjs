@@ -143,12 +143,158 @@ export async function run({ check, assert, near }) {
      * is the one rule a player has to be told. */
     const houseAt = G.DRUM.SEGMENTS.indexOf(null);
     assert(houseAt >= 0, 'the wheel has no house segment, so the edge is hidden in the payouts');
-    for (const kind of ['deck', 'band', 'spine']) {
-      assert(G.drumPays({ on: 40, kind, stake: 10 }, houseAt) === 0,
+    /* WITH A LEGAL `on` FOR EACH KIND. This clause used to ask all three with
+     * `on: 40`, which is a deck number and is not a band and is not a side of
+     * the spine — so two of the three were malformed bets that could not have
+     * been paid on ANY segment, and the clause was green without ever asking
+     * the question it is named after. */
+    for (const [kind, on] of [['deck', 40], ['band', 1], ['spine', 0]]) {
+      assert(G.drumLegal({ kind, on, stake: 10 }), `the check's own ${kind} bet is malformed`);
+      assert(G.drumPays({ on, kind, stake: 10 }, houseAt) === 0,
         `a ${kind} bet was paid on the house's own segment`);
     }
     return `${seen.size} segments over a month; edges deck ${(edges.deck * 100).toFixed(1)}%, `
       + `band ${(edges.band * 100).toFixed(1)}%, spine ${(edges.spine * 100).toFixed(1)}%`;
+  });
+
+  check('games: the Drum WINDOW pays what the wheel says, over 264,000 tickets', async () => {
+    /**
+     * ══ THE CHECK THAT WAS GREEN BECAUSE OF THE BUG ══════════════════════
+     *
+     * The clause above measures `drumEdge`, which builds its own well-formed
+     * bet — `{ on: 40, kind, stake }` — and asks the WHEEL what it pays. The
+     * wheel was always right. THE WINDOW WAS NOT, and no check had ever asked
+     * it: `showCasino`'s stake handler built the ticket by hand and wrote the
+     * HOUR it was betting on into `on`, the field that carries WHAT YOU
+     * BACKED. `drumPays` then compared an hour against a deck number.
+     *
+     * Measured on the shipped build, all 24 hours by all 11 rows on the board:
+     * 19 of 264 tickets still carried a bet the wheel could recognise, 2 of
+     * them paid at all, and ONE OF THOSE TWO PAID THE WRONG BET — at 23:00
+     * "the odd spine" collected 49 on a turn it had lost. Every bet kind
+     * measured a house edge of 92–100%. A room that takes money and cannot
+     * pay it back, behind a green suite.
+     *
+     * So this check drives the TICKET, not the bet: `drumTicket` is the shape
+     * the panel now sends, `drumDue` is when the panel settles it and
+     * `drumStop` is the reading it settles against — and the clause at the
+     * bottom holds `src/main.js` to calling those three, because a check that
+     * measures a path the panel does not walk is what was here before.
+     */
+    const G = await import('../../src/game/Games.js');
+    const C = await import('../../src/game/Casino.js');
+    const rows = C.drumBets();
+
+    /* ── 1. THE SWEEP. Every hour, every row: does the bet survive the
+     *      window, and is the bet that gets paid the bet that won? */
+    let legal = 0, paidCount = 0, wrong = 0, unpaid = 0, tickets = 0;
+    const notes = [];
+    for (let h = 0; h < 24; h++) {
+      for (const row of rows) {
+        tickets++;
+        /* Struck mid-hour, which is where a player standing at the window is. */
+        const t = G.drumTicket({ ...row, stake: 25 }, h + 0.4, 0);
+        if (G.drumLegal(t)) legal++;
+        const at = G.drumStop(t);
+        const got = G.drumPays(t, at);
+        /* WHAT THE WHEEL SAYS, read off the untouched row against the same
+         * stop. The ticket must agree with it in both directions. */
+        const truth = G.drumPays({ ...row, stake: 25 }, at);
+        if (got > 0) paidCount++;
+        if (got !== truth) {
+          (got > 0 ? (wrong++, notes) : (unpaid++, notes)).push(
+            `hour ${h} "${row.label}": the window paid ${got}, the wheel says ${truth}`);
+        }
+      }
+    }
+    assert(legal === tickets,
+      `${tickets - legal} of ${tickets} tickets carry an \`on\` the wheel cannot read — the field that `
+      + 'says WHAT YOU BACKED has been overwritten with something else, most likely the hour');
+    assert(wrong === 0 && unpaid === 0,
+      `${wrong} tickets paid a bet that lost and ${unpaid} winners went unpaid, of ${tickets}:\n      `
+      + notes.slice(0, 3).join('\n      '));
+    assert(paidCount > tickets * 0.15 && paidCount < tickets * 0.4,
+      `${paidCount} of ${tickets} tickets paid — the board's rows win 15% to 45% each, so a sweep `
+      + 'landing outside a fifth to two-fifths means the window is not settling against this wheel');
+
+    /* ── 2. THE TURN IT RIDES IS NOT THE TURN IT WAS SOLD ON, and it cannot
+     *      settle before the clock gets there. The shipped panel compared
+     *      `floor(hour) + 1` against `floor(hour)` and so resolved the bet on
+     *      the very click that struck it — against a stop `drumAt` had already
+     *      published, which is the one thing this game is written not to be. */
+    const t = G.drumTicket({ ...rows[0], stake: 25 }, 21.66, 0);
+    assert(!G.drumDue(t, 21.66, 0), 'a ticket settled on the click that struck it');
+    assert(!G.drumDue(t, 21.99, 0), 'a ticket struck at 21:40 settled before 22:00');
+    assert(G.drumDue(t, 22.0, 0) && G.drumDue(t, 23.5, 0), 'the 22:00 turn came and the ticket did not settle');
+    assert(G.drumClockOf(t.turn).hour === 22, `a bet struck at 21:40 rides the ${G.drumClockOf(t.turn).hour}:00 turn`);
+    /* AND MIDNIGHT, which is why the turn is counted from the start of time
+     * rather than wrapped into a clock face: 23 + 1 must be tomorrow's 00:00
+     * and not a number the comparison reads as already gone. */
+    const late = G.drumTicket({ ...rows[0], stake: 25 }, 23.7, 4);
+    assert(!G.drumDue(late, 23.9, 4), 'a ticket struck at 23:42 settled the same night');
+    assert(G.drumDue(late, 0.1, 5) && G.drumClockOf(late.turn).day === 5 && G.drumClockOf(late.turn).hour === 0,
+      'a ticket struck at 23:42 does not ride tomorrow morning');
+
+    /* ── 3. THE EDGE ALONG THAT PATH, MONTE-CARLO'D. 24,000 tickets a row
+     *      over eleven rows is 264,000, and the band is stated: the payouts
+     *      are the fair price times about 0.885, so every row must land near
+     *      an eighth and none of them may reach a fifth. */
+    let worst = null, best = null, staked = 0, back = 0;
+    for (const row of rows) {
+      const e = G.drumTicketEdge(row, 24000);
+      if (worst === null || e > worst.e) worst = { e, label: row.label };
+      if (best === null || e < best.e) best = { e, label: row.label };
+      staked += 1; back += 1 - e;
+      assert(e > 0.04,
+        `"${row.label}" returns ${((1 - e) * 100).toFixed(1)}% through the window — an edge of `
+        + `${(e * 100).toFixed(2)}% is not the ${((1 - 0.885) * 100).toFixed(0)}% the payout table was priced at, `
+        + 'and at or below zero the player prints money');
+      assert(e < 0.20,
+        `"${row.label}" takes ${(e * 100).toFixed(1)}% of every credit through the window — `
+        + 'past a fifth the room is a coin dropped down a grating');
+    }
+    /* AND PER KIND, over 240,000 tickets each, which is the number that
+     * settles whether a two-point gap is the wheel or the sample. */
+    const byKind = {};
+    for (const [kind, on] of [['deck', 40], ['band', 1], ['spine', 0]]) {
+      const e = G.drumTicketEdge({ kind, on }, 240000);
+      byKind[kind] = e;
+      assert(e > 0.04 && e < 0.20,
+        `the ${kind} bet's window edge is ${(e * 100).toFixed(2)}% over 240,000 tickets`);
+      /* AND THE WINDOW MUST AGREE WITH THE WHEEL. `drumEdge` measures the
+       * wheel and `drumTicketEdge` the room; they were 90 points apart. */
+      const wheel = G.drumEdge(kind, on, 24000);
+      assert(Math.abs(e - wheel) < 0.03,
+        `the ${kind} bet: the wheel keeps ${(wheel * 100).toFixed(2)}% and the window keeps `
+        + `${(e * 100).toFixed(2)}% — the room is not paying what the wheel says`);
+    }
+
+    /* ── 4. AND THE PANEL WALKS THIS PATH. `src/main.js` cannot be imported
+     *      under Node, so it is read — the same instrument `tote.mjs` uses on
+     *      its bell. A measurement of functions the room does not call is
+     *      exactly the check this one replaces. */
+    const { readFile } = await import('node:fs/promises');
+    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    assert(/from '\.\/game\/Games\.js'/.test(main), 'main.js does not import the rules the room plays by');
+    assert(/casino\.ticket = drumTicket\(/.test(main),
+      'the Wheelhouse panel still builds the Drum\'s ticket by hand — that is where the bet was destroyed');
+    assert(!/on: \(Math\.floor\(hour\)/.test(main),
+      'the panel writes the hour into `on`, which is the field that says WHAT YOU BACKED');
+    assert(/drumDue\(casino\.ticket/.test(main) && /drumStop\(casino\.ticket\)/.test(main),
+      'the panel settles the Drum against something other than the turn the ticket rides');
+    /* AND THE WHEEL TURNS WHILE THE ROOM IS OPEN. `Screens.take` pauses the
+     * world, so a panel that does not wind `tickStationClock` itself stands on
+     * a stopped clock — and a ticket riding the next turn can never be
+     * reached. The tote's pane had this and the casino's did not. */
+    const bell = (main.match(/function casinoBeat\(\)[\s\S]*?\n}/) || [''])[0];
+    assert(/tickStationClock\(/.test(bell),
+      'the Wheelhouse panel does not wind the station clock — with the world paused behind the card '
+      + 'the hour never moves, so a bet on the next turn is a bet on an hour that never comes');
+
+    return `${tickets} tickets swept, all legal, ${paidCount} paid and every one of them the winning bet; `
+      + `window edge ${(best.e * 100).toFixed(1)}% (${best.label}) to ${(worst.e * 100).toFixed(1)}% (${worst.label}), `
+      + `deck ${(byKind.deck * 100).toFixed(2)}% band ${(byKind.band * 100).toFixed(2)}% `
+      + `spine ${(byKind.spine * 100).toFixed(2)}% over 240,000 each`;
   });
 
   check('games: they are pure, and a table is not a wallet', async () => {

@@ -48,6 +48,22 @@ import {
 } from './StationCast.js';
 import { barman } from './Bars.js';
 import { companyOf } from './StationBoards.js';
+/**
+ * ══ THE HANDLERS, AND WHY THIS IMPORT POINTS BACKWARDS ════════════════════
+ *
+ * `Pits.js` imports `headcount` and `occupant` from this file, so this is a
+ * cycle — and it is the right way round anyway: `isHandler` is *"a pure
+ * function of the resident"* and that rule belongs to the pit, which is the
+ * only thing that cares who fights. What this file needs is to READ it, once
+ * per body, so the person who walks the concourse with an animal at heel and
+ * the person the pit fields that night cannot be two different rolls.
+ *
+ * ESM initialises function declarations at instantiation and both of these are
+ * declarations, so whichever module is entered first the binding is there by
+ * the time anything calls it. Nothing at module scope in either file calls
+ * across; `station.mjs` imports both orders.
+ */
+import { handlerOf, handlersOn } from './Pits.js';
 /* THE ONE EXEMPTION FROM THE DAILY REROLL — see `occupant`. `Quests.js` holds
  * the ledger and answers in SEEDS, so this file still decides who stands where
  * and `StationCast.resident` still decides what a person looks like. */
@@ -164,8 +180,14 @@ export function headcount(place, hour) {
  * Where in a place a body stands. Deterministic on the slot index, so a
  * resident who is despawned and respawned comes back where they were rather
  * than teleporting across the room as you walk past its door.
+ *
+ * EXPORTED FOR THE CHECK THAT COUNTS WHAT THE WALKWAYS DECLARE. `station.mjs`
+ * asks how many of a deck's walk slots fall inside `LIVE_RADIUS` of where the
+ * player is standing, and that is exactly the question `reseat` asks of this
+ * function — a check that re-derived the scatter would be measuring its own
+ * copy of it.
  */
-function slotIn(place, i, out) {
+export function slotIn(place, i, out) {
   const u = h2(place.id * 1000, i * 7 + 1) - 0.5;
   const v = h2(place.id * 1000 + 3, i * 7 + 2) - 0.5;
   const lx = u * place.w * 0.72, lz = v * place.d * 0.72;
@@ -198,16 +220,52 @@ function slotIn(place, i, out) {
  * elsewhere, because §3.4 says a shift change floods the ring. Now there is
  * something for it to flood.
  *
- * ── AND THEY STAND ────────────────────────────────────────────────────────
+ * ── AND THEY STAND, EXCEPT THE ONES ON THE OPEN STRETCHES ────────────────
  *
- * They are seated along the walk line, facing along it, at the places a person
- * stops: at a counter, on a bench, under a gantry, at the rail of an overlook,
- * waiting at a crossing. They do not yet WALK — locomotion belongs to `Enemy`'s
- * brain and there is no route hook on it to drive; a body here has
- * `stationWay` set so the hook, when it exists, knows which bodies are the
- * ones in transit. What this fixes is the corridor being empty, not the
- * corridor being still.
+ * Most of them are seated at the places a person STOPS: at a counter, on a
+ * bench, under a gantry, at the rail of an overlook, waiting at a crossing.
+ * The `walk` stretches are the other thing — people in transit — and those
+ * are handed to `planRoute` below, which gives each of them somewhere to be
+ * going.
  */
+
+/**
+ * ══ HOW MANY OPEN STRETCHES, AND HOW WIDE ═════════════════════════════════
+ *
+ * MEASURED, and it is why these three numbers moved. Eight stretches at 45°
+ * is a 14 m blob of people every 67 m of ring, and the pool only ever makes a
+ * body real inside `LIVE_RADIUS` — 40 m, which is ±27° of a 537 m ring. So
+ * wherever the player stood, ONE stretch was in range and four of the deck's
+ * forty-four declared walk slots were ever alive at once. The ring read empty
+ * because it was empty everywhere except one 14 m patch you were probably not
+ * standing in.
+ *
+ * Twelve stretches at 30°, each 58 m of arc wide, is the fix and it is one
+ * fact: `slotIn` scatters a slot across `0.72 × w`, which is 42 m against a
+ * 45 m spacing, so the ring is populated CONTINUOUSLY rather than in blobs.
+ * The bearings are 15° + 30°k, which misses all four junctions (0/90/180/270)
+ * — a crossing is its own pseudo-place and already has people waiting at it.
+ *
+ * WHAT IT COSTS is bounded by the pool and not by this table: `reseat` seats
+ * nearest-first up to `POOL[quality]`, so more declared heads on the ring means
+ * the budget is spent on the corridor the player is standing in rather than on
+ * rooms forty metres away. The frame cost is the budget's, unchanged.
+ */
+const RING_WALKS = 12;
+const RING_WALK_W = 58;
+const WALK_HEADS = 6;
+
+/**
+ * A SPINE STRETCH IS NARROW AND LONG, and the width is load-bearing rather
+ * than cosmetic. `slotIn`'s scatter is TANGENTIAL in `w`, and a spine walker's
+ * first leg is a radial along ITS OWN bearing — so a seat 2 m off the spine's
+ * centreline at r = 53 is 3.2 m off it by the time the walk reaches the ring
+ * at r = 85.5, and the spine is 7 m wide. Four metres of scatter keeps the
+ * worst case inside the corridor at both ends; `spineAt` holds the same bound
+ * from the other side.
+ */
+const SPINE_WALK_W = 4;
+const SPINE_WALK_D = 46;
 
 /** How many people are found at each kind of fixture at its busy hour. */
 const WAY_HEADS = {
@@ -243,20 +301,282 @@ export function wayPlacesOn(deck) {
   for (const j of junctionsOn(deck)) put(DRUM.ringR, j.at, 11, 7, 6, 14, 'junction');
   /* EVERY FIXTURE — at the counter, on the bench, at the rail. */
   for (const w of waysOn(deck)) {
-    const r = w.band === 'spine' ? w.r : w.band === 'rim' ? DRUM.balcony + 2 : DRUM.ringR;
+    /**
+     * ── AND THE RIM'S PEOPLE STAND ON THE RIM, NOT BEHIND IT ────────────
+     *
+     * This read `DRUM.balcony + 2`, which is 2 m OUTBOARD of the lip — and
+     * `rIn` of every `inner` place is `DRUM.balcony` exactly, so the people
+     * at every overlook, shrine and stairhead on the drum were standing two
+     * metres inside the wall of whatever room was at that bearing. The
+     * fixture itself is built at `DRUM.balcony` (`StationKit`:3125, the rail
+     * line); the people belong on the VOID side of it, which is where you
+     * stand to look over a rail.
+     */
+    const r = w.band === 'spine' ? w.r : w.band === 'rim' ? DRUM.balcony - 1.5 : DRUM.ringR;
     if (w.band === 'spine' && deck === 40 && w.at === 0) continue;
     put(r, w.at, 6, 5, WAY_HEADS[w.kind] ?? 2, w.band === 'rim' ? 18 : 13, w.kind);
   }
-  /* AND THE OPEN WALK ITSELF, between them: eight stretches of ring and the
-   * middle of every spine, so the deck has people in transit and not only
-   * people stopped. */
-  for (let i = 0; i < 8; i++) put(DRUM.ringR, 22.5 + i * 45, 14, 6, 4, 14, 'walk');
+  /* AND THE OPEN WALK ITSELF, between them: twelve stretches of ring and the
+   * length of every spine, so the deck has people in transit and not only
+   * people stopped. See `RING_WALKS` for the three numbers. */
+  for (let i = 0; i < RING_WALKS; i++) {
+    put(DRUM.ringR, 15 + i * (360 / RING_WALKS), RING_WALK_W, 6, WALK_HEADS, 14, 'walk');
+  }
   for (const deg of DRUM.spines) {
+    /* Deck 40's fourth spine IS #9 The Concourse — a hall with its own census,
+     * not a corridor with people passing through it. It is still ROUTED
+     * through (see `spinesOn`); what it does not get is a stretch of its own. */
     if (deck === 40 && deg === 0) continue;
-    put((DRUM.balcony + DRUM.roomR) / 2, deg, 5, 16, 4, 14, 'walk');
+    put((DRUM.balcony + DRUM.roomR) / 2, deg, SPINE_WALK_W, SPINE_WALK_D, WALK_HEADS, 14, 'walk');
   }
   _ways.set(deck, out);
   return out;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  WHERE A WALKER IS GOING                                                   */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ THE DRUM HAS THREE CORRIDORS AND THAT IS THE WHOLE NAVIGATION ═════════
+ *
+ * §2.5: *"places whose organization and arragement make sense in relation to
+ * each other"*, and the design note under it — *"People are going somewhere …
+ * along desire lines between them."*
+ *
+ * There is no nav mesh here and there does not need to be one. §3.1 builds the
+ * drum out of exactly three walkable surfaces, and every one of them is a
+ * shape you can stay inside by arithmetic:
+ *
+ *   THE RING     a clear annulus at `ringR`, the full turn, every deck.
+ *   THE BALCONY  a clear annulus inside the lip at `balcony`, round the void.
+ *   THE SPINES   four radial corridors joining the two, at 0/90/180/270.
+ *
+ * So a route is a POLYLINE IN POLAR, and every leg is one of two kinds: an ARC
+ * at a fixed radius (only ever `RING_WALK` or `BALC_WALK`, both clear all the
+ * way round) or a RADIAL at a fixed bearing (only ever a spine's, or the last
+ * two metres from a corridor to a door, which stays inside the corridor's own
+ * band). Nothing else is ever emitted, so "the walker did not go through a
+ * wall" is a property of the ROUTE rather than something to check for at
+ * runtime and correct.
+ *
+ * ── AND THE TRAP THIS FILE ALREADY FELL INTO ONCE ────────────────────────
+ *
+ * The previous walker advanced a BEARING at a fixed radius and its own comment
+ * said "no pathfinding". On the ring that is safe; on a spine it is a body
+ * walking a circle through the room footprints the spine runs between — 53 of
+ * 240 samples inside #13 The Databank. The guard written to catch it asserted
+ * `|hypot − wayR| ≤ 0.05`, which is precisely the defect: staying exactly on
+ * that circle is what carried them through the rooms.
+ *
+ * The lesson is in the leg kinds above and not in a bigger tolerance: A RADIAL
+ * MOVE MAY ONLY HAPPEN ON A BEARING THAT IS A CORRIDOR, and `planRoute` is the
+ * only thing that emits one.
+ */
+
+/** The two annuli a walk turns on. The balcony walk is INSIDE the lip, which
+ *  is the side of it you can stand on — `rIn` of every `inner` place is the
+ *  lip itself. */
+const RING_WALK = DRUM.ringR;
+const BALC_WALK = DRUM.balcony - 2;
+
+/**
+ * How far off a door a walker stops. Outward on the ring, inward on the
+ * balcony — either way OUTSIDE the room's own footprint, which is what makes
+ * an arrival an arrival and not the trespass `station.mjs` is watching for:
+ * `layout()` puts an outer door at `roomR − 0.4`, four tenths INSIDE the room
+ * it belongs to.
+ */
+const DOOR_STAND = 1.4;
+
+/** Where a walker stands when it has arrived at a place on each corridor. */
+const STAND_R = {
+  ring: DRUM.roomR + DOOR_STAND,
+  balcony: DRUM.balcony - DOOR_STAND,
+};
+
+/** Signed shortest way round, in radians. */
+function wrapPi(a) { return ((a + Math.PI * 3) % (Math.PI * 2)) - Math.PI; }
+
+/** The four spines of a deck, in radians. */
+const _spines = new Map();
+function spinesOn(deck) {
+  let hit = _spines.get(deck);
+  if (!hit) {
+    hit = DRUM.spines.map((d) => d * Math.PI / 180);
+    _spines.set(deck, hit);
+  }
+  return hit;
+}
+
+/**
+ * Is this bearing ON a spine — near enough that a radial walk along it stays
+ * inside the corridor for its whole length?
+ *
+ * The bound is METRES AT THE WIDE END. A radial line at a bearing `d` off a
+ * spine is `d × r` from its centre, which grows with r, so the worst case is
+ * at the ring mouth: `d × RING_WALK ≤ spineW/2 − 0.5`. That is what sizes
+ * `SPINE_WALK_W` from the other side.
+ */
+function spineAt(deck, a) {
+  const lim = (DRUM.spineW / 2 - 0.5) / RING_WALK;
+  for (const s of spinesOn(deck)) if (Math.abs(wrapPi(a - s)) <= lim) return s;
+  return null;
+}
+
+/** Which spine makes the shortest crossing between two bearings. */
+function bestSpine(deck, a0, a1) {
+  let best = null, cost = Infinity;
+  for (const s of spinesOn(deck)) {
+    const c = Math.abs(wrapPi(s - a0)) + Math.abs(wrapPi(a1 - s));
+    if (c < cost) { cost = c; best = s; }
+  }
+  return best ?? 0;
+}
+
+/* A leg is `{ arc, r|a, from, to, len }` and nothing else. Pushed only when it
+ * is worth walking: a zero-length leg would divide by its own length. */
+function arcLeg(legs, r, a0, a1) {
+  const d = wrapPi(a1 - a0);
+  if (Math.abs(d) * r < 0.05) return a0;
+  legs.push({ arc: true, r, from: a0, to: a0 + d, len: Math.abs(d) * r });
+  return a0 + d;
+}
+function radLeg(legs, a, r0, r1) {
+  if (Math.abs(r1 - r0) < 0.05) return r0;
+  legs.push({ arc: false, a, from: r0, to: r1, len: Math.abs(r1 - r0) });
+  return r1;
+}
+
+/**
+ * THE ROUTE FROM WHERE SOMEBODY IS STANDING TO THE DOOR THEY ARE GOING TO.
+ *
+ * Five legs at the very worst — out to the corridor, round to a spine, along
+ * the spine, round to the bearing, in to the door — and two in the common
+ * case of two rooms on the same ring.
+ */
+function planRoute(deck, r0, a0, dest, legs) {
+  legs.length = 0;
+  const destLvl = STAND_R[dest.on] === STAND_R.ring ? RING_WALK : BALC_WALK;
+  /* STANDING ON A SPINE IS ITSELF A CROSSING. A walker seated on a spine
+   * stretch is mid-band, so "which annulus is it on" has no answer — but its
+   * bearing IS a corridor, so it can simply walk to whichever annulus its
+   * destination is on. Without this a spine walker bound for the ring walked
+   * INWARD to the balcony first and then back out along the same spine. */
+  const mine = spineAt(deck, a0);
+  const lvl0 = mine !== null ? destLvl
+    : (r0 > (BALC_WALK + RING_WALK) / 2 ? RING_WALK : BALC_WALK);
+  let a = a0;
+  radLeg(legs, a0, r0, lvl0);
+  if (lvl0 !== destLvl) {
+    const sp = bestSpine(deck, a0, dest.a);
+    a = arcLeg(legs, lvl0, a, sp);
+    radLeg(legs, sp, lvl0, destLvl);
+    a = arcLeg(legs, destLvl, a, dest.a);
+  } else {
+    a = arcLeg(legs, destLvl, a, dest.a);
+  }
+  radLeg(legs, dest.a, destLvl, dest.r);
+  return legs;
+}
+
+/**
+ * ══ WHERE THERE IS A REASON TO GO ═════════════════════════════════════════
+ *
+ * A destination is a PLACE with a door on one of the two corridors — which is
+ * to say every room in the gazetteer that a person walks into. The bands that
+ * are not here are the ones you do not walk to across a deck: the tram
+ * platforms and the docking throat are through the skin, the atrium bridge is
+ * over the void, the Concourse's own alcoves open off a hall rather than off
+ * the ring, and the hangar's two decks are in another frame entirely.
+ */
+const _dests = new Map();
+function destsOn(deck) {
+  const hit = _dests.get(deck);
+  if (hit) return hit;
+  const out = [];
+  for (const p of placesOn(deck)) {
+    if (!p.heads || !p.door) continue;
+    if (p.band !== 'outer' && p.band !== 'inner' && p.band !== 'radial') continue;
+    const dr = Math.hypot(p.door[0], p.door[1]);
+    const on = dr > DRUM.roomR - 2 ? 'ring' : dr < DRUM.balcony + 2 ? 'balcony' : null;
+    if (!on) continue;
+    out.push({
+      p, id: p.id, on,
+      a: Math.atan2(p.door[0], p.door[1]),
+      r: STAND_R[on],
+      w: 0,
+    });
+  }
+  _dests.set(deck, out);
+  return out;
+}
+
+/**
+ * HOW FAR A WALK MAY BE. The ring is 537 m round and a walk is 1.35 m/s, so a
+ * destination on the far side is six and a half minutes away — which is a
+ * walker who never arrives anywhere the player can see it arrive. Between
+ * fifteen and a hundred and thirty metres is thirty seconds to a minute and a
+ * half, which is a crossing rather than an errand or a hike.
+ */
+const TRIP = { near: 15, far: 130 };
+
+/**
+ * WHICH PLACE, AND THE WEIGHT IS THE DESIRE LINE.
+ *
+ * `headcount` at this hour is already the gazetteer's answer to how busy a
+ * room is, curve, shift change, meals and all — so weighting by it means the
+ * concourse pulls at 06/14/22, the food court pulls at 07/13/19 and the
+ * cantina pulls at 21, with no second table to keep true. That is the whole of
+ * "desire lines between rooms that have a reason to be connected": people walk
+ * towards where people are, at the hour they are there.
+ *
+ * SEEDED ON THE SLOT AND THE TRIP NUMBER. No `Math.random` — the same walker
+ * makes the same journeys in the same order on every run of the same day.
+ */
+function pickDest(deck, hour, body) {
+  const list = destsOn(deck);
+  if (!list.length) return null;
+  const r0 = body.wayR, a0 = body.wayAngle;
+  let total = 0;
+  for (const d of list) {
+    const far = Math.abs(wrapPi(d.a - a0)) * RING_WALK + Math.abs(d.r - r0);
+    d.w = (far >= TRIP.near && far <= TRIP.far && d.id !== body.wayTo)
+      ? headcount(d.p, hour) + 1 : 0;
+    total += d.w;
+  }
+  /* NOTHING IN RANGE — take the nearest thing that is not where we are. A
+   * walker with no destination is the defect this whole section is about, so
+   * the fallback is another destination and never `null`. */
+  if (total <= 0) {
+    let best = null, cost = Infinity;
+    for (const d of list) {
+      if (d.id === body.wayTo) continue;
+      const far = Math.abs(wrapPi(d.a - a0)) * RING_WALK + Math.abs(d.r - r0);
+      if (far > 1 && far < cost) { cost = far; best = d; }
+    }
+    return best;
+  }
+  let pick = h2(body.waySeedA, body.waySeedB + body.wayTrips) * total;
+  for (const d of list) { pick -= d.w; if (pick <= 0) return d; }
+  return list[list.length - 1];
+}
+
+/** How long somebody stands at the door they arrived at before setting off
+ *  again. Long enough to read as an arrival, short enough that the corridor
+ *  does not drain into the doorways over a minute. */
+const DWELL = { min: 3, span: 9 };
+
+/** Give a walker somewhere to be going, and the polyline to get there. */
+function setOut(deck, hour, body) {
+  const dest = pickDest(deck, hour, body);
+  if (!dest) { body.wayDwell = DWELL.min; return false; }
+  body.wayLegs = planRoute(deck, body.wayR, body.wayAngle, dest, []);
+  body.wayTo = dest.id;
+  body.wayAt = 0;
+  body.wayT = 0;
+  if (!body.wayLegs.length) { body.wayDwell = DWELL.min; return false; }
+  return true;
 }
 
 /**
@@ -583,9 +903,53 @@ export function dressStationLife(world, st) {
     /** slot key → the live Enemy standing in it. */
     live: new Map(),
     budget: POOL[quality] ?? POOL.high,
+    /** Which deck this is, so `stepWalkers` can ask for its corridors and its
+     *  destinations without going back through `st` every frame. */
+    deck: st.deck,
     /** The walkways of this deck, as pseudo-places the pool can seat into.
      * See `wayPlacesOn`: before this the corridors held nobody at all. */
     ways: wayPlacesOn(st.deck),
+    /**
+     * ══ WHICH ROOMS ON THIS DECK HOLD SOMEBODY WITH AN ANIMAL ═════════════
+     *
+     * `handlersOn().where` — the place id a handler is standing in — is a
+     * field the pit's roster has always carried and nothing has ever read. It
+     * gets its reader here, and the reader is the reason the field is worth
+     * having: the pool seats nearest-first up to a budget, so on a deck with
+     * three hundred census slots and eleven handlers the one room with an
+     * animal in it is usually just outside the radius. Promoted, it is not.
+     *
+     * A SET OF PLACE IDS AND NOT A SET OF PEOPLE, because that is exactly what
+     * `where` answers. `spawnResident` still asks `handlerOf` about the
+     * resident it actually drew — this only decides what order the pool is
+     * spent in, so a promotion that is wrong costs an ordering and never a
+     * body that is not there.
+     *
+     * REBUILT ON THE HOUR AND NOT PER FRAME. `handlersOn` walks the whole
+     * gazetteer through `occupant`, which is milliseconds; the hour turns once
+     * every two real minutes. See `reseat`.
+     */
+    handlerRooms: new Set(), rosterHour: null,
+    /**
+     * ══ AND THE ANIMALS ARE FIELDED A FRAME AT A TIME ═════════════════════
+     *
+     * Two reasons, and the first is not a preference.
+     *
+     * `Companions.js` REACHES THIS FILE BACK ROUND A CYCLE. It imports
+     * `Command.js` and `Player.js`, which reach `Levels.js`, which builds the
+     * station level — and a static import here put `StationLife` on that
+     * circle. Measured: `ReferenceError: Cannot access 'STATION_LEVEL' before
+     * initialization` at `Levels.js:5053`, on any process that entered the
+     * graph through this file. A dynamic import is not a workaround for that;
+     * it is the correct shape, because what this file needs from the companion
+     * machinery is a RUNTIME call and not a link-time symbol.
+     *
+     * AND A COMPANION IS A BODY. `fieldCompanion` builds a rig, a mesh chain
+     * and a physics capsule exactly as `spawnResident` does, and `reseat`
+     * already caps itself at one of those a frame for the reason written on
+     * the cap. Draining one animal a frame puts the two under the same rule.
+     */
+    cmp: null, wantPets: [],
     reseatIn: 0,
     /** True until the first re-seat has run — see `dressStationLife`. */
     priming: true,
@@ -624,6 +988,9 @@ export function dressStationLife(world, st) {
     spawned: 0, despawned: 0,
   };
   world._stationLife = life;
+  /* The companion machinery, fetched off the import cycle. Resolved long
+   * before the first handler is drawn — the prime takes seven frames. */
+  import('./Companions.js').then((m) => { life.cmp = m; }).catch(() => {});
   /**
    * ══ FRIENDLY FIRE IS ON, AND IT IS THE WHOLE SANDBOX ═══════════════════
    *
@@ -716,6 +1083,18 @@ function archetypeOf(r) { return r.archetype || `res_${r.species}`; }
  */
 function reseat(world, st, life, px, pz) {
   const hour = st.hour;
+  /* THE HANDLER ROOMS OF THIS DECK, once an hour. See `handlerRooms`. */
+  const stamp = `${Math.floor(hour)}:${st.day ?? 0}`;
+  if (life.rosterHour !== stamp) {
+    life.rosterHour = stamp;
+    life.handlerRooms.clear();
+    try {
+      for (const h of handlersOn(hour, st.day ?? 0)) {
+        if (PLACE.get(h.where)?.deck === st.deck) life.handlerRooms.add(h.where);
+      }
+    } catch {}
+    life.rosterBuilt = true;
+  }
   const want = _want;
   want.length = 0;
   const consider = (p) => {
@@ -747,7 +1126,14 @@ function reseat(world, st, life, px, pz) {
       const dx = _v.x - px, dz = _v.z - pz;
       const d2 = dx * dx + dz * dz;
       if (d2 > DROP_RADIUS * DROP_RADIUS) continue;
-      want.push({ key: `${p.id}:${i}`, place: p, i, d2 });
+      /* A ROOM WITH AN ANIMAL IN IT IS SEATED AS THOUGH IT WERE NEARER. The
+       * sort below is nearest-first and the budget is spent down it, so this
+       * is the whole of the promotion: `handlerRooms` moves a place up the
+       * queue and `LIVE_RADIUS` below still decides whether anybody in it is
+       * built at all. Sixteen metres, so it beats a room across a hall and
+       * never a body the player is standing next to. */
+      const near = life.handlerRooms.has(p.id) ? Math.max(0, Math.sqrt(d2) - 16) ** 2 : d2;
+      want.push({ key: `${p.id}:${i}`, place: p, i, d2, near });
     }
   };
   for (const rec of st.places.values()) {
@@ -786,10 +1172,36 @@ function reseat(world, st, life, px, pz) {
     keep.add(w.key);
     n++;
     if (life.live.has(w.key)) continue;
-    if (made >= cap) continue;
-    /* Only inside the live radius does a body actually appear — the wider
-     * DROP_RADIUS above is the hysteresis, not the spawn line. */
+    /**
+     * Only inside the live radius does a body actually appear — the wider
+     * DROP_RADIUS above is the hysteresis, not the spawn line.
+     *
+     * ── AND IT IS TESTED BEFORE THE CAP, WHICH IT WAS NOT ────────────────
+     *
+     * These two lines were the other way round, and the order decided how
+     * many people the station held. `n` is what the budget is spent down, and
+     * a slot outside the live radius is supposed to give its count back — but
+     * with the cap tested first, every slot past the cap kept its `n++` and
+     * its place in `keep` whether or not it was anywhere near the player. `n`
+     * then reached `life.budget` on slots that could never have been built,
+     * the loop broke, and the pool stopped filling.
+     *
+     * It was invisible while the FIRST re-seat was uncapped, because `made`
+     * never reached `life.budget` and the radius test therefore always ran.
+     * The trickle that runs during play was carrying it the whole time: with
+     * `cap` of 1, every re-seat after the first put one body in the room and
+     * then padded `n` to thirty with slots on the far side of the drum.
+     * Measured on deck 40 the moment the prime was sliced — the pool settled
+     * at 8 residents where an uncapped prime seats 25, and 40 frames of walk
+     * added one.
+     *
+     * The radius has nothing to do with the cap: a slot too far to build is
+     * not a slot the budget was going to be spent on, whether or not there is
+     * any budget left. So it is asked first, and `n` means the same thing at
+     * every cap.
+     */
     if (w.d2 > LIVE_RADIUS * LIVE_RADIUS) { keep.delete(w.key); n--; continue; }
+    if (made >= cap) continue;
     /* `process?.cpuUsage` still THROWS on an undeclared identifier — optional
      * chaining guards a null, not a missing binding — so a browser met
      * `ReferenceError: process is not defined` on the first re-seat and the
@@ -803,6 +1215,25 @@ function reseat(world, st, life, px, pz) {
   }
   /* And put back everything that fell out of it. */
   for (const [key, body] of life.live) {
+    /**
+     * A WALKER IS CULLED ON WHERE IT IS, NOT ON WHERE IT STARTED.
+     *
+     * Every other body in the pool stands in its slot for ever, so the slot's
+     * distance IS the body's. A walker's is not: `keep` is built from
+     * `slotIn`, which is the doorway it set off from, so a body that walked
+     * a hundred and fifty metres down the ring stayed real on the strength of
+     * a stretch the player happens to be standing on. Measured before this:
+     * bodies live at 190 m.
+     */
+    if (body.wayR && !body.__stationTouched && body.alive !== false) {
+      const dx = body.position.x - px, dz = body.position.z - pz;
+      if (dx * dx + dz * dz > WALK_DROP * WALK_DROP) {
+        removeBody(world, body);
+        life.live.delete(key);
+        life.despawned++;
+        continue;
+      }
+    }
     if (keep.has(key)) continue;
     /* A body the player has HURT is never despawned — it is a corpse, a
      * ragdoll or a witness, and making one vanish because you walked away is
@@ -815,7 +1246,7 @@ function reseat(world, st, life, px, pz) {
 }
 const _want = [];
 const _keep = new Set();
-const byNear = (a, b) => a.d2 - b.d2;
+const byNear = (a, b) => a.near - b.near;
 
 /** One resident, made real. */
 function spawnResident(world, st, place, i) {
@@ -887,6 +1318,10 @@ function spawnResident(world, st, place, i) {
   body.stationSpecies = r.species;
   body.stationFaction = r.faction;
   body.stationPlace = place.id;
+  /* WHICH SLOT, so a check can ask `occupant` the same question this line
+   * asked and get the same person back. The place id alone cannot: a room
+   * holds a dozen and only one of them has a dog. */
+  body.stationSlot = i;
   /* A body on a walkway rather than in a room. `stepWalkers` below is the
    * route this was set for; `wayPlacesOn` says why the corridors have to be
    * tellable from the rooms in the first place. */
@@ -909,36 +1344,61 @@ function spawnResident(world, st, place, i) {
      * time you look.
      */
     if (place.way === 'walk') {
+      /**
+       * ── AND A WALKER IS GIVEN SOMEWHERE TO BE GOING ─────────────────────
+       *
+       * The route itself is `planRoute`'s and the destination is `pickDest`'s;
+       * what is set here is the person. `wayPace` is a MULTIPLIER now rather
+       * than a speed, because the speed is `WALK_PACE` and one number should
+       * be in one place.
+       *
+       * THE FIRST TRIP IS PLANNED HERE and not on the first step, so a body
+       * on an open stretch is never a body with nowhere to go — not even for
+       * the one frame between the spawn and the step. `setOut` is a pass over
+       * forty destinations and a five-leg polyline; the body it is hung on
+       * cost a rig and sixty meshes to build.
+       */
       body.wayAngle = Math.atan2(_v.x, _v.z);
       body.wayR = Math.hypot(_v.x, _v.z);
-      body.wayDir = ((place.id + i) % 2) ? 1 : -1;
-      body.wayPace = WALK_PACE * (0.86 + ((place.id * 7 + i * 13) % 29) / 100);
-      /**
-       * ── WHICH CORRIDOR HE IS IN, BECAUSE THEY ARE NOT THE SAME SHAPE ────
-       *
-       * The first cut walked every `walk` slot round a circle at its own
-       * radius, and that is only safe on the RING. The eight ring stretches
-       * sit at `ringR`, which is a clear annulus all the way round — but the
-       * four SPINE stretches sit at `(balcony + roomR) / 2`, mid-band, and a
-       * fifth of that circle is inside a room footprint. Measured live over
-       * 240 samples on deck 40: a walker was inside #13 The Databank on 53 of
-       * them, #9 The Concourse on 42, the Cantina on 15. #13 walls all but
-       * 0.42 rad of itself, so that is a body walking through a wall; #14 is
-       * sunk half a deck, so that is a body in mid-air over it.
-       *
-       * A SPINE IS RADIAL, so a spine walker travels along its own bearing
-       * between the balcony and the rooms' inner face and turns round at the
-       * ends. The property that made the ring version safe — you cannot leave
-       * a corridor you are travelling the length of — is the same one, applied
-       * to the axis the corridor actually runs on.
-       */
-      body.wayAxis = Math.abs(body.wayR - DRUM.ringR) < 2 ? 'ring' : 'spine';
-      if (body.wayAxis === 'spine') {
-        body.wayIn = DRUM.balcony + 2.5;
-        body.wayOut = DRUM.roomR - 2.5;
-      }
+      body.wayPace = 0.86 + ((place.id * 7 + i * 13) % 29) / 100;
+      body.waySeedA = Math.round(place.id * 10);
+      body.waySeedB = i * 7 + 3;
+      body.wayLegs = null;
+      body.wayAt = 0;
+      body.wayT = 0;
+      body.wayTo = 0;
+      body.wayTrips = 0;
+      body.wayDwell = 0;
+      setOut(st.deck, st.hour, body);
     }
   }
+  /**
+   * ══ AND SOME OF THEM HAVE AN ANIMAL WITH THEM (V16 §G1) ═════════════════
+   *
+   * *"see a couple other people with companions of there own … just milling
+   * about."*
+   *
+   * `isHandler` and `handlerOf` have been in `Pits.js` since the pit was
+   * written and had **no caller outside `handlersOn`**: the roster knew which
+   * residents walked with an animal, the card knew what the animal was, and no
+   * body on the station ever carried one. This is the line that makes it true.
+   *
+   * `handlerOf(r)` AND NOT A SECOND ROLL. It is a pure function of the
+   * resident record `occupant` just returned — the same record `handlersOn`
+   * walks — so the stranger you pass on the concourse in the morning with a
+   * tuk'ata at heel is the one the pit fields that night, which is the whole
+   * of §G4's sentence and was until now a story about a coincidence.
+   *
+   * `mine: false` IS LOAD-BEARING. Every animal in the world lives in one
+   * `CompanionPack`, and `adopt` writes `pack.mine`, `pack.rec` and
+   * `pack.rung0` for anything that does not say otherwise — those three are
+   * what `keepCompanion` folds into the player's kennel at the end of a run.
+   * A stranger's dog claiming them would file the player's epitaph for an
+   * animal that was never theirs. It is the same flag the co-op host passes
+   * for a peer's animal and for the same reason.
+   */
+  const H = r.borz ? null : handlerOf(r);
+  if (H) { body.stationHandler = H; life?.wantPets.push(body); }
   /* A resident stands where they are put and does not hunt. There is no
    * enemy on this station and no objective for one to be given. */
   if (body.brain) body.brain.idle = true;
@@ -946,6 +1406,11 @@ function spawnResident(world, st, place, i) {
 }
 
 function removeBody(world, body) {
+  /* AND THE ANIMAL GOES WITH THE PERSON. It is not in `life.live` — it is a
+   * body of the handler's, not of a slot's — so nothing else would ever put it
+   * down, and the pool would leak one companion per handler per re-seat. */
+  const pet = body?._stationAnimal;
+  if (pet) { body._stationAnimal = null; removeBody(world, pet); }
   try { body.dispose?.(); } catch {}
   const i = world.enemies.indexOf(body);
   if (i >= 0) world.enemies.splice(i, 1);
@@ -1143,67 +1608,179 @@ function stepEvents(world, st, life, dt) {
 /**
  * ══ THE PEOPLE IN THE CORRIDORS ARE GOING SOMEWHERE ═══════════════════════
  *
- * §2.5's third standing rule: *"People are going somewhere … the walkways must
- * carry people MOVING along desire lines."*
+ * §2.5's third standing rule: *"in between places, the walkways … a real
+ * shmorgesborg of activity"*, and the design note under it — *"People are
+ * going somewhere … along desire lines between them."*
  *
- * ── WHAT WAS MEASURED, AND IT IS WHY THIS EXISTS ─────────────────────────
+ * ── WHAT WAS MEASURED, TWICE ─────────────────────────────────────────────
  *
- * A hostile pass tracked 46 residents over sixty simulated seconds on deck 40:
- * median displacement 3.02 m, worst 6.49 m, and the eighteen in the
- * between-space no different at 2.96 m. The ring is two hundred metres round.
- * Three metres a minute is a shuffle on the spot, and the source said why —
- * `spawnResident` set `brain.idle = true` under a note reading "a resident
- * stands where they are put and does not hunt", and `stationWay`, the field
- * whose own comment called it "the hook a route would drive", had one writer
- * and no readers anywhere in the tree.
+ * The first pass found the corridors EMPTY: `reseat` walked `st.places` and
+ * nothing else, so every walkway in the drum held zero people. `wayPlacesOn`
+ * fixed that half.
  *
- * ── AND THE ROUTE IS THE RING, WHICH IS THE WHOLE TRICK ──────────────────
+ * The second pass found that nobody in them was going anywhere, and that the
+ * fix for the first half had hidden it. Deck 40, 13:00, twenty seconds of
+ * `world.update`: 46 bodies, 18 on walkways — and **4 on an open walk stretch
+ * out of the 44 slots the deck declares**. Those four then advanced A BEARING
+ * AT A FIXED RADIUS, which is a circular pace on a 537 m ring: the walker's
+ * own comment said "no pathfinding", and it was right. Nobody had a
+ * destination, nobody arrived anywhere, and a minute of walking put a body
+ * back where a minute of walking had started.
  *
- * A walker advances its BEARING at a fixed radius. The corridor is an annulus,
- * so staying on it is arithmetic rather than navigation: no path to solve, no
- * collision to query, nothing to get stuck on, and a body that walks for a
- * minute is exactly as safe as one that walks for an hour.
+ * ── WHAT A WALKER DOES NOW ───────────────────────────────────────────────
  *
- * IT COSTS ONE TRIG PAIR PER WALKING BODY and the population is small — the
- * eight ring stretches carry four heads each — so this is well inside the
- * 2.5 ms §12.2 gives the whole file. The velocity is set as well as the
- * position because that is what the body's own animator reads: a body moved by
- * assignment alone would slide along the deck in its idle pose.
+ * It picks a PLACE — weighted by how busy that place is at this hour, which is
+ * the desire line — it walks there along the ring, the balcony and the spines
+ * (`planRoute`, which is where the geometry is argued), it STOPS at the door,
+ * it stands there a few seconds, and then it picks another one. The whole
+ * route is decided once per journey and the step is a walk along a polyline:
+ * one interpolation and one trig pair per walking body, per frame.
+ *
+ * IT COSTS WHAT THE OLD ONE COST. The population is the pool's, unchanged and
+ * capped by `POOL[quality]`; what changed is where in the drum the pool is
+ * spent and what the bodies do with the frame. §12.2 gives this file 2.5 ms
+ * and the step is arithmetic on at most sixty bodies.
+ *
+ * THE VELOCITY IS SET AS WELL AS THE POSITION because that is what the body's
+ * own animator reads: a body moved by assignment alone slides along the deck
+ * in its idle pose.
  */
 const WALK_PACE = 1.35;
 
+/** How far past a walker the player may be before the pool stops paying for
+ *  it. A walker's slot key is where it STARTED, so without this a body that
+ *  walked a hundred metres away stayed real on the strength of a doorway the
+ *  player is standing next to. `DROP_RADIUS`'s own hysteresis, applied to
+ *  where the body actually is. */
+const WALK_DROP = DROP_RADIUS + 12;
+
+/**
+ * ══ AND SOME OF THEM HAVE AN ANIMAL WITH THEM (V16 §G1) ═══════════════════
+ *
+ * *"see a couple other people with companions of there own … just milling
+ * about."*
+ *
+ * `Pits.isHandler` and `Pits.handlerOf` — the two functions that decide which
+ * residents walk with an animal and which animal it is — had **no caller
+ * outside `handlersOn`**, which is a roster the pit reads to fill a card. No
+ * body on the station had ever carried a companion, on any deck, at any hour:
+ * the roster knew, the card knew, and the drum was empty of animals.
+ *
+ * `handlerOf(r)` AND NOT A SECOND ROLL. It is a pure function of the resident
+ * record `occupant` returned — the same record `handlersOn` walks — so the
+ * stranger you pass on the concourse with a tuk'ata at heel is the one the pit
+ * fields that night. That is §G4's sentence, and until this it was a story
+ * about a coincidence.
+ *
+ * `fieldCompanion` AND NOTHING COPIED FROM IT. The kennel, the deck and every
+ * check field an animal through that one function; a second spawn path here
+ * would be a second answer to what a companion is.
+ *
+ * `mine: false` IS LOAD-BEARING. Every animal in the world lives in one
+ * `CompanionPack`, and `adopt` writes `pack.mine`, `pack.rec` and `pack.rung0`
+ * for anything that does not say otherwise — the three fields `keepCompanion`
+ * folds into the player's kennel at the end of a run. A stranger's dog
+ * claiming them would file the player's epitaph for an animal that was never
+ * theirs. It is the flag the co-op host passes for a peer's animal, for
+ * exactly the same reason.
+ */
+function stepHandlers(world, life) {
+  const m = life.cmp;
+  if (!m || !life.wantPets.length) return false;
+  /* ONE A FRAME. See `wantPets`. */
+  const body = life.wantPets.shift();
+  if (!body || body.disposed || body._stationAnimal || !life.live.has(`${body.stationPlace}:${body.stationSlot}`)) return false;
+  const H = body.stationHandler;
+  if (!H) return false;
+  try {
+    const pet = m.fieldCompanion(world, body, H.kind, { mine: false, side: (body.stationSlot % 2) ? 1 : -1 });
+    if (!pet) return;
+    /**
+     * ON THE DECK IT IS ACTUALLY ON. `fieldCompanion` drops the heel point to
+     * `terrain.height`, which is the planet's ground and not the drum's floor
+     * — decks 44 and 48 stand 12.5 m and 25 m above it, so the animal arrived
+     * a storey or two under the person holding its lead.
+     */
+    pet.position.y = body.position.y;
+    pet.body?.setTransform?.(pet.position, null);
+    /* WHAT THE NAMEPLATE SAYS (§14). `handlerOf` names the animal off the
+     * handler's own seed, so it is the same name in the corridor and on the
+     * pit's card. */
+    pet.stationName = H.animal;
+    pet.stationRole = `${H.kind} — ${H.who}'s`;
+    pet.stationPlace = body.stationPlace;
+    body._stationAnimal = pet;
+    return true;
+  } catch { /* no animal is a quieter failure than no resident */ }
+  return false;
+}
+
 function stepWalkers(world, life, dt) {
+  const deck = life.deck;
+  const hour = world._station?.hour ?? 13;
   for (const body of life.live.values()) {
-    const R = body?.wayR;
-    if (!R) continue;
-    const was = body.position ? { x: body.position.x, z: body.position.z } : null;
-    let x, z;
-    if (body.wayAxis === 'spine') {
-      /* ALONG THE SPINE AND BACK. The bearing is fixed; the RADIUS is what
-       * moves, and it turns round at each end rather than running out into
-       * the atrium at one and through the skin at the other. */
-      body.wayR = R + body.wayPace * body.wayDir * dt;
-      if (body.wayR >= body.wayOut) { body.wayR = body.wayOut; body.wayDir = -1; }
-      else if (body.wayR <= body.wayIn) { body.wayR = body.wayIn; body.wayDir = 1; }
-      x = body.wayR * Math.sin(body.wayAngle);
-      z = body.wayR * Math.cos(body.wayAngle);
-      /* Facing along the radius — outward when walking out, inward coming back. */
-      body.facing = body.wayDir > 0 ? body.wayAngle : body.wayAngle + Math.PI;
-    } else {
-      body.wayAngle += (body.wayPace / R) * body.wayDir * dt;
-      x = R * Math.sin(body.wayAngle);
-      z = R * Math.cos(body.wayAngle);
-      /* FACING ALONG THE WALK, which is the tangent — a person walking the
-       * ring backwards is the thing this is here to avoid. */
-      body.facing = body.wayAngle + (body.wayDir > 0 ? Math.PI / 2 : -Math.PI / 2);
+    if (!body?.wayR) continue;
+    /* STANDING AT THE DOOR IT ARRIVED AT. */
+    if (body.wayDwell > 0) {
+      body.wayDwell -= dt;
+      if (body.velocity) body.velocity.set(0, 0, 0);
+      if (body.wayDwell <= 0) setOut(deck, hour, body);
+      continue;
     }
+    if (!body.wayLegs) { setOut(deck, hour, body); continue; }
+    const wasX = body.position ? body.position.x : 0;
+    const wasZ = body.position ? body.position.z : 0;
+
+    /* ── ALONG THE POLYLINE, CARRYING THE REMAINDER OVER A CORNER ───────── */
+    let move = WALK_PACE * body.wayPace * dt;
+    const legs = body.wayLegs;
+    while (move > 0 && body.wayAt < legs.length) {
+      const left = legs[body.wayAt].len - body.wayT;
+      if (move < left) { body.wayT += move; break; }
+      move -= left;
+      body.wayAt++;
+      body.wayT = 0;
+    }
+
+    /* ── AND WHERE THAT PUTS IT ─────────────────────────────────────────── */
+    const L = legs[body.wayAt];
+    if (L) {
+      const f = L.len > 0 ? body.wayT / L.len : 1;
+      if (L.arc) { body.wayAngle = L.from + (L.to - L.from) * f; body.wayR = L.r; }
+      else { body.wayR = L.from + (L.to - L.from) * f; body.wayAngle = L.a; }
+    } else {
+      /* THE END OF THE LAST LEG — it has arrived. */
+      const E = legs[legs.length - 1];
+      if (E) {
+        if (E.arc) { body.wayAngle = E.to; body.wayR = E.r; }
+        else { body.wayR = E.to; body.wayAngle = E.a; }
+      }
+      /**
+       * AND IT STOPS BEING A WALKER, which is the point of the whole section.
+       * `wayLegs` is dropped, the trip is counted — `station.mjs` reads that
+       * number, because "somebody arrived" is the property and "somebody moved"
+       * is only its symptom — and after a few seconds at the door it picks
+       * somewhere else. It does not simply stop for good: a corridor whose
+       * every walker had reached a doorway would be an EMPTY corridor a minute
+       * after you walked into it, which is the defect this is here to fix
+       * wearing a different hat.
+       */
+      body.wayLegs = null;
+      body.wayTrips = (body.wayTrips | 0) + 1;
+      body.wayDwell = DWELL.min + h2(body.waySeedA, body.waySeedB + body.wayTrips) * DWELL.span;
+    }
+
+    const x = body.wayR * Math.sin(body.wayAngle);
+    const z = body.wayR * Math.cos(body.wayAngle);
     if (body.position) {
       body.position.x = x; body.position.z = z;
       body.body?.setTransform?.(body.position, null);
     }
-    if (was && body.velocity && dt > 0) {
-      body.velocity.set((x - was.x) / dt, 0, (z - was.z) / dt);
-    }
+    /* FACING ALONG THE WALK — off the step actually taken, so an arc, a radial
+     * and a corner between them are all one line rather than three cases. */
+    const dx = x - wasX, dz = z - wasZ;
+    if (dx * dx + dz * dz > 1e-8) body.facing = Math.atan2(dx, dz);
+    if (body.velocity && dt > 0) body.velocity.set(dx / dt, 0, dz / dt);
   }
 }
 
@@ -1221,9 +1798,26 @@ export function stepStationLife(world, dt) {
   if (life.reseatIn <= 0) {
     life.reseatIn = RESEAT_EVERY;
     reseat(world, st, life, px, pz);
-    life.priming = false;
+    /**
+     * THE PRIME OWNS THIS FLAG UNTIL IT IS FINISHED.
+     *
+     * This line used to be unconditional, and it was harmless for as long as
+     * the first population was seated inside `dressStation` — the flag was
+     * already false by the time any frame ran. It is not harmless now that the
+     * prime is sliced across the frames after the world comes up: the first
+     * step cleared it, `reseat`'s cap fell to the walk's one-a-time on the
+     * second frame, and the pool settled at eight residents where the prime
+     * seats twenty-five. Measured, on deck 40, with forty frames of walk
+     * adding one person.
+     *
+     * So the flag is cleared HERE only when there is no prime left on the
+     * station's queue to clear it — a world that is stepped without ever
+     * being drained, which play never is and a check might be.
+     */
+    if (!world._station?.pending?.some((j) => j.prime)) life.priming = false;
   }
   witness(world, st, life, dt);
+  const built = stepHandlers(world, life);
   stepWalkers(world, life, dt);
   stepTram(world, st, life, dt);
   stepEvents(world, st, life, dt);
@@ -1242,7 +1836,16 @@ export function stepStationLife(world, dt) {
      * folded in: 171 ms against a 2.5 ms bound, on a frame that did nothing
      * but put four people away.
      */
-    if (life.spawned === spawnBefore && life.despawned === dropBefore) life.stepMs = ms;
+    /* AND THE FRAME THE HANDLER ROSTER WAS BUILT ON IS NOT A STEADY ONE
+     * EITHER. `handlersOn` walks the whole gazetteer through `occupant` and
+     * costs milliseconds; it happens once a game hour, which is once every two
+     * real minutes, and folding it in would make this number measure a sweep
+     * of the census rather than the station's work — the same argument the
+     * spawn and the dispose are excluded on. */
+    const steady = life.spawned === spawnBefore && life.despawned === dropBefore
+      && !life.rosterBuilt && !built;
+    life.rosterBuilt = false;
+    if (steady) life.stepMs = ms;
   }
 }
 
@@ -1253,6 +1856,7 @@ export function undressStationLife(world) {
   for (const b of life.live.values()) removeBody(world, b);
   for (const g of life.guards) removeBody(world, g);
   life.live.clear();
+  life.wantPets.length = 0;
   life.guards.length = 0;
   if (life.tram.car) {
     life.tram.car.parent?.remove(life.tram.car);

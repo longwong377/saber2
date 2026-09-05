@@ -6359,7 +6359,26 @@ export function buildJedi(opts = {}) {
          * it was culled at thirty metres, so a Jedi's legs were two bare tubes
          * — the one thing the under-robe's own note says separates this body
          * from an armoured trooper. Both hems are kept. */
-        outerLayer.push(markSilhouette(mesh(skirtGeo, skirtMat, hips, [0, 0.058 * s, 0], [0, 0, Math.PI])));
+        const skirtMesh = markSilhouette(mesh(skirtGeo, skirtMat, hips, [0, 0.058 * s, 0], [0, 0, Math.PI]));
+        /* ── AND A JERKIN'S SKIRT IS NOT HANDED TO THE SOLVER ────────────
+         *
+         * `outerLayer` is not "the cloth below the belt", it is the list
+         * `attachSkirt` HIDES when it takes over — so a piece in it is a
+         * promise that a simulated garment will stand where it stood. Every
+         * cut in `Cloth.ROBE_CUTS` is a full robe hung from one ring at the
+         * belt, 440 to 700 mm of it, and there is no option on `attachSkirt`
+         * for "but only to mid-thigh". Hand it this lathe and a player who
+         * picked the Service Tunic gets a robe simulated over a body that is
+         * wearing trousers — the field would be declaring a garment that is
+         * not on the character, which is the failure this whole area keeps
+         * producing.
+         *
+         * So a jerkin's skirt stays rigid, and that is a real trade stated
+         * rather than hidden: its hem travels 0 mm in the pelvis frame. It is
+         * also the smallest version of that trade in the game — 440 mm of
+         * tailored tunic against the 700 mm robe the cone note was written
+         * about, over a leg that is dressed rather than bare. */
+        if (LOWER === 'robe') outerLayer.push(skirtMesh);
       }
       /* ── AND THE TWO LAYERS BELOW IT ARE THE ROBE ITSELF ──
        *

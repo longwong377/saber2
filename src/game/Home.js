@@ -460,6 +460,15 @@ export function homeAddress(place) {
 function clean(v) {
   const raw = (v && typeof v === 'object') ? v : {};
   const out = {
+    /**
+     * @noreader v — the migration hook, and it is the ONE field in this record
+     * that is deliberately written and never read. Nothing may branch on it
+     * until there are two versions to branch between; it is here so that the
+     * version which does branch has something to branch on. `home: every field of
+     * the record has a reader` reads this tag off the source and prints it, so
+     * the exemption is a sentence in the suite's own output and not a name
+     * buried in a check.
+     */
     v: 1,
     /** Which door this dressing was last behind. Lane F reassigns it. */
     place: Number.isFinite(raw.place) ? Math.round(raw.place) : 27,
@@ -1594,21 +1603,26 @@ function roomLine(h) {
  * A reflection is a second rasterisation, and the question is of WHAT.
  * `DeckMirror.js` reflects the whole hangar and pays +123..+149 draw calls,
  * 11-13% of the frame's. A mirror hanging on a cabin wall does not need the
- * station: it needs the room it is in and the person standing in it. Counted
- * on a live deck-44 world:
+ * station: it needs the room it is in and the person standing in it. Driven
+ * through this hook against a recording renderer on a live deck-44 world,
+ * standing 2.5 m off the glass:
  *
- *   the whole station scene   1334 draws   493 449 triangles
- *   #27's own group             18 draws     4 030 triangles
- *   the player's rig            62 draws    12 920 triangles
- *   ───────────────────────────────────────────────────────
- *   what the glass renders      80 draws    16 950 triangles
- *                               +6.0%       +3.4%
+ *   the scene, as the beauty pass has it   447 meshes   355 901 triangles
+ *   what the glass renders                  77 meshes    16 350 triangles
+ *   ─────────────────────────────────────────────────────────────────────
+ *                                            17.2%          4.6%
  *
- * …and only while the camera is inside `GLASS.reach` of the glass and on the
- * room side of it. Everywhere else in the game this is one distance test in a
- * hook that returns. That is the whole reason the mask below exists: without
- * it a cabin mirror would cost what the deck's does, for a picture of a room
- * six metres across.
+ * The 77 are #27's own group and the player's own body, and nothing else in
+ * the building. In absolute terms it is 77 draws — half of what the deck's
+ * mirror adds — and it is paid ONLY while the camera is inside `GLASS.reach`
+ * of the glass and on the room side of it. Measured on the same world: 0
+ * renders from 40 m, 0 from behind the glass, 0 through the ink prepass's
+ * cloned camera, and one per stepped frame at the mirror. Everywhere else in
+ * the game this is one distance test in a hook that returns.
+ *
+ * That is the whole reason the mask below exists. Without it the same picture
+ * of a room six metres across would cost 447 draws, and the honest answer to
+ * "can the cabin afford a mirror" would have been no.
  *
  * ── WHAT IS STILL NOT TRUE, SAID HERE RATHER THAN ON SCREEN ───────────────
  *
@@ -1779,7 +1793,8 @@ function aimGlassCamera(S, camera) {
  *
  * The room and the person in it, and everything else switched off for the
  * length of one render. That is the whole cost argument at the top of this
- * chapter: reflecting the scene would be 1334 draws for a picture of a cabin.
+ * chapter: reflecting the scene would be 447 draws for a picture of a cabin,
+ * and the room and the body together are 77.
  *
  * `station-place-27` IS A DIRECT CHILD OF THE SCENE — measured, 185 of them,
  * one group per place plus the lights and the loose props — so the mask is one
@@ -1797,7 +1812,14 @@ function maskForGlass(S, world, h, scene) {
   hidden.length = 0;
   const keep = S.keep;
   keep.clear();
-  keep.add(h.group);
+  /* THE ROOM'S TOP-LEVEL ANCESTOR, not the room. `station-place-27` is a
+   * direct child of the scene today and this loop only ever sees children of
+   * the scene, so a room that is ever nested one group deeper would be hidden
+   * by its own reflection. Walking up costs two property reads and removes
+   * the assumption. */
+  let top = h.group;
+  while (top.parent && top.parent !== scene) top = top.parent;
+  keep.add(top);
   const P = world?.player;
   if (P?.rig?.root) keep.add(P.rig.root);
   for (const c of [P?.cloak, P?.skirt, P?.waistCape, P?.hoodDrape]) {
@@ -1841,8 +1863,18 @@ function renderGlass(world, h, S, renderer, scene, camera) {
   S.at = t;
   /* THE DISTANCE GATE, and it is the whole of the cost argument. */
   _gCam.setFromMatrixPosition(camera.matrixWorld);
-  if (_gCam.distanceTo(S.plane) > GLASS.reach) { u.uOn.value = 0; S.skipped++; return; }
+  const far = _gCam.distanceTo(S.plane);
+  if (far > GLASS.reach) { u.uOn.value = 0; S.skipped++; return; }
   if (!aimGlassCamera(S, camera)) { u.uOn.value = 0; S.skipped++; return; }
+  /**
+   * AND IT FADES IN RATHER THAN SNAPPING ON. A gate on distance alone is a
+   * mirror that turns into a mirror as you cross a line seven metres out,
+   * which reads as a bug wherever the line happens to fall. The render still
+   * costs what it costs from the first metre inside the gate; this is the
+   * DISPLAY ramping over the last quarter of the reach, so the glass darkens
+   * as you back away and is dark by the time it stops being drawn.
+   */
+  const fade = Math.min(1, Math.max(0, (GLASS.reach - far) / (GLASS.reach * 0.25)));
 
   renderer.getDrawingBufferSize(_gSize);
   const w = Math.max(2, Math.round(_gSize.x * S.scale));
@@ -1877,7 +1909,7 @@ function renderGlass(world, h, S, renderer, scene, camera) {
     S.rendering = false;
   }
   u.uTexMat.value.copy(S.texMat);
-  u.uOn.value = 1;
+  u.uOn.value = fade;
   S.renders++;
 }
 
@@ -2187,7 +2219,11 @@ function dressPad(world, h) {
     meshes.push(m);
   }
   h.pad = { id: P.id, lx, lz, at, rest: P.rest, meshes, body: null, root: null };
-  seatCompanion(world, h);
+  /* A COMPANION MUST NEVER STOP A HOME FROM DRESSING. The fixture is this
+   * file's own geometry and cannot fail; the animal is somebody else's builder
+   * reached through the Kennel's record, and a cabin you cannot walk into is a
+   * much worse defect than an empty basket. */
+  try { seatCompanion(world, h); } catch { h.pad.body = null; h.pad.root = null; }
   return h.pad;
 }
 
@@ -2204,9 +2240,15 @@ function dressPad(world, h) {
  * omission — a walking companion on the station is a lane of its own
  * (`Companions.js`, whose heel, leash and orders all assume a field), and the
  * sentence being kept here is *"a cabin gets a perch … for one small
- * companion"*, which is about the cabin. What it costs is one build and, on
- * the smallest of the three, 24 draws inside a room that is culled with its
- * own door.
+ * companion"*, which is about the cabin.
+ *
+ * WHAT IT COSTS, MEASURED: 31 draws / 11 522 triangles for the hawk, 37 /
+ * 9 454 for the tooka, 24 / 2 582 for the astromech, inside a room the cull
+ * switches off with its own door — and ONE BUILD, 68-214 ms on this container
+ * under load, on the station-dressing path that already takes seconds. The
+ * build is the number to watch and it is why this is one animal and not a
+ * kennel: it is paid once a visit, and again on the frame you choose a
+ * different fixture at the habitat, where the world is paused behind a panel.
  *
  * THE FEET ARE PUT ON THE FIXTURE BY MEASUREMENT. The rig's root is the
  * pelvis on both body paths, so "how far the lowest point of this animal is
@@ -2655,7 +2697,20 @@ export function homeKey(world, opts = {}) {
   const p = world.player?.position;
   if (p && h.mirror && p.distanceTo(h.mirror.at) < MIRROR_REACH && world.onKiosk) {
     world.onKiosk('mirror');
-    world.notify?.('THE MIRROR', 'your own body in the glass');
+    /**
+     * ══ AND THE SENTENCE IS THE ONE THE ROOM CAN KEEP ═══════════════════
+     *
+     * It read *"your own body in the glass"* while the glass reflected
+     * nothing at all, which is the defect this lane came to fix. It is two
+     * sentences now because the room does two things and only one of them is
+     * finished: the reflection is real (see the mirror chapter), and the
+     * creator's controls still drive the menu's own figure and land on your
+     * body at the next deploy. Naming where the controls go is the honest
+     * half of a second door onto a page that already exists.
+     */
+    world.notify?.('THE MIRROR', h.mirror?.S
+      ? 'you are in the glass — the creator opens on your face'
+      : 'the creator, on your face');
     return true;
   }
 

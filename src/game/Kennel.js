@@ -129,9 +129,30 @@ export const TEMPERS = [
   },
   {
     id: 'scarred', label: 'SCARRED', earn: 'went down twice and lived',
+    /**
+     * ── BOTH SENTENCES WERE REWRITTEN, AND NOT BECAUSE THEY READ BADLY ────
+     *
+     * They described two mechanics the axes cannot express. "Slower to go down
+     * a second time" is TOUGHNESS, and `TEMPER_AXES` has no combat axis by a
+     * rule the check asserts — so that gain could never have been delivered by
+     * anything on this row, whatever the reader did. "Breaks off an attack when
+     * it is hit" is a panic, and this row's cost is four metres of `reach`,
+     * which is a shorter rope and not a flinch.
+     *
+     * So the two halves now say what the two swings actually do — 1.5 s of the
+     * grace `holdOf` gives on the leash going taut, paid for with 4 m off the
+     * rope. An animal that has been put down twice and got up twice is one that
+     * plants itself and is harder to move, and one that will not follow
+     * something as far out as it used to. That is the same character the row
+     * always had; it is the first version of it the game keeps.
+     *
+     * THE PANIC WAS NOT MOVED HERE. `shy` is KEPT's, because V15 §4 names the
+     * BONDED one — and SCARRED is earned off two downs, which most animals
+     * reach, so a flinch on this row would be a flinch on most of the roster.
+     */
     up: { hold: 1.5 }, down: { reach: 4.0 }, sheds: null,
-    gain: 'slower to go down a second time in the same run',
-    cost: 'breaks off an attack when it is hit',
+    gain: 'harder to pull off a spot once it has planted itself on one',
+    cost: 'and it will not follow a target as far out as it used to',
   },
   {
     id: 'keen', label: 'KEEN', earn: 'twelve orders landed',

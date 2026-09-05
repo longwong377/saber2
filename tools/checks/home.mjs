@@ -906,4 +906,457 @@ export async function run({ check, assert, near, THREE }) {
       + `written on leaving, ${back} came back at ${addr}; a visit kept ${after.store.food[0].n} `
       + `bowls of stew bought while it was in progress; 0 durable writers in Home.js`;
   });
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ══ A FIELD THE RECORD DECLARES AND NOTHING KEEPS ═══════════════════════
+   *
+   * `state.pad` was sanitised, carried through `leaveHome` and written to the
+   * fold for two whole versions with NO fixture, NO writer and NO reader
+   * anywhere in `src/`. Every check in this file was green throughout, because
+   * every one of them asks about something the record DOES: this one asks
+   * about the record itself.
+   *
+   * ── DERIVED FROM THE SHAPE, NEVER FROM A LIST ─────────────────────────────
+   *
+   * The fields come from `cleanHome({})` — the sanitised record itself — so a
+   * field added tomorrow is in this check tomorrow, and a check that names its
+   * own fields (which is what a hard-coded list is) could never have caught
+   * `pad` in the first place: nobody would have added `pad` to it.
+   *
+   * ── AND A COPY IS NOT A READ, WHICH IS THE WHOLE DIFFICULTY ───────────────
+   *
+   * The naive test — "does anything mention `.pad`" — passes on the defect.
+   * Measured against the record as it shipped, `pad` had exactly two mentions
+   * and both were copies of it into a slot of its own name:
+   *
+   *     h.state.pad = now.pad;            (leaveHome, carrying the fold across)
+   *     store: h.state.store, pad: h.state.pad,      (homeRecord, reporting it)
+   *
+   * A field that is only ever moved from one copy of the record to another is
+   * exactly the field with no reader. So both shapes are struck out of the
+   * corpus before the reads are counted, and on the shipped record `pad` then
+   * counts ZERO and this goes red — which is the only proof that a check of
+   * this kind is worth having.
+   *
+   * ── WHAT COUNTS AS A READ ────────────────────────────────────────────────
+   *
+   * A property access on a record-shaped receiver (`state`, `rec`, `now`,
+   * `saved`, a call's result) that is not itself an assignment, anywhere in
+   * `src/` — not only in this lane, because `Coop.js` is the only reader of
+   * `place` and a check scoped to `Home.js` would demand a reader be added
+   * beside a reader that already exists.
+   *
+   * A NESTED KEY (`surfaces.floor`, `store.parcels`) is allowed a second door:
+   * its parent is indexed by a variable somewhere (`surfaces[slot]`) and the
+   * key is named as a string literal somewhere. That is weaker than the
+   * top-level rule and it is stated rather than hidden — a dynamic index is
+   * genuinely how those two are read, and demanding `.floor` would demand the
+   * three-slot loop be unrolled.
+   *
+   * ── THE ONE EXEMPTION, AND IT IS DECLARED IN THE RECORD ───────────────────
+   *
+   * `@noreader <field> — <why>` in `clean`'s own source exempts a field, and
+   * the reason is printed in this check's result, so an exemption is a
+   * sentence in the gate's output rather than a name buried in a check file.
+   * There is one: `v`, the migration hook.
+   */
+  check('home: every field of the record has a reader, and a copy is not one', async () => {
+    const H = await import('../../src/game/Home.js');
+    const { functionBody } = await import('./_source.mjs');
+    const { readdir } = await import('node:fs/promises');
+
+    const root = new URL('../../src/', import.meta.url);
+    const walk = async (dir) => {
+      const out = [];
+      for (const e of await readdir(dir, { withFileTypes: true })) {
+        const u = new URL(e.name + (e.isDirectory() ? '/' : ''), dir);
+        if (e.isDirectory()) out.push(...await walk(u));
+        else if (e.name.endsWith('.js')) out.push(u);
+      }
+      return out;
+    };
+    const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const files = await walk(root);
+    const homeUrl = files.find((u) => String(u).endsWith('/game/Home.js'));
+    assert(homeUrl, 'src/game/Home.js is not in src/ any more');
+    const homeRaw = await readFile(homeUrl, 'utf8');
+    /* `clean` is the DECLARATION and can never be its own reader — `raw.pad`
+     * inside the sanitiser is the line that made the field exist. */
+    const cleanBody = functionBody(homeRaw, 'function clean(v) {');
+    let corpus = '';
+    for (const u of files) {
+      const t = await readFile(u, 'utf8');
+      corpus += `\n${strip(u === homeUrl ? t.replace(cleanBody, ' ') : t)}`;
+    }
+
+    /* The fields, off the sanitised record and nowhere else. */
+    const fields = [];
+    const add = (o, path) => {
+      for (const [k, v] of Object.entries(o)) {
+        fields.push({ k, path: [...path, k].join('.'), parent: path[path.length - 1] || null });
+        if (v && typeof v === 'object' && !Array.isArray(v) && path.length < 1) add(v, [...path, k]);
+      }
+    };
+    add(H.cleanHome({}), []);
+    assert(fields.length >= 7, `the record has ${fields.length} fields — cleanHome returned nothing`);
+
+    /* The declared exemptions, off `clean`'s own comments. */
+    const exempt = new Map();
+    for (const m of cleanBody.matchAll(/@noreader\s+(\w+)\s*—\s*([^\n*]{16,})/g)) {
+      exempt.set(m[1], m[2].trim());
+    }
+
+    const RECV = String.raw`(?:state|rec|record|now|saved|home|out|next|\))`;
+    const dead = [];
+    const how = [];
+    for (const f of fields) {
+      if (exempt.has(f.k)) { how.push(`${f.path} exempt`); continue; }
+      /* Strike out the two shapes of a copy-through before counting. */
+      const lean = corpus
+        .replace(new RegExp(String.raw`\.${f.k}\s*=\s*[\w.?()]*\.${f.k}\b`, 'g'), ' ')
+        .replace(new RegExp(String.raw`\b${f.k}\s*:\s*[\w.?()[\]]*\.${f.k}\b`, 'g'), ' ');
+      const hits = (lean.match(new RegExp(`${RECV}\\s*\\.${f.k}\\b(?!\\s*=[^=])`, 'g')) || []).length;
+      if (hits) { how.push(`${f.path}×${hits}`); continue; }
+      if (f.parent
+        && new RegExp(String.raw`\.${f.parent}\s*\[`).test(corpus)
+        && new RegExp(`['"\`]${f.k}['"\`]`).test(corpus)) {
+        how.push(`${f.path} via ${f.parent}[…]`);
+        continue;
+      }
+      dead.push(f.path);
+    }
+    assert(dead.length === 0,
+      `${dead.join(', ')} — declared by the record and read by nobody. Either something reads `
+      + `it or it does not belong in the record; a field that is only copied from one copy of `
+      + `the record to another is the defect this check exists for. A deliberate exception says `
+      + `so with '@noreader <field> — <why>' in clean().`);
+
+    /* AND THE CHECK CAN FAIL. A name the record does not have must come back
+     * dead, or this is nine regular expressions that always pass. */
+    const canary = ['state.nosuchfield', 'rec.nosuchfield'].every((s) => !corpus.includes(s));
+    assert(canary, 'the corpus already mentions the canary');
+
+    return `${fields.length} fields off cleanHome(), ${files.length} files of src/ read: `
+      + `${how.join(', ')}${exempt.size ? ` — ${[...exempt].map(([k, w]) => `${k}: ${w}`).join('; ')}` : ''}`;
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ══ V15 §1.3's LAST CLAUSE, DRIVEN FROM THE ROOM IT IS CHOSEN IN ═════════
+   *
+   * *"a cabin gets a perch, a basket or a charge pad for one small companion,
+   * and which one is a choice you make at the habitat."*
+   *
+   * Four things, and the check refuses to touch `Home.setPad` by name for the
+   * reason `the surfaces are painted with the key and the wheel` gives: the
+   * door the player uses is `Habitat.choosePad`, and a check that reaches past
+   * it can ship a dead control. So the choice is made at the habitat, and
+   * everything after that is read off the room.
+   */
+  check('home: the cabin gets a perch, a basket or a charge pad, chosen at the habitat', async () => {
+    const H = await import('../../src/game/Home.js');
+    const HAB = await import('../../src/game/Habitat.js');
+    const KEN = await import('../../src/game/Kennel.js');
+    const S = await import('../../src/game/StationSave.js');
+    const { COMPANION_ORDER, COMPANION_KINDS, COMPANION_UNITS } = await import('../../src/game/CompanionKinds.js');
+    S.clearStation();
+    KEN.clear();
+
+    /* THREE FIXTURES, BECAUSE THE SENTENCE NAMES THREE THINGS. */
+    assert(H.PADS.length === 3, `${H.PADS.length} fixtures for "a perch, a basket or a charge pad"`);
+    const suits = new Set(H.PADS.map((p) => p.suits));
+    assert(suits.size === 3, `the three fixtures suit ${suits.size} kinds of animal, not three`);
+
+    /**
+     * ── WHO IS SMALL, AND THE ANSWER IS THE ARCHETYPE TABLE'S ─────────────
+     *
+     * `PAD_MASS` has to PARTITION the companions, and the check asserts the
+     * shape of the partition rather than the names in it: everything the
+     * cabin holds is under the bar, everything the kennel holds is over it,
+     * and the small ones between them cover all three fixtures — which is why
+     * three fixtures is the right number and not two or five.
+     */
+    const small = COMPANION_ORDER.filter((id) => H.padSuit(id));
+    const covered = new Set(small.map((id) => H.padSuit(id)));
+    assert(small.length >= 3, `${small.length} companions are small enough to live in a cabin`);
+    assert(covered.size === 3,
+      `the ${small.length} cabin-sized companions between them want ${covered.size} of the 3 fixtures`);
+    for (const id of COMPANION_ORDER) {
+      const A = COMPANION_UNITS[COMPANION_KINDS[id].archetype];
+      const under = !!A && A.mass > 0 && A.mass <= H.PAD_MASS;
+      assert(!!H.padSuit(id) === under,
+        `${id} is ${under ? 'under' : 'over'} ${H.PAD_MASS} kg and padSuit says ${H.padSuit(id)}`);
+    }
+
+    /* A HAND-EDITED SAVE CANNOT PUT A FIXTURE IN THE ROOM THAT DOES NOT EXIST. */
+    S.setHomeState({ pad: 'hammock' });
+    assert(H.loadHome().pad === null, `a save asking for a 'hammock' came back ${H.loadHome().pad}`);
+    S.clearStation();
+
+    /* THE CHOICE, MADE AT THE HABITAT AND NOWHERE ELSE. */
+    KEN.adopt('hawk', 'KITE');
+    const before = HAB.habitatPanel();
+    assert(before.pad, 'the habitat panel offers no cabin fixture at all');
+    assert(before.pad.rows.length === 3, `${before.pad.rows.length} rows offered`);
+    assert(before.pad.chosen === null, `a fresh cabin already has a '${before.pad.chosen}'`);
+    assert(before.pad.who && before.pad.who.suit === 'flier',
+      'the habitat does not know the hawk is a flier that lives at home');
+    const fits = before.pad.rows.filter((r) => r.fits).map((r) => r.id);
+    assert(fits.length === 1 && fits[0] === 'perch',
+      `the habitat says ${JSON.stringify(fits)} suits a hawk`);
+    /* …AND NONE OF THEM IS REFUSED. The sentence gives the choice and names no
+     * condition; `fits` is a label, not a gate. */
+    assert(before.pad.rows.every((r) => !r.disabled), 'the habitat refuses one of the three');
+
+    HAB.choosePad('perch');
+    assert(S.homeState()?.pad === 'perch',
+      `the habitat's choice reached the fold as ${JSON.stringify(S.homeState()?.pad)}`);
+
+    /* AND THE ROOM BUILDS IT, WITH THE ANIMAL ON IT. */
+    let seatY = 0, span = 0, padDraws = 0, birdDraws = 0;
+    const one = await station(44);
+    try {
+      const h = one.world._home;
+      assert(h.pad, 'the cabin dressed no fixture for a record that names one');
+      assert(h.pad.id === 'perch', `the record says perch and the room built a ${h.pad.id}`);
+      assert(h.pad.meshes.length > 0, 'the fixture is a name and no geometry');
+      padDraws = h.pad.meshes.length;
+      for (const m of h.pad.meshes) {
+        assert(m.parent === h.group, 'the fixture was not put in the room\'s own group');
+        assert(h.built.includes(m), 'the fixture is not on the teardown list — it would outlive the room');
+      }
+      /* THE ANIMAL IS ACTUALLY USING IT: a body, in the room, with its feet on
+       * the fixture's own rest height, and not merely a flag. */
+      assert(h.pad.root, 'the perch is empty — the small companion is not on it');
+      assert(h.pad.root.parent === h.group, 'the companion is not in the room');
+      h.pad.root.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(h.pad.root);
+      seatY = box.min.y;
+      span = box.max.x - box.min.x > box.max.z - box.min.z
+        ? box.max.z - box.min.z : box.max.x - box.min.x;
+      near(seatY, h.y + h.pad.rest, 0.02, 'the companion\'s feet are not on the fixture');
+      h.pad.root.traverse((o) => { if (o.isMesh) birdDraws++; });
+      assert(birdDraws > 8, `the companion is ${birdDraws} meshes — it is not a body`);
+      /* A FLIER AT REST HAS ITS WINGS IN. Unfolded the hawk is 1.83 m across. */
+      assert(span < 0.9, `the perched hawk is ${span.toFixed(2)} m across with its wings out`);
+      const R = H.homeRecord(one.world);
+      assert(R.pad === 'perch' && R.padded && R.resident, `homeRecord says ${JSON.stringify(R.pad)}`);
+    } finally { one.world.dispose?.(); }
+
+    /* IT SURVIVES LEAVING, AND THE ROOM IS THE SAME ROOM NEXT TIME. */
+    assert(S.homeState()?.pad === 'perch', 'leaving the station forgot the fixture');
+    const two = await station(44);
+    let back = null;
+    try {
+      back = two.world._home.pad?.id || null;
+      assert(back === 'perch', `the fixture came back as ${JSON.stringify(back)}`);
+      /* AND THE HABITAT CAN CHANGE IT WITH THE ROOM STANDING — the player is
+       * two decks away when they choose, so the write has to reach a dressed
+       * cabin as well as the fold. */
+      HAB.choosePad('basket', two.world);
+      assert(two.world._home.pad?.id === 'basket',
+        `the room still holds a ${two.world._home.pad?.id} after the habitat chose a basket`);
+      assert(two.world._home.pad.root, 'the basket is empty');
+      /* AND TAKING IT OUT IS THE OTHER HALF OF A CHOICE. */
+      HAB.choosePad(null, two.world);
+      assert(!two.world._home.pad, 'the fixture is still standing after it was taken out');
+      const stray = [];
+      two.world._home.group.traverse((o) => { if (/home-pad-/.test(o.name || '')) stray.push(o.name); });
+      assert(stray.length === 0, `${stray.join(', ')} left standing in the room`);
+    } finally { two.world.dispose?.(); }
+
+    /* A COMPANION TOO BIG FOR A CABIN GETS THE FIXTURE AND NO ANIMAL. */
+    KEN.clear();
+    KEN.adopt('blurrg', 'HEAVY');
+    HAB.choosePad('basket');
+    const three = await station(44);
+    let bigWhy = null;
+    try {
+      const h = three.world._home;
+      assert(h.pad && h.pad.id === 'basket', 'the fixture is the player\'s choice and not the animal\'s');
+      assert(!h.pad.root, 'a 640 kg blurrg is asleep in a cabin basket');
+      bigWhy = HAB.padChoice().why;
+      assert(bigWhy && /\d/.test(bigWhy), 'the habitat refuses without saying why or how heavy');
+    } finally { three.world.dispose?.(); }
+    KEN.clear();
+    S.clearStation();
+
+    return `${H.PADS.length} fixtures, ${small.length} of ${COMPANION_ORDER.length} companions under `
+      + `${H.PAD_MASS} kg covering all 3; the habitat chose a perch, the fold stored it, the room `
+      + `built ${padDraws} meshes and put a ${birdDraws}-mesh hawk on them at ${span.toFixed(2)} m `
+      + `across (1.83 m with its wings out), feet on the bar; it came back a '${back}', the habitat `
+      + `swapped it for a basket with the room standing and took it out again; a blurrg gets the `
+      + `basket and no animal — "${bigWhy}"`;
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ══ THE GLASS, AND WHAT IT COSTS ════════════════════════════════════════
+   *
+   * §1.3's *"a real mirror in the cabin"*. It was dark glass and the game
+   * printed *"your own body in the glass"* over it.
+   *
+   * DRIVEN THROUGH THE HOOK THE ENGINE CALLS, against a recording renderer —
+   * `deckmirror.mjs`'s method, because a reflection's questions ("how many
+   * draws, from which camera, into which target, how many times a frame") are
+   * all answerable without a GPU and none of them is answerable from source
+   * text.
+   */
+  check('home: the mirror reflects this room and the body in it, and nothing else', async () => {
+    const H = await import('../../src/game/Home.js');
+    const S = await import('../../src/game/StationSave.js');
+    S.clearStation();
+    /* The tier gate is real: `low` is no reflection at all, which is what the
+     * rest of this suite boots at and why it sees none. */
+    assert(H.glassScale('low') === 0, 'the lowest tier still pays for a reflection');
+    assert(H.glassScale('high') > 0, 'the reflection is off at every tier');
+
+    const { bootWorld } = await import('./_coop.mjs');
+    const { prepareStation } = await import('../../src/game/Station.js');
+    diskFetch();
+    await prepareStation();
+    const { world } = await bootWorld({
+      level: 'station',
+      settings: { mode: 'station', level: 'station', allies: 0, quality: 'high' },
+      onWorld: (w) => { w._stationFloor = 44; },
+    });
+    try {
+      const h = world._home;
+      const M = h.mirror;
+      assert(M?.S, 'the cabin\'s glass has no reflection at the high tier');
+      const G = M.S;
+      const glass = M.glass;
+      assert(typeof glass.onBeforeRender === 'function', 'the glass has no render hook');
+
+      /* Everything in the scene, and everything the beauty pass would draw. */
+      let all = 0, drawn = 0, drawnTris = 0;
+      const shown = (o) => { for (let p = o; p; p = p.parent) if (!p.visible) return false; return true; };
+      world.scene.traverse((o) => {
+        if (!o.isMesh || !o.geometry) return;
+        all++;
+        if (!shown(o)) return;
+        drawn++;
+        const g = o.geometry;
+        drawnTris += (g.index ? g.index.count : g.attributes.position.count) / 3;
+      });
+
+      /* A RENDERER THAT REMEMBERS. `deckmirror.mjs`'s, plus a count of what
+       * was actually visible when `render` was called — which is the only way
+       * to say what a reflection costs without a card. */
+      const fake = (fw, fh) => {
+        const R = {
+          calls: [], target: null, autoClear: false, cleared: 0,
+          xr: { enabled: false },
+          shadowMap: { autoUpdate: true, needsUpdate: false },
+          state: { buffers: { depth: { setMask() {} } }, viewport() {} },
+          getDrawingBufferSize(v) { v.set(fw, fh); return v; },
+          getRenderTarget() { return R.target; },
+          setRenderTarget(t) { R.target = t; },
+          clear() { R.cleared++; },
+          render(scene, camera) {
+            let draws = 0, tris = 0;
+            scene.traverse((o) => {
+              if (!o.isMesh || !o.geometry || !shown(o)) return;
+              draws++;
+              const g = o.geometry;
+              tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
+            });
+            R.calls.push({ target: R.target, camera, draws, tris: Math.round(tris),
+              shadowAuto: R.shadowMap.autoUpdate });
+          },
+        };
+        return R;
+      };
+
+      const cam = world.engine.camera;
+      const stand = (m) => {
+        cam.position.copy(G.plane).addScaledVector(G.normal, m);
+        cam.lookAt(G.plane);
+        cam.updateMatrixWorld(true);
+      };
+
+      /* Standing at it, and the visibility of every object recorded first so
+       * that "the mask put everything back" is a measurement. */
+      const was = new Map();
+      world.scene.traverse((o) => was.set(o, o.visible));
+      stand(2.5);
+      world.time = 1;
+      const R1 = fake(1920, 1080);
+      glass.onBeforeRender(R1, world.scene, cam);
+      glass.onBeforeRender(R1, world.scene, cam);
+      glass.onBeforeRender(R1, world.scene, cam);
+      assert(R1.calls.length === 1, `three hooks in one frame rendered ${R1.calls.length} reflections`);
+      assert(R1.calls[0].target === G.target, 'the reflection went somewhere other than its own target');
+      assert(G.target.width === 960 && G.target.height === 540,
+        `a 1920×1080 buffer sized the target ${G.target.width}×${G.target.height}`);
+      assert(R1.calls[0].shadowAuto === false, 'the shadow cascades were re-rendered for the reflection');
+      assert(R1.shadowMap.autoUpdate === true, 'shadow auto-update was not restored');
+      assert(R1.target === null, 'the render target was not restored');
+      assert(G.material.uniforms.uOn.value === 1, 'the glass rendered and then showed nothing');
+
+      let moved = 0;
+      world.scene.traverse((o) => { if (was.get(o) !== o.visible) moved++; });
+      assert(moved === 0, `${moved} objects were left hidden after the reflection`);
+
+      /* THE COST, AND IT IS THE ROOM AND THE PLAYER AND NOT THE STATION. */
+      const ref = R1.calls[0];
+      assert(ref.draws < drawn * 0.25,
+        `the reflection drew ${ref.draws} of the scene's ${drawn} visible meshes — it is not masked`);
+      let room = 0;
+      h.group.traverse((o) => { if (o.isMesh && shown(o)) room++; });
+      let body = 0;
+      world.player?.rig?.root?.traverse((o) => { if (o.isMesh) body++; });
+      assert(body > 0, 'the player has no body to put in the glass');
+      assert(ref.draws >= body,
+        `the reflection is ${ref.draws} draws and the player's own body is ${body} — it is not in the glass`);
+
+      /* A SECOND FRAME IS A SECOND REFLECTION, and the clock is world.time. */
+      world.time = 2;
+      const R2 = fake(1920, 1080);
+      glass.onBeforeRender(R2, world.scene, cam);
+      assert(R2.calls.length === 1, 'the next frame did not reflect');
+
+      /* AND IT COSTS NOTHING WHERE NOBODY IS LOOKING. */
+      stand(40);
+      world.time = 3;
+      const R3 = fake(1920, 1080);
+      glass.onBeforeRender(R3, world.scene, cam);
+      assert(R3.calls.length === 0, 'the glass reflected the room from 40 m away');
+      assert(G.material.uniforms.uOn.value === 0, 'a stale reflection is still on the glass');
+
+      /* BEHIND THE GLASS THERE IS NOTHING TO REFLECT. */
+      stand(-1);
+      world.time = 4;
+      const R4 = fake(1920, 1080);
+      glass.onBeforeRender(R4, world.scene, cam);
+      assert(R4.calls.length === 0, 'the glass reflected the room from behind itself');
+
+      /* AND THE INK PREPASS RENDERS THROUGH A CLONE, WHICH IS NOT THE FRAME. */
+      stand(2.5);
+      world.time = 5;
+      const R5 = fake(1920, 1080);
+      glass.onBeforeRender(R5, world.scene, cam.clone());
+      assert(R5.calls.length === 0, 'a second camera got a second reflection');
+
+      /* THE SENTENCE ON SCREEN. It said "your own body in the glass" over a
+       * mirror that reflected nothing; whatever it says now, it may not claim
+       * the creator draws your body until the creator does. */
+      const src = await readFile(new URL('../../src/game/Home.js', import.meta.url), 'utf8');
+      const key = src.slice(src.indexOf('export function homeKey'), src.indexOf('export function homeWheel'));
+      const said = [...key.matchAll(/notify\?\.\((.*?)\);/gs)].map((m) => m[1]).join(' ');
+      assert(!/your own body in the glass/.test(said),
+        'the room still prints "your own body in the glass" — the creator does not draw one');
+      assert(/glass/.test(said), 'the mirror says nothing about the glass at all');
+
+      return `the target is ${G.target.width}×${G.target.height} of a 1920×1080 buffer at the high `
+        + `tier; standing 2.5 m off, the glass draws ${ref.draws} meshes / ${ref.tris} triangles — `
+        + `the room's ${room} and the player's ${body} — against ${drawn} / ${Math.round(drawnTris)} `
+        + `in the scene (${(100 * ref.draws / drawn).toFixed(1)}% of the draws, `
+        + `${(100 * ref.tris / drawnTris).toFixed(1)}% of the triangles), once a frame, and 0 from `
+        + `40 m, 0 from behind it and 0 through a cloned camera; every object put back`;
+    } finally { world.dispose?.(); S.clearStation(); }
+  });
 }

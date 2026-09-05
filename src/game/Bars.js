@@ -51,7 +51,7 @@
  * drink" is not a silhouette. It is a POPULATION at an HOUR, and this station
  * has had the machinery for that since V15 — `StationLife.headcount` says how
  * many are in a room at an hour and `StationLife.occupant` says who each of
- * them is. This file is a new answer to the second question, in three rooms,
+ * them is. This file is a new answer to the second question, in four rooms,
  * during one window of the day.
  *
  * ── WHAT LEAVE ACTUALLY IS ────────────────────────────────────────────────
@@ -85,6 +85,62 @@
  * the station's OWN garrison — `resident(seed, { role: 'security' })`, the
  * same census every other body in the drum comes out of. The bar is full of
  * soldiers either way; whether you know their names is what changes.
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  AMENDED TWICE, AND BOTH OF THE ARGUMENTS ABOVE WERE HALF WRONG
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * ── 1. THE ASK HAD THREE CLAUSES AND ONE OF THEM WAS BUILT ───────────────
+ *
+ * > *"you can assign troops to go on leave … you will actually see your real
+ * >  troops relaxing there … they will get increased morale and will heal
+ * >  over time."*
+ *
+ * The middle clause worked and was the only one that did. There was NO
+ * ASSIGNMENT CONTROL ANYWHERE: leave was `hashF(designation, day)`, the player
+ * could not choose who went, could not see who was out, and the game never
+ * once said the word. And there were ZERO WRITERS — `morale` did not appear in
+ * this file, `StationLife.js` or `Medbay.js`'s leave path, so a man came back
+ * from an evening in the cantina carrying exactly the nerve and the wound he
+ * left with, and nothing had marked him unavailable while he was gone.
+ *
+ * Worse, EIGHT of this file's exports had no caller anywhere under `src/` —
+ * `onLeave`, `takesLeave`, `ownHeads`, `crowdOf`, `isBar`, `barPlaces` and two
+ * constants — and `tools/checks/food.mjs` called two of them DIRECTLY, so the
+ * only thing in the building that had ever run them was the check asserting
+ * they worked. `BARS[].line` was reachable through `crowdOf` alone, which
+ * means *"the band is loud enough that nobody has to talk"* had never been
+ * read by a person. `_shipped.mjs` could not see any of it: `StationLife.js`
+ * imports `barman`, so the FILE was in every build and eleven-twelfths of it
+ * was furniture.
+ *
+ * What is built now: a LIBERTY BOARD at `#29`, the company barracks —
+ * `Station.stationKey` raises `world.onLeave` above the kiosk branch and
+ * `main.js`'s `showLeave` is the page. `grantLeave` writes one field on the
+ * man, `Company.fieldable` refuses to field him while it is there, and
+ * `stepLeave` pays him by the station hour beside `stepMedbay`. See THE
+ * LEDGER at the bottom of this file. `crowdOf` has a player-facing caller
+ * (`main.js`'s `showBar`, off `world.onBar`) and `food.mjs` no longer calls
+ * anything here that the game does not.
+ *
+ * ── 2. "A FOURTH ROOM WOULD BE THE WRONG FIX" WAS RIGHT ABOUT LEAVE AND ──
+ *      WRONG ABOUT THE ROOMS
+ *
+ * That argument answered "somewhere for soldiers to drink", and it still
+ * answers it: leave needed a population and not a place. It did not answer
+ * the sentence beside it — *"some being really fancy and incredibly upscale
+ * and others being incredibly grimy and sleezy"* — which is a CONTRAST, and a
+ * contrast needs both ends. The grimy end had been standing since the plan
+ * was written (#18 is a low den with a cashier behind bars and one exit; #61
+ * is a hole in the deck plate with chain-link over it). The upscale end was
+ * listed in V16 §6 as `#59` and was never built, so half of that sentence was
+ * furniture too.
+ *
+ * `#59 The Ascendant` is the other end: deck 40's inner band at 78°, on the
+ * balcony, looking down and across the atrium at #18's door. It is the only
+ * bar on the station with a window, the only one that turns anybody away, and
+ * an hour in it is worth nearly three times an hour in the Pit. That is the
+ * contrast priced rather than described — see `BARS` and `admits`.
  */
 
 import { PLACE } from './StationPlan.js';

@@ -270,18 +270,26 @@ const FIGHT_HAZARDS = [
  *   houseRead   how much of all that the HOUSE has already done and put in the
  *               price, which is the one dial here that is a room's character
  *               rather than a measurement — and it is where the punter's edge
- *               is set. The Pit is twelve at the rail and fourteen in the
- *               yard and the man taking the book has watched every one of them
- *               fight, so almost everything readable is already in his price;
- *               the Holo-theatre runs a twenty-pod yard off a feed; the Arena
- *               grades its pair and prices the match. Measured, at the values
- *               below, a punter who reads the card and backs the overlays
- *               makes between one and five points a bet at all three windows
- *               and a punter who does not loses. `tools/checks/tote.mjs` holds
- *               that band and `tools/_toteedge.mjs` prints the long run.
+ *               is set, because his edge IS the part the house has left. The
+ *               Pit is twelve at the rail and fourteen in the yard and the man
+ *               taking the book has watched every one of them fight; the
+ *               Holo-theatre prices a twenty-pod yard off a screen feed; the
+ *               Arena grades its pair and sells the match.
  *
- *   take        the window's cut, and it is now the smallest part of the
- *               story rather than the whole of it.
+ *   take        the window's cut, and it is now the smallest part of the story
+ *               rather than the whole of it. It also sets how SELECTIVE a
+ *               punter has to be — a bet has to beat the cut before it is a
+ *               bet at all — which is why the Pit's reader backs one card in
+ *               two and makes more a bet than the Holo-theatre's, who backs
+ *               one in two of a much flatter book.
+ *
+ * MEASURED, at the values below, on the book the window hands over and through
+ * `ticketFor`/`settleTickets`: a punter who reads the card and backs the
+ * overlays returns +4.0% at the Holo-theatre, +8.1% in the Pit and +3.3% at
+ * the Arena; one who picks with a pin returns −8.3%, −4.2% and −4.0%; one who
+ * backs the shortest price on the board returns −5.1%, −10.7% and −6.1%. Every
+ * one of those is held to a band by `tools/checks/tote.mjs` and the long run
+ * at a quarter of a million bets a window is `node tools/_toteedge.mjs`.
  */
 export const SKINS = Object.freeze({
   /**
@@ -293,7 +301,7 @@ export const SKINS = Object.freeze({
     id: 'PODRACE', word: 'race', entrantWord: 'pod', room: 'holo-theatre',
     advance: courseAdvance, mode: 'course',
     field: 8, vol: 0.20, daySd: 0.60, sigma: 0.70, houseRead: 0.65,
-    blind: 1.12, leftBlind: 0.86, stand: 1.53, rate: 0.39, grudge: 0, grudgeSd: 0,
+    blind: 1.12, leftBlind: 0.86, stand: 1.53, rate: 0.39, grudge: 0,
     terms: POD_TERMS, hazards: POD_HAZARDS,
     read: [{ key: 'rain', at: 0.4, k: 0.62 }, { key: 'heat', at: 0.62, k: 0.62 }],
     /* The mean hazard load the market DOES price — every field has wall
@@ -308,8 +316,8 @@ export const SKINS = Object.freeze({
   PIT: Object.freeze({
     id: 'PIT', word: 'bout', entrantWord: 'fighter', room: 'the-pit',
     advance: boutAdvance, mode: 'bout',
-    field: 6, vol: 0.20, daySd: 0.52, sigma: 0.75, houseRead: 0.88,
-    blind: 0.90, leftBlind: 0.65, stand: 2.57, rate: 0.69, grudge: 0.75, grudgeSd: 0.06,
+    field: 6, vol: 0.20, daySd: 0.52, sigma: 0.75, houseRead: 0.70,
+    blind: 0.90, leftBlind: 0.65, stand: 2.57, rate: 0.69, grudge: 0.75,
     bite: 7.5, pool: 100,
     terms: FIGHT_TERMS, hazards: FIGHT_HAZARDS,
     read: [{ key: 'crowd', at: 0.7, k: 0.06 }, { key: 'sand', at: 0.55, k: 0.06 }, { key: 'heat', at: 0.6, k: 0.06 }],
@@ -324,8 +332,8 @@ export const SKINS = Object.freeze({
   ARENA: Object.freeze({
     id: 'ARENA', word: 'bout', entrantWord: 'companion', room: 'the-arena',
     advance: boutAdvance, mode: 'bout',
-    field: 2, vol: 0.20, daySd: 0.46, sigma: 0.53, houseRead: 0.35,
-    blind: 0.70, leftBlind: 0.76, stand: 0.92, rate: 0.06, grudge: 0.50, grudgeSd: 0.13,
+    field: 2, vol: 0.20, daySd: 0.46, sigma: 0.53, houseRead: 0.60,
+    blind: 0.70, leftBlind: 0.76, stand: 0.92, rate: 0.06, grudge: 0.50,
     bite: 6.0, pool: 100,
     terms: FIGHT_TERMS, hazards: FIGHT_HAZARDS,
     read: [{ key: 'crowd', at: 0.6, k: 0.02 }, { key: 'sand', at: 0.35, k: 0.02 }, { key: 'heat', at: 0.45, k: 0.02 }],
@@ -722,18 +730,22 @@ function survivalFor(S, who) {
  * number `recordResult` wrote into `hidden.grudge`, and a check settles the
  * two against each other race by race rather than taking that on trust.
  *
- * ── AND NOBODY PRICES IT, WHICH IS A MEASUREMENT AND NOT AN OVERSIGHT ────
+ * ── AND IT ONLY PAYS TO PRICE IT ONCE THE FORM LINE IS READ ─────────────
  *
- * The obvious move is to hand the count to the punter as a term. It does not
- * pay, and the reason is that being beaten is not independent of being
- * beatable: the count is loaded with the weakness that produced it. Regressed
- * against the term the board cannot see, the count on its own comes out
- * NEGATIVE — −1.41 in the Pit, −0.83 at the Arena — and once `readForm`'s
- * form-line reading is in the model it is worth 0.005 of R² on top of it,
- * because the two columns are saying the same thing and the form line says it
- * better. So the column is PRINTED, and the term it creates is carried as
- * blindness (`grudgeSd`) by everybody who is not the sim. That is a decision
- * with a number under it rather than an omission.
+ * The obvious bettor adds the count to the strength, and for a long time this
+ * tree recorded that he LOST by it — four and a half points in the Pit — with
+ * the right reason attached: being beaten is not independent of being
+ * beatable, so the count is loaded with the weakness that produced it, and
+ * adding it on top of a rating that never priced that weakness double-counts.
+ * Regressed on its own against the term the board cannot see it still comes
+ * out NEGATIVE (−1.41 in the Pit, −0.83 at the Arena) for exactly that reason.
+ *
+ * `readForm` reading the FORM LINE is what changes it. The finishing record is
+ * the weakness, said better and said first, so once it is in the model the
+ * count is left carrying only what it really is — the grudge — and pricing it
+ * is worth ten points a bet in the Pit over ignoring it. `tools/checks/
+ * tote.mjs` drives both bettors and holds that gap, which is the clause that
+ * would go red if the two columns ever started saying the same thing again.
  */
 export const GRUDGE_STEP = 0.18;
 export const GRUDGE_CAP = 0.55;
@@ -782,19 +794,30 @@ export function grudgeCarried(card, { published = false } = {}) {
  * relative error handed to anybody backing favourites and nothing whatever to
  * do with reading a form book.
  *
- * NOBODY BUT THE SIM PRICES IT. The count is public — `Tote.writeHeadToHead`
- * publishes it — and pricing it still loses, for the reason over
- * `grudgeCarried`. So the board and the reading room carry it as BLINDNESS
- * (`grudgeSd`) rather than as a term: a house that prints the column knows
- * the field is carrying something without putting a number on which.
+ * THE BOARD HAS `houseRead` OF IT, on the same dial as the going splits and
+ * the form line, because the count is public — `Tote.writeHeadToHead` prints
+ * it — and a house that had not read a column it prints itself would be free
+ * money. What it has NOT priced goes back in as blindness: a book that knows
+ * the card is carrying a grudge without having put a number on which.
  */
 export function winProbabilities(card, ground, { hidden = false } = {}) {
   const S = SKINS[ground.skin];
+  const g = grudgeCarried(card, { published: !hidden });
   const s = card.entrants.map((e, i) => formStrength(e, ground, { hidden }).total
-    + (hidden ? S.grudge * grudgeCarried(card)[i] : S.houseRead * readForm(e, ground).bonus));
+    + (hidden ? S.grudge * g[i]
+      : S.houseRead * (readForm(e, ground).bonus + S.grudge * g[i])));
   const p = fieldProbabilities(s, hidden ? S.sigma
-    : Math.hypot(S.sigma, blindnessOf(ground, { survive: survivalFor(S, 'board') }), S.grudgeSd || 0));
+    : Math.hypot(S.sigma, blindnessOf(ground, { survive: survivalFor(S, 'board') }),
+      (1 - S.houseRead) * S.grudge * spreadOf(g)));
   return card.entrants.map((e, i) => ({ id: e.id, p: p[i] }));
+}
+
+/** The spread of a column across one field — what a house that has not priced
+ * WHICH grudge still knows the card is carrying. */
+function spreadOf(g) {
+  if (!g.length) return 0;
+  const m = g.reduce((a, b) => a + b, 0) / g.length;
+  return Math.sqrt(g.reduce((a, b) => a + (b - m) * (b - m), 0) / g.length);
 }
 
 /**
@@ -813,8 +836,16 @@ export function winProbabilities(card, ground, { hidden = false } = {}) {
  */
 export function researchedProbabilities(card, ground) {
   const S = SKINS[ground.skin];
-  const s = card.entrants.map((e) => formStrength(e, ground, { hidden: false }).total + readForm(e, ground).bonus);
-  const p = fieldProbabilities(s, Math.hypot(S.sigma, blindnessOf(ground, { survive: survivalFor(S, 'read') }), S.grudgeSd || 0));
+  /* The head-to-head is not inferred, it is COUNTED — `Tote.writeHeadToHead`
+   * publishes it and `GRUDGE_STEP × count` IS the term the sim carries — so
+   * the reader has it whole where the board has `houseRead` of it, and his σ
+   * is not widened for it, because a term read off a printed column is not a
+   * term that is still hiding. Where no room published the column the count is
+   * empty and this is the same reader it always was. */
+  const g = grudgeCarried(card, { published: true });
+  const s = card.entrants.map((e, i) => formStrength(e, ground, { hidden: false }).total
+    + readForm(e, ground).bonus + S.grudge * g[i]);
+  const p = fieldProbabilities(s, Math.hypot(S.sigma, blindnessOf(ground, { survive: survivalFor(S, 'read') })));
   return card.entrants.map((e, i) => ({ id: e.id, p: p[i] }));
 }
 

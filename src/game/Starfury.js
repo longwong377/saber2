@@ -110,6 +110,53 @@ export function auroraThrusters(mainThrust = 68000, rcsThrust = 4200) {
     t.push(new Thruster(`rcs_vert_${sy > 0 ? 'u' : 'd'}`, [0, sy * BOOM, 0], [0, -sy, 0], rcsThrust));
   }
   t.push(new Thruster('rcs_retro', [0, 0, RETRO_Z], [0, 0, -1], rcsThrust * 2));
+  /**
+   * ══ AND THE ROLL PAIR, WHICH THE PORT DID NOT HAVE ════════════════════
+   *
+   * ── THE DEFECT, MEASURED THE FIRST TIME ANYBODY FLEW IT ───────────────
+   *
+   * The nine mounts above give the airframe **no roll authority whatsoever**,
+   * and the arithmetic is one line: body-z torque is `cross(position, force)`
+   * in z, which is `p.x·F.y − p.y·F.x`. Every one of the nine has either its
+   * position or its force on the axis that zeroes that product — the four
+   * mains push along +z, the lateral pair pushes along ∓x from a mount at
+   * y = 0, the vertical pair pushes along ∓y from a mount at x = 0, and the
+   * retro is on the centreline. Roll demand in, nothing out.
+   *
+   * Nothing had noticed because nothing had ever asked: `CircuitPilot` steers
+   * by pointing at its own acceleration and never rolls, and `starfury.mjs`
+   * tested pitch and yaw. Driven with a stick on it, Q and E moved the craft
+   * **0.000 rad/s** in six seconds. §4's ask is *"six axes"* and the layout
+   * was five.
+   *
+   * ── WHY IT IS FOUR NOZZLES AND NOT FOUR MOUNTS ────────────────────────
+   *
+   * `assets/station/starfury_manifest.json` carries nine THRUSTER MOUNTS and
+   * the geometry stands a sponson at each; the sections it names are
+   * `rcs_sponson` AND `rcs_nozzle`, separately, because a sponson is a cluster
+   * and not a single bell. So these four stand at the two vertical sponsons
+   * that are already there — the same mounts, the same geometry — and fire
+   * across the hull rather than along it:
+   *
+   *     [0, +BOOM, 0] pushing ±x  →  torque (0, 0, ∓BOOM·F)
+   *     [0, −BOOM, 0] pushing ∓x  →  torque (0, 0, ∓BOOM·F)
+   *
+   * Two per direction, diagonally opposed, so a roll command is a COUPLE: the
+   * two forces cancel and only the torque survives. That is what makes this a
+   * sixth axis rather than a sideways shove with a spin in it.
+   *
+   * They cost nothing on any other axis, which is the property that keeps the
+   * rest of the model exactly as it was ported: a pure +z or −z translation
+   * demand dots to zero against all four, so `starfury.mjs`'s "a forward
+   * demand opens all four mains fully, with nothing sideways in it" is
+   * unchanged to the last bit.
+   */
+  for (const sy of [1, -1]) {
+    for (const sx of [1, -1]) {
+      t.push(new Thruster(`rcs_roll_${sy > 0 ? 'u' : 'd'}${sx > 0 ? 'r' : 'l'}`,
+        [0, sy * BOOM, 0], [sx * sy, 0, 0], rcsThrust));
+    }
+  }
   return t;
 }
 
@@ -270,13 +317,32 @@ export class Starfury {
    * means it works exactly as well as the thrusters allow and no better.
    */
   killRotation(dt, out = new Map()) {
+    const d = this.killRotationDemand(dt);
+    if (!d) { out.clear(); return out; }
+    return this.allocate([0, 0, 0], d, out);
+  }
+
+  /**
+   * …AND THE DEMAND ON ITS OWN, WHICH IS WHAT A PILOT WITH TWO HANDS NEEDS.
+   *
+   * `killRotation` above allocates the whole airframe to stopping the tumble,
+   * which is right for a craft nobody is flying and wrong for one that is: the
+   * allocator sums a translation term and a rotation term PER THRUSTER, so a
+   * player holding the attitude brake and the throttle at the same time must
+   * hand both into ONE `allocate` call. Two calls merged afterwards is a
+   * different ship — see `Pilot.PlayerPilot.update`, the only other caller.
+   *
+   * Returns null when there is nothing to stop, so a caller can tell "the
+   * brake did nothing" from "the brake asked for zero".
+   */
+  killRotationDemand(dt) {
     const w = this.angularVelocity;
-    if (norm(w) < 1e-6) { out.clear(); return out; }
+    if (norm(w) < 1e-6) return null;
     /* The torque that would stop it inside `dt`, in body frame, capped at
      * what the RCS can actually make. */
     const [ix, iy, iz] = this.inertia;
     const want = [-w[0] * ix / dt, -w[1] * iy / dt, -w[2] * iz / dt];
-    return this.allocate([0, 0, 0], scale(unit(want), Math.min(1, norm(want) / 1e5)), out);
+    return scale(unit(want), Math.min(1, norm(want) / 1e5));
   }
 
   /**
@@ -285,10 +351,18 @@ export class Starfury {
    * `velocity *= 0.98`.
    */
   killVelocity(out = new Map()) {
+    const d = this.killVelocityDemand();
+    if (!d) { out.clear(); return out; }
+    return this.allocate(d, [0, 0, 0], out);
+  }
+
+  /** The retro burn as a body-frame demand, for the same reason
+   *  `killRotationDemand` exists: a pilot holding both brakes and a stick has
+   *  one allocation, not three. Null when there is nothing to stop. */
+  killVelocityDemand() {
     const v = this.velocity;
-    if (norm(v) < 1e-4) { out.clear(); return out; }
-    const back = this.worldToBody(scale(unit(v), -1));
-    return this.allocate(back, [0, 0, 0], out);
+    if (norm(v) < 1e-4) return null;
+    return this.worldToBody(scale(unit(v), -1));
   }
 
   /**

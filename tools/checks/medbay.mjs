@@ -751,4 +751,100 @@ export async function run({ check, assert, near }) {
     return 'a man struck off the roll goes dark in the ward on the fold; a hand-edited save '
       + `puts 2 ghosts in tanks and gets 0, and 9e9/−4 health come back as whole/${edited.men[1].hp}`;
   }));
+
+  /* ════════════════════════════════════════════════════════════════════════
+   *  AND THE TWO PLACES A PLAYER ACTUALLY MEETS IT
+   * ════════════════════════════════════════════════════════════════════════ */
+
+  check('medbay: the roll page says he is hurt, on the page the player reads about him', async () => {
+    /**
+     * §C1's own argument for why it is the best item on the list is that it
+     * *"makes a consequence visible that the game already tracks and never
+     * shows"* — and the roll page was the last place it was invisible.
+     * `Medbay.conditionRow` was written for this row, in `Company.dossier`'s
+     * `[label, value]` shape, with a comment saying which page it was for, and
+     * for as long as it existed NOTHING CALLED IT: a man at a tenth of his
+     * health, in a tank, eight hours off his feet, had a page listing Rank,
+     * Role, Service, Kills, Wounds and Grounds and not one word about it.
+     *
+     * DRIVEN THROUGH THE RENDERED PAGE and compared against `conditionRow`
+     * itself, which is `company.mjs`'s rule for this page and the reason a
+     * check here cannot drift into being a second copy of the words.
+     */
+    const { makeDocument } = await import('./_page.mjs');
+    const { Menu, DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+    const INDEX = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
+    return withCleanStore(() => {
+      const r = freshRoll(3);
+      const [him, well] = r.all;
+      him.body = hurtBody(0.2);
+      well.body = hurtBody(1);
+      Company.keep(r.all, { army: 'republic', deployed: r.all, ground: 'geonosis' });
+      Medbay.checkIn('republic', him.designation);
+      const roll = Company.load('republic');
+      const hurt = roll.men.find((m) => m.designation === him.designation);
+      const whole = roll.men.find((m) => m.designation === well.designation);
+      const row = Medbay.conditionRow(hurt, roll);
+      assert(row, `${him.designation} is at ${hurt.hp} of his health and conditionRow says nothing`);
+      assert(Medbay.conditionRow(whole, roll) === null, 'a whole man gets a casualty row');
+
+      const doc = makeDocument(INDEX);
+      const restore = doc.install();
+      try {
+        const menu = new Menu(structuredClone(DEFAULT_SETTINGS), {});
+        menu._showCompany(`republic/${him.designation}`);
+        const page = doc.getElementById('company-page').textContent.replace(/\s+/g, ' ');
+        assert(page.includes(row[0]) && page.includes(row[1]),
+          `the roll page never says "${row[0]}: ${row[1]}" — it reads "${page.slice(0, 200)}"`);
+        /* AND THE WHOLE MAN'S PAGE IS UNCHANGED, which is what `null` is for. */
+        menu._showCompany(`republic/${well.designation}`);
+        const clean = doc.getElementById('company-page').textContent.replace(/\s+/g, ' ');
+        assert(!/Condition/.test(clean), `a man who came home whole has a Condition row: "${clean.slice(0, 200)}"`);
+        return `${him.designation}'s page reads "${row[0]}: ${row[1]}"; ${well.designation}'s has no such row`;
+      } finally { restore(); }
+    });
+  });
+
+  check('medbay: the ward explains itself the first time you come home and never again', () => withCleanStore(() => {
+    /**
+     * SHARK §14: *"a guide … walks them the spine to the concourse once,
+     * naming the decks. After that, never again."* `StationSave` has held the
+     * machinery for that since the fold was written — `seen`, `hasSeen`,
+     * `markSeen` — and NOTHING HAS EVER CALLED `markSeen`, so nothing on this
+     * station had ever been seen and the once-only guide was a store with no
+     * writer. `StationSave`'s own header cites it as its standing example of
+     * what an export with no caller is worth.
+     *
+     * The medbay is the first thing to use it because §C1's fifth clause is a
+     * rule the player cannot see: *"You can leave them. A man not checked in
+     * heals slower."* Told once, in the two numbers this file owns, and then
+     * never again — which is the assertion.
+     */
+    const r = freshRoll(4);
+    r.all[0].body = hurtBody(0.2);
+    for (const t of r.all.slice(1)) t.body = hurtBody(1);
+    Company.keep(r.all, { army: 'republic', deployed: r.all, ground: 'geonosis' });
+    const roll = Company.load('republic');
+
+    const first = Medbay.arrivalNotice(roll);
+    const again = Medbay.arrivalNotice(roll);
+    assert(first && again, 'a company with a casualty on it raised no banner');
+    assert(first.title === again.title, `the count moved between two reads: ${first.title} then ${again.title}`);
+    assert(first.body.length > again.body.length,
+      `the first banner is not the longer one: "${first.body}" then "${again.body}"`);
+    /* THE TWO NUMBERS ARE THIS FILE'S AND ARE READ, NOT TYPED — a guide that
+     * spelled them out would be the hand-maintained twin. */
+    assert(first.body.includes(String(Medbay.TANKS)),
+      `the guide never says how many tanks there are: "${first.body}"`);
+    assert(first.body.includes(`${Math.round(Medbay.UNTENDED * 100)}%`),
+      `the guide never states the untended rate: "${first.body}"`);
+    assert(!/\?/.test(first.body), 'the guide asks a question — nothing forces the walk');
+    /* AND IT IS THE STORE THAT REMEMBERS, not a module flag: a fresh station
+     * is a fresh player and gets told again. */
+    clearStation();
+    const fresh = Medbay.arrivalNotice(roll);
+    assert(fresh.body === first.body,
+      `a fresh save did not get the guide: "${fresh.body}" against "${first.body}"`);
+    return `first: "${first.body}" · after: "${again.body}"`;
+  }));
 }

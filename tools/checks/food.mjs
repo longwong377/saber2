@@ -398,6 +398,217 @@ export async function run({ check, assert }) {
     return `${rows.length} dishes cooked ${runs} times over five step sizes, `
       + `${shortest.toFixed(1)}–${longest.toFixed(1)} s each, every line once and in order`;
   });
+  /* ══════════════════════════════════════════════════════════════════════ */
+
+  check('food: the cook MOVES — every stall, measured in millimetres', async () => {
+    /**
+     * ══ THE CLAUSE THIS FILE DID NOT HAVE ════════════════════════════════
+     *
+     * The check above drives the whole of every cook and asserts that it ends
+     * having said its lines. It passed, unchanged, on a build where NOTHING
+     * ANYWHERE MOVED: `Food.Cook` was five sentences in a banner, the counter
+     * pane held `world.paused` true behind it, and the lane's own promise of
+     * *"one animation loop per stall"* was zero loops. A cutscene check that
+     * only reads the script cannot tell a cutscene from a subtitle.
+     *
+     * So this one measures the geometry. The real `CookSet` is built on a
+     * fabricated desk — the four world fields `StationKit.counter()` really
+     * records — with a real `Rig` behind it, every dish in the tree is cooked
+     * at 1/60, and what is asserted is DISTANCE TRAVELLED by meshes and by
+     * hand bones. There is no field to set and no flag to return: a build
+     * where the pan does not move fails here in millimetres.
+     *
+     * ── AND IT REFUSES THE THREE WAYS A MOTION CHECK LIES ────────────────
+     *
+     *   A TELEPORT IS NOT AN ANIMATION. The biggest single frame is bounded,
+     *   so a piece that jumps to its final place on frame one and sits there
+     *   cannot pass on total travel.
+     *   NEITHER IS ONE BUSY FRAME. Motion has to be spread — most frames of
+     *   the cook must move something — so a shiver on the hand-over is not a
+     *   cook either.
+     *   AND IT HAS TO BE THE THING THE LINE SAYS. The step whose `move` is
+     *   `toss` must move the pan further than the step whose `move` is
+     *   `still` does, per cook, which is the whole claim of putting `move` on
+     *   the step rather than in a table beside it.
+     */
+    const F = await import('../../src/game/Food.js');
+    const { CookSet } = await import('../../src/game/StationKit.js');
+    const { Rig, humanoidSkeleton } = await import('../../src/game/Rig.js');
+
+    /* The nine materials a deck publishes, by the keys `CookSet` names. Real
+     * materials rather than stubs, because a mesh is what is being measured. */
+    const mats = {};
+    for (const k of ['hull', 'dark', 'deep', 'wing', 'mark', 'strip', 'status', 'screen', 'glass']) {
+      mats[k] = new THREE.MeshStandardMaterial({ name: `station-40-${k}` });
+    }
+    /* #17's own stall, to the centimetre: 1.1 m deep, a 1.15 m top, its face
+     * toward −Z. `at`, `front`, `behind`, `w`, `d` and `h` are exactly the six
+     * fields the emit records — see `StationKit.counter`. */
+    const DESK = {
+      at: { x: 0, y: 0, z: 0 }, front: { x: 0, y: 0, z: -1.55 }, behind: { x: 0, y: 0, z: 1.1 },
+      w: 6.7, d: 1.1, h: 1.15,
+    };
+    const counter = { id: 'foodcourt', place: 17, name: 'The food court' };
+
+    const fresh = () => {
+      const rig = new Rig(humanoidSkeleton(1));
+      rig.hipsBone.obj.position.set(DESK.behind.x, 0.95, DESK.behind.z);
+      const body = {
+        position: new THREE.Vector3(DESK.behind.x, 0, DESK.behind.z),
+        velocity: new THREE.Vector3(), facing: Math.PI, dead: false, lod: 3, rig,
+      };
+      return {
+        scene: new THREE.Scene(), statics: [],
+        player: { position: new THREE.Vector3(DESK.front.x, 0, DESK.front.z) },
+        _station: { mats, counters: new Map([[17, [DESK]]]), keepers: [{ id: 'foodcourt', body }] },
+        body,
+      };
+    };
+
+    const rows = [...F.dishes(), ...F.CHARGES];
+    const DT = 1 / 60;
+    const worst = { jump: 0, id: null };
+    let leastTravel = Infinity, leastId = null, leastBusy = 1, poorestHand = Infinity;
+    let cooked = 0, piecesSeen = 0;
+
+    for (const d of rows) {
+      const prep = F.prepOf(d);
+      assert(prep && F.GEAR[prep.id], `${d.id} is made by '${prep?.id}' and no gear says what stands on the stall`);
+      const world = fresh();
+      const rig = world.body.rig;
+      const cook = new F.Cook(d, { say: () => {}, done: () => {} });
+      const set = new CookSet(world, counter, cook, prep.id);
+      assert(!set.done, `${d.id} built no cook set at a desk that exists`);
+      const pieces = [...Object.values(set.parts), ...set.puffs];
+      assert(pieces.length >= 3, `${d.id} put ${pieces.length} pieces on the counter`);
+      piecesSeen += pieces.length;
+
+      const at = (m) => { m.updateWorldMatrix(true, false); return new THREE.Vector3().setFromMatrixPosition(m.matrixWorld); };
+      const prev = new Map(pieces.map((m) => [m, at(m)]));
+      let hL = rig.worldPos('handL', new THREE.Vector3());
+      let hR = rig.worldPos('handR', new THREE.Vector3());
+      let travel = 0, handTravel = 0, frames = 0, busy = 0, jump = 0;
+      /* Per MOVE, so the last clause can ask whether the pan moved where the
+       * line said it would. */
+      const byMove = new Map();
+      while (!set.done && frames < 2000) {
+        const move = cook.move;
+        set.step(DT);
+        frames++;
+        let thisFrame = 0;
+        for (const m of pieces) {
+          if (!m.visible) continue;
+          const p = at(m);
+          const dd = p.distanceTo(prev.get(m));
+          prev.set(m, p);
+          thisFrame += dd;
+          if (dd > jump) jump = dd;
+        }
+        const nL = rig.worldPos('handL', new THREE.Vector3());
+        const nR = rig.worldPos('handR', new THREE.Vector3());
+        handTravel += nL.distanceTo(hL) + nR.distanceTo(hR);
+        hL = nL; hR = nR;
+        travel += thisFrame;
+        if (thisFrame > 0.0001) busy++;
+        byMove.set(move, (byMove.get(move) || 0) + thisFrame);
+      }
+      assert(cook.done, `${d.id} never finished`);
+      cooked++;
+      /* THE DISH ARRIVED, AND IT ARRIVED ON YOUR SIDE OF THE TOP. `serve` is
+       * the one move that crosses the middle, and a bowl that ends up behind
+       * the counter is a bowl the cook kept. */
+      assert(set.made > 0.98, `${d.id} finished with the dish ${(set.made * 100) | 0}% made`);
+      const dish = at(set.parts.dish);
+      const toward = dish.z - DESK.at.z;
+      assert(toward < -0.1, `${d.id}'s dish finished ${toward.toFixed(2)} m from the middle of the top, on the cook's side`);
+
+      if (travel < leastTravel) { leastTravel = travel; leastId = d.id; }
+      if (handTravel < poorestHand) poorestHand = handTravel;
+      leastBusy = Math.min(leastBusy, busy / frames);
+      if (jump > worst.jump) { worst.jump = jump; worst.id = d.id; }
+
+      assert(travel > 0.5, `${d.id} moved ${(travel * 1000).toFixed(0)} mm of geometry over ${frames} frames — the stall stood still`);
+      assert(handTravel > 0.4, `${d.id} moved the cook's hands ${(handTravel * 1000).toFixed(0)} mm — nobody made it`);
+      assert(busy / frames > 0.75,
+        `${d.id} moved something on only ${busy} of ${frames} frames — a cook is not one busy frame`);
+      assert(jump < 0.45, `${d.id} moved a piece ${(jump * 1000).toFixed(0)} mm in one frame — that is a teleport, not a cook`);
+
+      /* AND THE MOTION IS WHERE THE LINE IS. Every prep has at least one step
+       * that does something and the doing steps beat the standing ones. */
+      const still = byMove.get('still') || 0;
+      const busiest = [...byMove.entries()].sort((a, b) => b[1] - a[1])[0];
+      assert(busiest && busiest[0] !== 'still' && busiest[1] > still,
+        `${d.id}'s busiest step is '${busiest?.[0]}' — the stall is at its liveliest while the banner says nothing is happening`);
+    }
+
+    /* AND THE KEEPER IS AT HIS OWN COUNTER, which is what makes the hands
+     * reach the pan at all: `dressKeepers` stands him 0.55 m clear of the back
+     * edge and an arm is 0.55 m long. */
+    const w2 = fresh();
+    const c2 = new F.Cook('f-noodle', { say: () => {} });
+    const s2 = new CookSet(w2, counter, c2, 'wok');
+    s2.step(DT);
+    const gap = Math.abs(w2.body.position.z - DESK.at.z) - DESK.d / 2;
+    assert(gap > 0 && gap < 0.45, `the cook works ${gap.toFixed(2)} m back from the edge of his own counter`);
+    s2.dispose();
+    assert(w2.scene.children.length === 0 && w2.statics.length === 0,
+      'the cook set left its meshes on the station after the hand-over');
+
+    return `${cooked} cooks driven at 1/60 on a real desk and a real skeleton; `
+      + `${piecesSeen} pieces built between them; the quietest (${leastId}) still travelled `
+      + `${(leastTravel * 1000).toFixed(0)} mm with ${(poorestHand * 1000).toFixed(0)} mm of hand, `
+      + `something moved on ${(leastBusy * 100).toFixed(0)}% of frames and the worst single frame was `
+      + `${(worst.jump * 1000).toFixed(0)} mm`;
+  });
+
+  /* ══════════════════════════════════════════════════════════════════════ */
+
+  check('food: the cook runs in the room, on the world\'s own clock', async () => {
+    /**
+     * ══ THE CONSTRAINT THE ANIMATION HAD TO GET PAST ═════════════════════
+     *
+     * `Screens.take` sets `world.paused = true`, and `frame()` steps the world
+     * only while the state is 'playing'. The counter is raised through `take`,
+     * so for as long as the pane was up NOTHING on the station could move —
+     * an animation built behind it would have been unreachable code with a
+     * check passing over the top of it.
+     *
+     * Two lines hold the fix, and both are read here rather than promised:
+     * `cookAtCounter` gives the screen back before the first line lands, and
+     * `stepStation` — not a `setTimeout` — is what steps the cook. A timer
+     * would put us back where we started: lines arriving over a still room.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const i0 = main.indexOf('function cookAtCounter(');
+    assert(i0 > 0, 'nothing in main.js starts a cook any more');
+    const region = strip(main.slice(i0, main.indexOf('\n}\n', i0)));
+    assert(/\bresume\(\)/.test(region) && /closePane\('counter'\)/.test(region),
+      'ordering a dish no longer hands the screen back — the world is paused behind the pane '
+      + 'and the stall cannot move a millimetre, which is the defect this lane was opened on');
+    assert(/new CookSet\(/.test(region), 'main.js orders a dish without building a stall to cook it on');
+
+    const st = strip(await src('game/Station.js'));
+    const iStep = st.indexOf('export function stepStation');
+    assert(iStep > 0 && st.indexOf('stepCook(world, dt)', iStep) > iStep,
+      'stepStation no longer steps the cook — the animation has no clock but a timer');
+
+    /* AND EVERY STEP IN THE TABLE NAMES A MOVE THE RENDERER KNOWS. A prep
+     * added tomorrow with no `move` on a step would stand still through it
+     * with nothing to say so — §2.3's "a missing thing gets an error". */
+    const F = await import('../../src/game/Food.js');
+    let steps = 0;
+    for (const [id, prep] of Object.entries(F.PREP)) {
+      for (const s of prep.steps) {
+        assert(F.MOVES.includes(s.move),
+          `${id}.${s.id} moves by '${s.move}', which is not one of the ${F.MOVES.length} moves a stall can make`);
+        steps++;
+      }
+    }
+    return `the pane is handed back before the first line, stepStation drives the cook, `
+      + `and all ${steps} steps across ${Object.keys(F.PREP).length} preps name one of ${F.MOVES.length} moves`;
+  });
+
 
   /* ══════════════════════════════════════════════════════════════════════ */
 
@@ -764,9 +975,14 @@ export async function run({ check, assert }) {
     assert(field.length === 12 - room, `fieldable offers ${field.length} of ${12 - room} men in barracks`);
     for (const name of out) assert(!field.includes(name), `${name} is on leave and still fieldable`);
 
+    /* THE MUSTER FILLS THE GAP WITH RECRUITS, which is the right behaviour and
+     * is why this counts NAMES rather than heads: a line of twelve is still a
+     * line of twelve, and not one of the men in it is on leave. */
     const plan = { army: 'republic', want: 12, armyMode: true };
     const line = (Muster.lineup(plan, Co.load('republic')) || []).map((m) => m.designation);
-    assert(line.length === 12 - room, `the muster fielded ${line.length} men with ${room} on leave`);
+    for (const name of out) assert(!line.includes(name), `${name} was fielded while he was on leave`);
+    assert(line.filter((d) => field.includes(d)).length === 12 - room,
+      `the muster took ${line.filter((d) => field.includes(d)).length} of the ${12 - room} veterans in barracks`);
     Muster.setPicks('republic', [...out]);
     const picked = (Muster.lineup(plan, Co.load('republic')) || []).map((m) => m.designation);
     for (const name of out) {
@@ -825,14 +1041,14 @@ export async function run({ check, assert }) {
     S.clearStation();
     S.setStationHour(18);
     Co.clear('republic');
-    const men = [
-      /* A SERGEANT, HURT, sent to the fancy room. */
-      { type: 'clone', designation: 'CT-1000', kind: 'flesh', xp: 22, morale: 0.50, hp: 0.40, joined: 1 },
-      /* A TROOPER, HURT, sent to the grimiest room that will have him. */
-      { type: 'clone', designation: 'CT-1007', kind: 'flesh', xp: 1, morale: 0.50, hp: 0.40, joined: 1 },
-      /* AND ONE WHO STAYED IN THE BARRACKS — the control. */
-      { type: 'clone', designation: 'CT-1014', kind: 'flesh', xp: 1, morale: 0.50, hp: 0.40, joined: 1 },
-    ];
+    /* NINE MEN, so `berths` is three and the two passes below both fit. A roll
+     * of three has ONE berth and the second grant would be refused — which is
+     * the ceiling working, and would have looked here like a ledger that
+     * credited nothing. */
+    const men = Array.from({ length: 9 }, (_, i) => ({
+      type: 'clone', designation: `CT-${1000 + i * 7}`, kind: 'flesh',
+      xp: i === 0 ? 22 : 1, morale: 0.50, hp: 0.40, joined: 1,
+    }));
     Co.save({ ...Co.blank('republic'), men });
     const fancy = B.BARS.find((b) => b.rope > 0);
     const grimy = B.BARS.filter((b) => !b.rope).reduce((a, b) => (b.ease < a.ease ? b : a));
@@ -846,6 +1062,8 @@ export async function run({ check, assert }) {
       return { morale: m.morale, hp: M.hpOf(m) };
     };
     const was = { sgt: read('CT-1000'), trp: read('CT-1007'), home: read('CT-1014') };
+    assert(Co.load('republic').men.filter((m) => m.leave).length === 2,
+      'both passes did not take — the fixture has fewer berths than it grants');
     assert(was.sgt.morale === 0.5 && was.sgt.hp === 0.4, 'the fixture did not take');
 
     /**
@@ -854,11 +1072,23 @@ export async function run({ check, assert }) {
      * shape `stepStation` hands `stepLeave`: a clock and nothing else.
      */
     const world = { _station: { hour: 18 } };
-    for (let i = 0; i < 60 * 120 * 8; i++) {
-      world._station.hour += (1 / 60) / 120;
-      S.setStationHour(world._station.hour);
-      B.stepLeave(world, 1 / 60);
-    }
+    /**
+     * THE CLOCK IS WOUND THE WAY `tickStationClock` WINDS IT, and the first cut
+     * of this check did not: it called `setStationHour` with the raw hour every
+     * frame, so at midnight the store folded a day AND the world's hour reset,
+     * and `stepLeave`'s `day * 24 + hour` jumped twenty-four hours in one
+     * settle. Both men went straight to the ceiling and the check read the two
+     * ends of the station as equally good. The game's own rule is that the
+     * UNWRAPPED hour goes into the fold and the wrapped remainder comes back.
+     */
+    const wind = (secs) => {
+      for (let i = 0; i < 60 * secs; i++) {
+        world._station.hour += (1 / 60) / 120;
+        if (world._station.hour >= 24) world._station.hour = S.setStationHour(world._station.hour);
+        B.stepLeave(world, 1 / 60);
+      }
+    };
+    wind(120 * 8);
     const now = { sgt: read('CT-1000'), trp: read('CT-1007'), home: read('CT-1014') };
 
     /* THE NERVE MOVED, AND IT MOVED BY THE ROOM. */
@@ -885,11 +1115,7 @@ export async function run({ check, assert }) {
      * beside your commander under fire tops a man out; a night off may steady
      * him that far and no further, or a bar is stronger than a battle. */
     const { MORALE } = await import('../../src/game/Morale.js');
-    for (let i = 0; i < 60 * 120 * 40; i++) {
-      world._station.hour += (1 / 60) / 120;
-      S.setStationHour(world._station.hour);
-      B.stepLeave(world, 1 / 60);
-    }
+    wind(120 * 40);
     const long = read('CT-1000');
     assert(long.morale <= MORALE.PRESENCE_CAP + 1e-9,
       `two days in a bar carried a man to ${long.morale.toFixed(3)} against a cap of ${MORALE.PRESENCE_CAP}`);

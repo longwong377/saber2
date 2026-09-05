@@ -89,3 +89,35 @@ for (const b of bets) {
   const e = G.drumTicketEdge(b, 24000);
   console.log(`  ${pad(b.label, 18)} ${(e * 100).toFixed(2)}%`);
 }
+
+/* ── 4. THROUGH THE WALLET, which is where a house edge is actually felt.
+ *      `Station.stakeAtDrum` spends and `payAtDrum` pays, so this is the
+ *      purse's own arithmetic and not the wheel's. */
+const S = await import('../src/game/Station.js');
+const C = await import('../src/game/Credits.js');
+console.log('\n── THE PURSE, 24 hours x 11 rows x 60 days at 25 a bet ───────');
+for (const [name, strike, stop] of [
+  ['before (shipped)', (b, hour, day) => ({ ...b, on: (Math.floor(hour) + 1) % 24, day }),
+    (t) => O.drumAt(t.on, t.day)],
+  ['after  (drumTicket)', (b, hour, day) => G.drumTicket(b, hour, day), (t) => G.drumStop(t)],
+]) {
+  C.clearCredits(); C.pay(2200, 'seed'); C.pay(2200, 'seed'); C.pay(2200, 'seed');
+  let staked = 0, back = 0, refused = 0;
+  const start = C.purse();
+  for (let day = 0; day < 60; day++) for (let h = 0; h < 24; h++) for (const b of bets) {
+    const struck = S.stakeAtDrum({ ...b, stake: 25 });
+    if (!struck.ok) { refused++; continue; }
+    staked += 25;
+    const t = strike(struck.ticket, h + 0.4, day);
+    /* `payAtDrum` is what the panel calls, and `drumPays` inside it is the
+     * CURRENT one either way — the only thing that differs is the ticket. */
+    const paid = name.startsWith('before')
+      ? (O.drumPays(t, stop(t)) > 0 ? C.pay(O.drumPays(t, stop(t)), 'drum') : 0)
+      : S.payAtDrum(t, stop(t)).paid;
+    back += paid;
+    if (C.purse() < 25) { C.pay(2200, 'seed'); C.pay(2200, 'seed'); }
+  }
+  console.log(`  ${name}  staked ${staked}, paid back ${back} — the house keeps `
+    + `${((1 - back / staked) * 100).toFixed(2)}% (${refused} bets refused for want of credits)`);
+  void start;
+}

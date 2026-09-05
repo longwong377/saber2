@@ -310,7 +310,12 @@ export const PREP = {
  *           null — a cold prep has nothing to light.
  */
 export const GEAR = {
-  wok: { vessel: 'wok', tool: 'ladle', lid: false, fire: 'burner' },
+  /* NO TOOL ON THE WOK, and that is the table saying something: not one of
+   * its four steps names a move that would use one, so a ladle here would be
+   * a mesh lying on a counter for the whole of a cook doing nothing — the
+   * dead control this tree keeps deleting, in geometry. Both his hands are on
+   * the pan, which is what `toss` is. */
+  wok: { vessel: 'wok', tool: null, lid: false, fire: 'burner' },
   fry: { vessel: 'vat', tool: 'spider', lid: false, fire: 'burner' },
   pot: { vessel: 'pot', tool: 'ladle', lid: true, fire: 'burner' },
   steam: { vessel: 'basket', tool: null, lid: true, fire: 'burner' },

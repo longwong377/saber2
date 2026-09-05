@@ -1870,6 +1870,21 @@ const KIOSK_TAB = {
    * It is raised by `Home.homeKey` through `world.onKiosk('mirror')` — the
    * same `Screens.take` door every counter on the station uses, so Escape is
    * never a dead key over it and `kioskOpen` still gates the card's hide.
+   *
+   * ── AND THE GLASS IS A REAL REFLECTION NOW, WHICH THIS IS NOT ────────────
+   *
+   * `Home.js`'s mirror chapter builds a planar reflection of the cabin and the
+   * body standing in it, measured at 77 draws against the beauty pass's 447
+   * and paid only within seven metres of the glass. That is the FIRST half of
+   * §1.3's sentence. This row is still the second half and is still a menu
+   * page: the creator's controls drive `Menu.js`'s own preview figure, and
+   * what they change reaches your body at the next deploy exactly as it always
+   * has. Driving the live body needs a re-dress path that does not exist —
+   * `dressPreviewFigure` ATTACHES cloth to a figure that has none, so on a
+   * dressed player it hangs a second cape on the first, and species and build
+   * change the skeleton, which is a rebuild. Until that exists, the room says
+   * so: `homeKey`'s notification names the glass and names where the controls
+   * land, and claims nothing else.
    */
   mirror: 'saber',
 };
@@ -2154,9 +2169,10 @@ function showHabitat() {
       html += `<p class="sub">Next: ${esc(p.next.label)} — ${esc(p.next.note)}`
         + (p.next.both ? ` (${p.next.runs} more runs AND ${p.next.care} more here)` : '') + '</p>';
     }
-    /* THE TWO THINGS THIS ROOM CAN DO, and the reason a disabled one is
-     * disabled — a button that refuses without saying why is the shape this
-     * codebase keeps removing. */
+    /* THE THREE THINGS THIS ROOM CAN DO — feed, groom and play, which is what
+     * its own sign has said since the room landed — and the reason a disabled
+     * one is disabled: a button that refuses without saying why is the shape
+     * this codebase keeps removing. */
     html += '<div class="acts">' + p.care.acts.map((a) =>
       `<button class="care" data-act="${esc(a.act)}"${a.can ? '' : ' disabled'}`
       + `${a.why ? ` title="${esc(a.why)}"` : ''}>${esc(a.label)}</button>`).join('') + '</div>';

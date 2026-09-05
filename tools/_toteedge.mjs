@@ -43,7 +43,7 @@ for (const id of venues) {
   const t0 = Date.now();
   const r = playWindow(id, { bets, yardSeed: 90210 });
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
-  const band = (b) => `${pct(b.roi)} ± ${pct(b.se)}`;
+  const band = (b) => `${pct(b.roi)} ± ${pct(b.se)} paid  (model ${pct(b.expect)} ± ${pct(b.expectSe)})`;
   console.log(`${v.name} (${id}) — take ${pct(S.take)}, ${r.days.toLocaleString()} days, `
     + `${r.races.toLocaleString()} races, ${secs}s`);
   console.log(`   form-reader  ${band(r.reader)}  on ${r.reader.bets.toLocaleString()} bets `

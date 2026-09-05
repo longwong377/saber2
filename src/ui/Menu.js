@@ -54,6 +54,10 @@ import {
   CALLSIGN_MAX as companyCallsignMax,
   honoursOf as companyHonours, bondRows as companyBondRows,
 } from '../game/Company.js';
+/* V16 §C1's one row about a casualty, in `Company.dossier`'s own shape — see
+ * `_companyManHtml`. `Medbay.js` owns the thresholds and the tank's rate, and
+ * this page renders what it says rather than deciding any of it. */
+import { conditionRow } from '../game/Medbay.js';
 // The Descent's ladder, named on the Deploy panel because the mode picks its
 // own places and the Theatre column has no say in it — see _syncTheatre.
 // The rest of this import is the DEFLECTION LADDER, and it is here because the
@@ -7891,6 +7895,28 @@ export class Menu {
   /** One man: what he is, what he has done, and the two things you may change. */
   _companyManHtml(roll, m) {
     const rows = companyDossier(m, roll.army);
+    /**
+     * ── AND WHETHER HE IS HURT — V16 §C1 ──────────────────────────────
+     *
+     * *"lets make the medbay area of the station actually do something … you
+     * actually see them being healed."* §C1's own summary of why it is the
+     * best item on the list is that it *"makes a consequence visible that the
+     * game already tracks and never shows"* — and this page was the last
+     * place it was still invisible. `Medbay.conditionRow` was written for
+     * exactly this row, in `Company.dossier`'s own `[label, value]` shape,
+     * with a comment saying so, and it had NO CALLER: a man could be at a
+     * tenth of his health, in a bacta tank, eight hours off his feet, and the
+     * roll page about him said Rank, Role, Service, Kills, Wounds, Grounds —
+     * every number except the one that was true this morning.
+     *
+     * IT IS APPENDED AND NOT BUILT HERE, which is the same rule the rest of
+     * this page keeps: `FIT`, the tank rate and the word "critical" are
+     * `Medbay.js`'s policy, and a page that spelled them out would be a
+     * second opinion about whether a man is fit to deploy. Null for a man who
+     * is fine, so a whole company's page is unchanged.
+     */
+    const hurt = conditionRow(m, roll);
+    if (hurt) rows.push(hurt);
     const mark = markById(m.look?.mark);
     const band = markById(m.look?.band);
     /**

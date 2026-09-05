@@ -92,7 +92,8 @@ import {
 } from './FlightOps.js';
 import { Sortie, canLaunch } from './Launch.js';
 import { sample as orbitSample, sightLine, CIRCUIT_LENGTH } from './Outside.js';
-import { CircuitPilot, TOP_SPEED } from './Pilot.js';
+import { CircuitPilot, PlayerPilot, TOP_SPEED } from './Pilot.js';
+import { dressCobraBay, drawCobraBay, undressCobraBay } from './CobraBay.js';
 import { GANTRY_Y, stepCook } from './StationKit.js';
 import { flightState, setFlightState } from './StationSave.js';
 
@@ -1174,7 +1175,7 @@ export function dressStation(world) {
    * until it is, so the seating is the same seating with the same budget
    * rather than the trickle a walk gets.
    */
-  st.pending.push({ name: 'the people', run: () => primeStationLife(world) });
+  st.pending.push({ name: 'the people', prime: true, run: () => primeStationLife(world) });
   if (deck === 44) dressTram(world, st, M);
 
   /* ── AND THE THINGS WITH WORDS ON THEM (V15 §1.1, §1.2). The obelisk is a
@@ -1379,6 +1380,16 @@ export function undressStation(world) {
   /* …and the craft that was flying it. One `Starfury` and its throttle map,
    * which is the whole of what a sortie allocates. */
   world._pilot = null;
+  /* …AND THE PILOT IN IT. `PlayerPilot.leave` puts the body, the blade and the
+   * camera rig back; `Player.dispose` calls it too, and both are idempotent,
+   * so whichever teardown runs first is the one that does the work. */
+  leaveSeat(world);
+  world._sortieT = 0;
+  /* The fighter and the well's moving parts — see `CobraBay.js`. The airframe
+   * is a top-level node rather than one of the place's children (it flies away
+   * from the room that owns it), so the loop over `st.places` above does not
+   * reach it. */
+  undressCobraBay(world, st);
   if (world._flight) { try { setFlightState(world._flight); } catch {} }
   world._flight = null;
   st.bells = [];
@@ -1441,8 +1452,27 @@ export const STATION_LEVEL = {
  * whose whole promise is that nothing happens unless you ask.
  */
 export class StationDirector {
+  /**
+   * ══ IT KEEPS RUNNING WHEN THE RUN IS OVER ═════════════════════════════
+   *
+   * `World.update` gates every director off behind `world.over`, which
+   * `_checkWipe` sets on the last player down. That gate is right for a wave
+   * director — its own note says so: *"the director, which would otherwise
+   * keep sending waves at a corpse"* — and it is exactly wrong here, because
+   * this director sends no waves. It is the clock, the ward, the boards, the
+   * notices, the tram, the lift, the bells and the sortie, and the same note
+   * puts all of those in the half of the sentence that reads *"everything else
+   * keeps ticking, which is what makes the death sequence a sequence."*
+   *
+   * Measured before this field existed, with the player killed on deck 12
+   * mid-sortie: `st.hour` sat at 9.1008 for sixty simulated seconds and every
+   * one of those systems sat with it. A PLAIN FIELD rather than a check on the
+   * class's name over there, so `World` can ask the question of any director
+   * without knowing this one exists.
+   */
   constructor(world) {
     this.world = world;
+    this.runsWhenOver = true;
     this.wave = 0;
     this.active = false;
     this.intermission = 1e9;
@@ -2819,6 +2849,21 @@ function sortieSink(world, st) {
       /* Coming back in puts the craft away. It is rebuilt at the mouth on the
        * next launch, which is where `Outside`'s circuit starts. */
       if (!on) world._pilot = null;
+      /**
+       * ══ AND THE PLAYER TAKES THE STICK ON THE SAME FRAME ════════════════
+       *
+       * §4's verb is *"board and launch"* and this is the boarding. It happens
+       * HERE rather than at the press because this is the frame the well's cap
+       * goes behind you — `Launch.js` picks it, and its own note says why —
+       * so the seat, the camera and the shader all change on the one frame of
+       * the sequence nobody can see.
+       *
+       * `takeSeat` is a no-op with no player, which is what a check driving
+       * `Launch.Sortie` with no world already relies on, and what leaves the
+       * autopilot as the demo path.
+       */
+      if (on) takeSeat(world, st);
+      else leaveSeat(world);
       const shown = outsideLevel(world);
       world.engine?.skyDome?.configureOrbit?.({
         level: shown,
@@ -2840,6 +2885,179 @@ function sortieSink(world, st) {
     },
   };
 }
+
+/**
+ * ══ THE SEAT — SHARK §4's "board and launch", built ═══════════════════════
+ *
+ * ── WHAT WAS MEASURED, AND IT IS THE WHOLE OF THE FINDING ─────────────────
+ *
+ * Driven headless through a complete sortie — the press, the six phases, the
+ * lap, the recovery — the player's BODY MOVED 0.703 m and stayed standing in
+ * the launch well for thirty-six seconds. `world._flying` went true, four
+ * banner lines went past and a shader was re-configured. There was no seat, no
+ * camera change, no axis of control and no throttle: what flew was
+ * `CircuitPilot`, an autopilot, and §4's sentence is *"six axes, kill-rotation,
+ * kill-velocity, chase and cockpit cameras … land."*
+ *
+ * `Pilot.PlayerPilot` is the seat and its header carries the control scheme.
+ * What is here is only the wiring, and it is deliberately three functions:
+ *
+ *   `takeSeat`   on the frame the well's cap goes behind you
+ *   `landPlayer` the seat is empty — decide whether that was a trap or a death
+ *   `endSortie`  the flight is over NOW, whatever else is or is not running
+ *
+ * ── AND THE AUTOPILOT IS STILL THERE ──────────────────────────────────────
+ *
+ * `CircuitPilot` flies a sortie with nobody in the seat, which is every check
+ * that drives `Launch.Sortie` with no world and every launch made by a station
+ * with no local player. It is the demo path now rather than the only path.
+ */
+function takeSeat(world, st) {
+  const p = world.player;
+  if (!p || p.alive === false || world._seat) return null;
+  const seat = new PlayerPilot(p, {
+    radius: DRUM.R,
+    onLeave: (pilot, why) => landPlayer(world, st, pilot, why),
+    say: (title, line) => world.notify?.(title, line),
+  });
+  world._seat = seat;
+  world._pilot = null;
+  world.notify?.('COBRA BAY',
+    'She is yours. Stick and throttle, Q and E to roll, guard to kill rotation, '
+    + 'sprint to kill velocity — V for the cockpit, and the drive key brings you home.');
+  return seat;
+}
+
+/**
+ * Empty the seat without asking it what it meant — a teardown, or an exit that
+ * has already been decided by the caller. Idempotent, because
+ * `PlayerPilot.leave` is.
+ *
+ * `onLeave` IS CUT FIRST, and that is the whole reason this is a function
+ * rather than a line: the seat's exit hook is `landPlayer`, which decides
+ * between a trap and an abort, and an abort that re-entered it would decide
+ * twice. Nulling the hook says "this one is already answered" in the one place
+ * that knows it.
+ */
+function leaveSeat(world) {
+  const seat = world._seat;
+  if (!seat) return false;
+  world._seat = null;
+  seat.onLeave = null;
+  seat.leave(null);
+  return true;
+}
+
+/**
+ * ══ WHERE A PILOT IS PUT DOWN ═════════════════════════════════════════════
+ *
+ * The mouth of the well, on the bay's own floor. It is #5's door and not its
+ * centre, because the centre is where the cradle and the fighter are and a
+ * body set down inside a collider is a body the physics has to solve its way
+ * out of — `Crew.leave` sets a driver down beside a hull for the same reason.
+ */
+function parkInBay(world) {
+  const p = world.player;
+  const place = PLACE.get(5);
+  if (!p || !place) return false;
+  p.position.set(place.door[0], floorOf(place) + 0.05, place.door[1]);
+  p.velocity.set(0, 0, 0);
+  p.body?.position?.copy(p.position);
+  return true;
+}
+
+/**
+ * ══ THE SEAT IS EMPTY — AND THAT IS TWO DIFFERENT EVENTS ══════════════════
+ *
+ * `PlayerPilot.leave` is called by the drive key through `Player.takeControls`,
+ * by `Player.die`, and by `Player.dispose` on a level change. It restores the
+ * body and asks this what it meant.
+ *
+ * A LIVING PILOT GETS THE TRAP. The recovery sequence runs — `Launch.IN`, four
+ * phases, "down and locked" — and the fold is credited when it finishes,
+ * exactly as a flown lap already was.
+ *
+ * A DEAD ONE DOES NOT, AND THAT IS FINDING (2). With the player killed
+ * mid-flight the old sortie froze at `u = 0.332` and stayed there for 186
+ * SIMULATED SECONDS: `_flying` true, `_sortie.done` true, `fold.sorties` never
+ * written, and no recovery path of any kind. It could not have had one where it
+ * was looking for it — `World._checkWipe` sets `over` on the last player down
+ * and `World.update` gates the whole director off behind it, so `stepSortie`
+ * was not being called at all. This runs from `Player.die`, on the player's own
+ * tick, which is step 1 of every frame and is not behind that gate.
+ */
+function landPlayer(world, st, pilot, why) {
+  if (world._seat !== pilot) return false;
+  world._seat = null;
+  parkInBay(world);
+  const alive = world.player?.alive !== false;
+  const now = (st.day ?? 0) * 24 + (st.hour ?? 0);
+  if (alive && world._flying && world._station === st) {
+    /* THE TRAP, OR THE TRACTOR. Both run the same four phases — the difference
+     * is one sentence, and it is the sentence that says whether you flew it
+     * home. `TRAP` is the window; outside it the bay takes you, which is what
+     * makes the drive key a way out rather than a way to be stranded. */
+    const flown = pilot.trapped;
+    world._sortie = new Sortie('in', sortieSink(world, st), { at: now });
+    world.notify?.('COBRA BAY', why || (flown
+      ? `On the rail at ${pilot.speed.toFixed(0)} m/s — the bay has you`
+      : `${Math.round(pilot.toMouth)} m out at ${pilot.speed.toFixed(0)} m/s — the tractor has you`));
+    return true;
+  }
+  endSortie(world, st, why || 'the bay recovered your fighter');
+  return true;
+}
+
+/**
+ * ══ END IT NOW, WITH NOTHING ELSE RUNNING ═════════════════════════════════
+ *
+ * The one recovery, and it must work with the station's director stopped: no
+ * sequence, no clock, no frame after this one. Everything a finished sortie
+ * leaves behind is put back HERE rather than by the four things that normally
+ * put each piece back, because on this path none of the four will be called.
+ *
+ *   the flight    `_flying`, `_orbitU`, the craft and the seat
+ *   the view      `configureOrbit` back to what a window inside the drum sees
+ *   the fold      `flew` — a sortie you did not survive is still a sortie flown,
+ *                 and `fold.sorties` never being written was half the finding
+ *   the board     `st.mine` off the tower's movements
+ *   the bay       back to parked, so the room is not left 3% amber for ever —
+ *                 `Sortie._end`'s own rule, applied by hand because `_end` is
+ *                 not going to run
+ */
+function endSortie(world, st, why = null) {
+  const was = !!world._flying;
+  leaveSeat(world);
+  world._sortie = null;
+  world._pilot = null;
+  if (was) {
+    keepFlight(world, flew(flightFold(world)));
+    st.mine = null;
+    /* The sink's own `outside(false)` rather than a second copy of it: it is
+     * the one place that knows which record the dome is configured from. */
+    sortieSink(world, st).outside(false);
+  }
+  world._flying = false;
+  world._orbitU = 0;
+  st.bay = { canopy: 0, lights: 0, rams: 0, shaft: 0, scroll: 0 };
+  parkInBay(world);
+  if (why) world.notify?.('COBRA BAY', why);
+  return was;
+}
+
+/**
+ * How long a sortie may be outside before the bay comes and gets you, in
+ * seconds.
+ *
+ * A CEILING AND NOT A TIMER. A flown lap is 22 s under the autopilot and a
+ * player who is learning the airframe will take three or four times that, so
+ * this is not a difficulty; it is the answer to "what if the lap can never
+ * close" — a craft tumbling in a corner it cannot make, a seat with nobody
+ * pressing anything, or the demo path with the director restarted under it.
+ * Every one of those used to be a sortie that ran until the world was
+ * disposed.
+ */
+export const SORTIE_CEILING = 240;
 
 /**
  * One frame of a sortie: the sequence, then the lap.
@@ -2876,14 +3094,45 @@ function stepSortie(world, st, dt) {
   const s = world._sortie;
   if (s && !s.done) { s.step(dt); return; }
   if (!world._flying) return;
-  /* Built on the frame the craft is first outside and not at dress time: a
-   * station nobody launches from never makes one, which is most visits. The
-   * drum's radius is the plan's, so the throw off the rim is the station's own
-   * and not a constant typed in a flight file. */
-  const pilot = world._pilot || (world._pilot = new CircuitPilot({ radius: DRUM.R }));
+  /**
+   * ══ WHOEVER IS FLYING IT ══════════════════════════════════════════════
+   *
+   * A seated player's craft is stepped by `PlayerPilot.update` out of
+   * `Player.update`, which is STEP 1 of `World.update` and this is step 6 — so
+   * by the time the sortie is stepped the craft has already moved this frame
+   * and all that is left here is what the STATION owns: the sights, the lap,
+   * and the two ways a sortie ends without a key.
+   *
+   * That ordering is not incidental. It is the same argument `Enemy.update`'s
+   * driven branch makes about `Crew.ride` — the machine moves and the body is
+   * then put on it, never the other way round.
+   */
+  const seat = world._seat && !world._seat.left ? world._seat : null;
+  const pilot = seat
+    /* Built on the frame the craft is first outside and not at dress time: a
+     * station nobody launches from never makes one, which is most visits. The
+     * drum's radius is the plan's, so the throw off the rim is the station's
+     * own and not a constant typed in a flight file. */
+    || world._pilot || (world._pilot = new CircuitPilot({ radius: DRUM.R }));
   const was = pilot.progress;
-  const u = pilot.step(dt);
+  const u = seat ? pilot.progress : pilot.step(dt);
   world._orbitU = u;
+  /**
+   * ── AND THE BAY COMES AND GETS YOU ────────────────────────────────────
+   *
+   * `SORTIE_CEILING` seconds outside and the sortie ends whatever it is
+   * doing. This is the second half of finding (2): the death path is handled
+   * on the player's own tick (see `landPlayer`), and this is every other way a
+   * lap can fail to close — a craft tumbling in a corner it cannot make, a
+   * seat nobody is pressing anything at, or the autopilot with a track it
+   * cannot hold. A sortie that cannot finish must still END.
+   */
+  const flownFor = seat ? seat.t : ((world._sortieT = (world._sortieT || 0) + dt));
+  if (flownFor > SORTIE_CEILING) {
+    world._sortieT = 0;
+    endSortie(world, st, 'bingo fuel — the bay recovered your fighter');
+    return;
+  }
   /* The sights, named as they pass. `nearest` never answers `hull` — see
    * `Outside.js` — so this is the four things you fly past and not a caption
    * every frame saying you are near the station. Named off the CRAFT's own
@@ -2894,11 +3143,41 @@ function stepSortie(world, st, dt) {
   /* `lap` and not `u >= 1`, because `u` is a POSITION on the track and 0.99 →
    * 0.01 is a metre of travel. See `CircuitPilot.step`. */
   if (pilot.lap >= 1) {
+    world._sortieT = 0;
+    /* A SEATED PILOT IS ASKED TO GET OUT RATHER THAN LIFTED OUT. `leave` is
+     * the one door — it restores the body, the blade and the rig — and
+     * `landPlayer` is what turns the empty seat into the recovery, so a lap
+     * closed and a drive key pressed take exactly the same path. */
+    if (seat) { seat.leave(`a lap of the station at ${seat.speed.toFixed(0)} m/s — bring her in`); return; }
     world._pilot = null;
     world._orbitU = 0;
     world._sortie = new Sortie('in', sortieSink(world, st),
       { at: (st.day ?? 0) * 24 + (st.hour ?? 0) });
   }
+}
+
+/**
+ * ══ AND THE ROOM DRAWS THE LAUNCH — finding (3) ═══════════════════════════
+ *
+ * `sortieSink` writes five numbers onto `st.bay` every frame of a launch and
+ * its own comment said the four things they describe "are the room's to draw".
+ * Grepped across `src/game/*.js`, `src/ui/*.js` and `src/main.js`, NOTHING
+ * read `bay.canopy`, `bay.rams`, `bay.shaft` or `bay.scroll`: after a flown
+ * sortie the record read `{1, 0, 1, 1, 34}` into a vacuum, and the whole
+ * launch sequence was four banner lines over a still photograph.
+ *
+ * `CobraBay.js` is the reader, and it is a file rather than a block here for
+ * the reason `sortieSink` gives: a station file reaching into a place's
+ * materials is how §9.1's nine-material rule gets a tenth. It binds
+ * `stationMats(12)`'s own nine and makes none.
+ *
+ * ONE LINE IN THE STATION'S FRAME, and it costs a deck compare everywhere else
+ * — `stepBells`'s shape, one function up, and its reason.
+ */
+function stepBay(world, st) {
+  if (st.deck !== 12) return;
+  if (!st.bayRig) dressCobraBay(world, st, { roomOf, materialKeyFor, M: stationMats(12) });
+  drawCobraBay(world, st);
 }
 
 /**
@@ -3170,7 +3449,7 @@ function venueInEarshot(world, st, px, pz) {
  * the life pool was told to seat. A field nothing writes is the defect this
  * function exists to remove, so nothing here is written and not read.
  */
-export function stepCrowd(world, st, dt) {
+function stepCrowd(world, st, dt) {
   if (!(dt > 0)) return;
   const cam = world.player?.position;
   const px = cam ? cam.x : 0, pz = cam ? cam.z : 0;
@@ -3375,6 +3654,10 @@ export function stepStation(world, dt) {
   /* AND #6'S BELLS, which cost one cached array and four hypots on deck 12 and
    * a single early return everywhere else. */
   stepBells(world, st);
+  /* …AND THE BAY ITSELF, on the same terms: the canopy, the rams, the shaft
+   * and the scroll `Launch.js` has been driving into `st.bay` with no reader.
+   * See `stepBay`. */
+  stepBay(world, st);
   /* AND THE THREE ROOMS WITH A CARD ON. One place lookup a frame and an early
    * return on every deck that has no venue on it — see `stepCrowd`. */
   stepCrowd(world, st, dt);

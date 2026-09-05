@@ -4220,8 +4220,24 @@ export class World {
      * has always protected. The one number it is handed is the LEVEL's, because
      * `spawnRadius` is the level's: everything that sites a body measures from
      * the commander, so the horde is not called until the ship's ground track
-     * is inside the ring the level itself spawns at. See that method. */
-    if (this.netMode !== 'client' && !this.over
+     * is inside the ring the level itself spawns at. See that method.
+     *
+     * ── AND `over` IS THE SAME QUESTION ASKED OF A DIFFERENT DIRECTOR ─────
+     *
+     * `_checkWipe`'s own note, four thousand lines down: *"`over` is the flag
+     * the things that must stop read — the director, which would otherwise keep
+     * sending waves at a corpse. EVERYTHING ELSE KEEPS TICKING, which is what
+     * makes the death sequence a sequence."* A station director sends no waves.
+     * It is the clock, the ward, the boards, the notices, the tram, the lift
+     * and the sortie — every one of them in the "everything else" half of that
+     * sentence, and all of them were behind this gate anyway.
+     *
+     * Measured, with the player killed on deck 12 mid-sortie: the station hour
+     * sat at 9.1008 for SIXTY SIMULATED SECONDS, `_flying` stayed true, the
+     * craft stayed frozen at u = 0.187, and `fold.sorties` was never written.
+     * `runsWhenOver` is `StationDirector`'s alone — it is declared there, not
+     * tested for by name here — so no wave director can reach this branch. */
+    if (this.netMode !== 'client' && (!this.over || this.director?.runsWhenOver)
       && !this.extraction?.holdsHorde(this.level?.spawnRadius?.[1])) this.director.update(dt, ctx);
     /**
      * ══ …AND A GUEST STILL RUNS THE STATION ═══════════════════════════════

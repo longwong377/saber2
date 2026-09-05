@@ -508,31 +508,43 @@ export async function run({ check, assert, THREE }) {
 
   check('station: the people in the corridors are going somewhere', async () => {
     /**
-     * §2.5's THIRD standing rule, and the only one of the three that was not
-     * built: *"People are going somewhere … the walkways must carry people
-     * MOVING along desire lines."*
+     * §2.5's THIRD standing rule: *"in between places, the walkways … a real
+     * shmorgesborg of activity"*, and the design note under it — *"People are
+     * going somewhere … along desire lines between them."*
      *
-     * ── WHAT WAS MEASURED ────────────────────────────────────────────────
+     * ── WHAT WAS MEASURED, AND IT IS TWO DEFECTS ─────────────────────────
      *
-     * A hostile pass tracked 46 residents over sixty simulated seconds on deck
-     * 40 and got a median displacement of 3.02 m, worst 6.49 — the eighteen in
-     * the between-space no different at 2.96. The ring is two hundred metres
-     * round. Three metres a minute is a shuffle on the spot, and the source
-     * said why: `spawnResident` set `brain.idle = true`, and `stationWay` —
-     * the field whose own comment called it "the hook a route would drive" —
-     * had one writer and no readers in the whole tree.
+     * Deck 40 at 13:00, twenty seconds of `world.update`, both quality tiers:
      *
-     * The clause above this one asserts the corridors are POPULATED and it
-     * always did; nothing asserted that anybody in them was going anywhere,
-     * which is how a rule that reads as obviously true went unbuilt.
+     *     low   30 bodies — 15 in rooms, 15 on walkways,  4 on open stretches
+     *     high  46 bodies — 28 in rooms, 18 on walkways,  4 on open stretches
      *
-     * ── AND IT IS TWO ASSERTIONS, NOT ONE ────────────────────────────────
+     * FORTY-FOUR WALK SLOTS DECLARED AND FOUR EVER ALIVE, on either setting,
+     * because eight stretches at 45° put a 14 m patch of people every 67 m of
+     * a 537 m ring and the pool only makes a body real inside 40 m. And the
+     * four then advanced A BEARING AT A FIXED RADIUS — the walker's own comment
+     * said "no pathfinding" — which is a circular pace: sixty seconds of
+     * walking returned a body to where sixty seconds of walking started.
      *
-     * The open stretches MOVE. Everything else on a walkway is somebody who
-     * has stopped on purpose — at a counter, on a bench, at the rail, waiting
-     * at a crossing — and making those walk would delete the fixtures, so they
-     * are asserted to STAY. A fix that set every body walking would pass a
-     * one-sided version of this and empty the benches.
+     * ── SO IT IS FOUR ASSERTIONS AND NOT ONE ─────────────────────────────
+     *
+     * THE STRETCHES ARE FULL, against what the deck itself declares within the
+     * radius the pool builds bodies in — a bar derived from the gazetteer
+     * rather than typed, so widening a stretch cannot make this easier to
+     * pass.
+     *
+     * THE WALK IS A JOURNEY AND NOT A LAP, which is NET displacement against
+     * PATH LENGTH. A lap has a path of eighty metres and a net of nothing; the
+     * ratio is the thing a circular pace cannot fake, and no bar on distance
+     * alone can catch it.
+     *
+     * SOMEBODY ARRIVES. A destination that is never reached is a heading, so
+     * the trips counter is read directly.
+     *
+     * AND THE BENCHES ARE STILL OCCUPIED. Everything else on a walkway is
+     * somebody who has stopped on purpose — at a counter, on a bench, at the
+     * rail, waiting at a crossing — and a fix that set every body walking would
+     * pass the first three and delete the fixtures.
      */
     diskFetch();
     const { world, idle } = await station(40);
@@ -549,12 +561,46 @@ export async function run({ check, assert, THREE }) {
        * So the player is put where the walking is, on the first open stretch
        * the deck declares, and the world is given a moment to seat it.
        */
-      const { wayPlacesOn } = await import('../../src/game/StationLife.js');
-      const open = wayPlacesOn(40).find((p) => p.way === 'walk');
+      const { wayPlacesOn, headcount, slotIn, LIVE_RADIUS } = await import('../../src/game/StationLife.js');
+      const ways = wayPlacesOn(40);
+      const open = ways.find((p) => p.way === 'walk');
       assert(open, 'deck 40 declares no open walking stretch at all');
       world.player.position.set(open.x, world.player.position.y, open.z);
       world.player.body?.setTransform?.(world.player.position, null);
-      for (let i = 0; i < 300; i++) world.update(1 / 60, idle);
+      for (let i = 0; i < 600; i++) world.update(1 / 60, idle);
+
+      /* ── HOW MANY THE DECK DECLARES WITHIN REACH, AND HOW MANY ARE REAL ──
+       *
+       * The denominator is the gazetteer's own: every slot of every open
+       * stretch whose SEAT — `slotIn`, the same function `reseat` places a
+       * body with, imported rather than re-derived — falls inside the radius
+       * the pool builds inside. Nothing here is a typed number, so the day a
+       * stretch is widened or a head added the bar moves with it.
+       */
+      const V = new THREE.Vector3();
+      const px = world.player.position.x, pz = world.player.position.z;
+      let declared = 0;
+      for (const p of ways) {
+        if (p.way !== 'walk') continue;
+        const n = headcount(p, world._station.hour);
+        for (let i = 0; i < n; i++) {
+          slotIn(p, i, V);
+          if (Math.hypot(V.x - px, V.z - pz) <= LIVE_RADIUS) declared++;
+        }
+      }
+      assert(declared >= 6,
+        `deck 40 declares only ${declared} open-walk slots within ${LIVE_RADIUS} m of a stretch — `
+        + 'the ring is a 537 m circle and the pool can only ever build what is in reach');
+      let alive = 0;
+      for (const [, b] of life.live) if (b.stationWay === 'walk') alive++;
+      /* HALF, and the number is a fraction of the declaration rather than a
+       * count: the pool is a BUDGET spent nearest-first, so a deck whose rooms
+       * are full at this hour will always spend some of it on rooms. What is
+       * being held is that the corridor gets most of what it asks for, not
+       * that it gets all of it. Measured before the fix: 4 of 22. */
+      assert(alive >= Math.ceil(declared * 0.5),
+        `${alive} of the ${declared} open-walk slots inside the live radius are real bodies — `
+        + 'the walkways are declared full and built empty');
 
       /* KEYED ON THE BODY AND NOT ON THE SLOT. `reseat` recycles a slot key —
        * a body can be dropped and a different one spawned into `p:i` inside
@@ -563,39 +609,87 @@ export async function run({ check, assert, THREE }) {
        * "movement" out of people standing at a counter. */
       const seen = new Map();
       for (const [, b] of life.live) {
-        seen.set(b, { x: b.position.x, z: b.position.z, way: b.stationWay || null });
+        seen.set(b, {
+          x: b.position.x, z: b.position.z, lx: b.position.x, lz: b.position.z,
+          path: 0, trips: b.wayTrips | 0, way: b.stationWay || null,
+        });
       }
-      /* NINE ON A STRETCH OF OPEN RING IS THE RIGHT NUMBER, and a bar of
-       * twenty here would be a bar on the wrong thing: the clause above owns
-       * how many people a corridor holds, and this one owns whether they are
-       * going anywhere. Four is the smallest sample that can have a median. */
       assert(seen.size >= 6, `only ${seen.size} residents were up to watch`);
 
-      /* SIXTY SIMULATED SECONDS, the same window the audit used. */
-      for (let i = 0; i < 3600; i++) world.update(1 / 60, idle);
+      /* SIXTY SIMULATED SECONDS, the same window the audit used, and the PATH
+       * is accumulated a frame at a time because that is the only way to have
+       * a denominator for the ratio below. */
+      for (let i = 0; i < 3600; i++) {
+        world.update(1 / 60, idle);
+        for (const [b, a] of seen) {
+          a.path += Math.hypot(b.position.x - a.lx, b.position.z - a.lz);
+          a.lx = b.position.x; a.lz = b.position.z;
+        }
+      }
       const walk = [], stopped = [];
+      let arrivals = 0;
       for (const [, b] of life.live) {
         const a = seen.get(b);
         if (!a) continue;
-        const d = Math.hypot(b.position.x - a.x, b.position.z - a.z);
-        (a.way === 'walk' ? walk : stopped).push(d);
+        const row = {
+          net: Math.hypot(b.position.x - a.x, b.position.z - a.z),
+          path: a.path,
+        };
+        if (a.way === 'walk') { walk.push(row); arrivals += (b.wayTrips | 0) - a.trips; }
+        else stopped.push(row.net);
       }
-      /* TWO, AND THE NUMBER IS SMALL BECAUSE THE STRETCHES ARE THIN: eight
-       * open runs of ring at four heads each is thirty-two people in transit
-       * on a whole deck, and only the ones inside the seat radius are bodies
-       * at all. How MANY is the clause above's subject and it bounds the total
-       * at forty; this one only needs enough to have a median. */
       assert(walk.length >= 2,
         `only ${walk.length} bodies were on the open stretches — nothing was measured`);
       const median = (v) => { const q = v.slice().sort((x, y) => x - y); return q[q.length >> 1]; };
-      const m = median(walk);
-      /* A MINUTE AT A WALK IS TENS OF METRES. `WALK_PACE` is 1.35 m/s, so a
+      const m = median(walk.map((r) => r.net));
+      const pathM = median(walk.map((r) => r.path));
+      /* A MINUTE AT A WALK IS TENS OF METRES. The pace is 1.35 m/s, so a
        * minute is about eighty; the bar is set at a quarter of that so a body
-       * that spent part of the window being re-seated still counts. */
+       * that spent part of the window at a door still counts. */
       assert(m >= 20,
         `the open walkways moved a median of ${m.toFixed(2)} m in sixty seconds — the ring is `
-        + '200 m round, and this is a shuffle on the spot rather than a journey');
-      /* AND THE BENCHES ARE STILL OCCUPIED BY PEOPLE SITTING ON THEM. */
+        + '537 m round, and this is a shuffle on the spot rather than a journey');
+      /**
+       * ── NET AGAINST PATH, AND WHAT IT DOES AND DOES NOT CATCH ──────────
+       *
+       * A body that ends the minute where it began spent the minute going
+       * nowhere, and that is worth a floor. BUT THIS RATIO IS NOT THE CLAUSE
+       * THAT CATCHES THE OLD WALKER, and saying so is the difference between
+       * a guard and a guard that asserts its own bug: the ring is 537 m round
+       * and a minute at 1.35 m/s is 81 m of it, which is one radian. Measured
+       * on the OLD bearing-pacer over exactly this window: 89.1 m of path,
+       * 85.2 m of net, **0.96** — a chord, and a perfect score for a body that
+       * was doing nothing but circling.
+       *
+       * So the floor here is a floor and the two clauses under it are the
+       * test: a walker must DECLARE somewhere it is going, and somebody must
+       * ARRIVE. Neither is a thing a lap can produce.
+       */
+      const straight = pathM > 0 ? m / pathM : 0;
+      assert(straight >= 0.2,
+        `the open walkways covered ${pathM.toFixed(1)} m of path to end ${m.toFixed(1)} m from `
+        + `where they started (${straight.toFixed(2)} of it) — a minute of walking that ends `
+        + 'where it began');
+      /**
+       * ── SOMEWHERE TO BE GOING, AND IT IS A PLACE IN THE GAZETTEER ──────
+       *
+       * The old walker had no destination at all — its own comment said "no
+       * pathfinding" — so this fails on it by construction rather than by a
+       * threshold. `wayTo` is a place id and §3.2's rule is that a place not
+       * in the table is not a place, so the id is checked against the table.
+       */
+      const { PLACE: TABLE } = await import('../../src/game/StationPlan.js');
+      const lost = [];
+      for (const [, b] of life.live) {
+        if (b.stationWay !== 'walk' || !b.wayR) continue;
+        if (!b.wayTo || !TABLE.has(b.wayTo)) lost.push(b.stationName || '?');
+      }
+      assert(lost.length === 0,
+        `${lost.length} of ${walk.length} people on the open stretches are not going anywhere `
+        + `(${lost.slice(0, 4).join(', ')}) — a walk with no destination is a pace`);
+      /* AND SOMEBODY GOT THERE. A destination nobody reaches is a heading. */
+      assert(arrivals >= 1,
+        `${walk.length} people walked for a minute and none of them arrived anywhere`);
       /**
        * ── AND IT IS A RATIO, BECAUSE THE FIXTURES WERE NEVER STILL ────────
        *
@@ -618,25 +712,25 @@ export async function run({ check, assert, THREE }) {
           + `purpose moved ${sm.toFixed(1)} m — the counters, the benches and the rails have been `
           + 'emptied into the corridor');
       }
-      /* THE CORRIDOR IS AN ANNULUS AND A WALKER MAY NOT LEAVE IT. This is the
-       * whole reason the route is a bearing at a fixed radius rather than a
-       * path: staying inside is arithmetic, so it is checked as arithmetic. */
       /**
-       * ── AND THE OLD GUARD HERE ASSERTED THE DEFECT ──────────────────────
+       * ══ AND NOBODY IS INSIDE A ROOM THEY DID NOT WALK INTO ═════════════
+       *
+       * ── THE OLD GUARD HERE ASSERTED THE DEFECT ─────────────────────────
        *
        * It asserted `|hypot(x, z) - wayR| <= 0.05` — "0 walkers left the ring
        * they were walking" — and staying exactly on that circle is PRECISELY
-       * what carried them through the rooms. The eight ring stretches sit on
-       * a clear annulus, but the four spine stretches sat mid-band, and a
-       * fifth of that circle is inside a room footprint. Measured live over
-       * 240 samples: a walker was inside #13 The Databank on 53 of them, #9 on
-       * 42, the Cantina on 15. #13 walls all but 0.42 rad of itself, so that
-       * was a body walking through a wall.
+       * what carried them through the rooms. The eight ring stretches sat on a
+       * clear annulus, but the spine stretches sat mid-band, and a fifth of
+       * that circle is inside a room footprint. Measured live over 240 samples:
+       * a walker was inside #13 The Databank on 53 of them, #9 on 42, the
+       * Cantina on 15. #13 walls all but 0.42 rad of itself, so that was a body
+       * walking through a wall.
        *
-       * So the property is not "on its own curve". It is THE ONE THE PLAYER
-       * WOULD SEE: nobody is ever inside a room they did not walk into. Tested
-       * against the same yawed rectangles `the plan is a plan` uses, over the
-       * whole minute rather than at the end of it.
+       * So the property is THE ONE THE PLAYER WOULD SEE, and it survives the
+       * route becoming a real route: whatever polyline `planRoute` emits, no
+       * body may be standing inside a room's footprint. Tested against the same
+       * yawed rectangles `the plan is a plan` uses, over a whole minute rather
+       * than at the end of it.
        */
       const { PLACES: ALL, DRUM: D } = await import('../../src/game/StationPlan.js');
       /**
@@ -667,6 +761,14 @@ export async function run({ check, assert, THREE }) {
         return Math.abs(dx * c - dz * sn) <= p.w / 2 && Math.abs(dx * sn + dz * c) <= p.d / 2;
       };
       const trespass = new Map();
+      /* AND ON THE LEG IT SAYS IT IS ON. The cheap half, and it is worth
+       * keeping beside the expensive one for a reason the old version did not
+       * have: a route is now a POLYLINE, so "where should this body be" has an
+       * exact answer — the point at `wayT` along leg `wayAt` — and a walker
+       * that has drifted off its own plan is a walker whose position is coming
+       * from somewhere other than the route. It is a check on the arithmetic
+       * and NOT on the geometry; the trespass loop above is the geometry. */
+      let strayed = 0;
       for (let f = 0; f < 600; f++) {
         world.update(1 / 60, idle);
         for (const [, b] of life.live) {
@@ -675,29 +777,111 @@ export async function run({ check, assert, THREE }) {
             if (!inside(p, b.position.x, b.position.z)) continue;
             trespass.set(p.id, (trespass.get(p.id) | 0) + 1);
           }
+          const L = b.wayLegs ? b.wayLegs[b.wayAt] : null;
+          if (!L) continue;
+          const r = Math.hypot(b.position.x, b.position.z);
+          const a = Math.atan2(b.position.x, b.position.z);
+          const off = L.arc
+            ? Math.abs(r - L.r)
+            : Math.abs(((a - L.a + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * r;
+          if (off > 0.05) strayed++;
         }
       }
       assert(trespass.size === 0,
         `a corridor walker was inside ${[...trespass].map(([id, n]) => `#${id} on ${n} samples`).join(', ')}`
         + ' — the between-space walks through the rooms');
-      /* AND EACH IS STILL ON THE CORRIDOR IT WAS PUT ON, which is the cheap
-       * half and still worth holding: a ring walker keeps its radius, a spine
-       * walker keeps its bearing. */
-      let strayed = 0;
+      assert(strayed === 0, `${strayed} walker samples were off the leg the route says they are on`);
+      return `${alive}/${declared} declared walk slots alive; ${walk.length} on the open stretches `
+        + `covered a median ${pathM.toFixed(1)} m of path to end ${m.toFixed(1)} m away `
+        + `(${straight.toFixed(2)} straight, ${arrivals} arrivals); ${stopped.length} who stopped `
+        + `somewhere drifted ${stopped.length ? median(stopped).toFixed(1) : '0'} m; 0 trespasses`;
+    } finally { world.unload(); }
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('station: somebody on the concourse has an animal with them', async () => {
+    /**
+     * V16 §G1: *"see a couple other people with companions of there own …
+     * just milling about."*
+     *
+     * ── WHAT WAS MEASURED ────────────────────────────────────────────────
+     *
+     * `Pits.isHandler` and `Pits.handlerOf` — the two functions that decide
+     * which residents walk with an animal and which animal it is — had **zero
+     * callers outside `handlersOn`**, which is a roster the pit reads to fill a
+     * card. No body on the station has ever carried a companion, on any deck,
+     * at any hour: the roster knew, the card knew, and the drum was empty of
+     * animals.
+     *
+     * ── AND IT IS THE SAME ROLL AS THE PIT'S ─────────────────────────────
+     *
+     * `handlerOf` is a pure function of the resident record, so the stranger
+     * with a tuk'ata at heel on the morning concourse is the one the pit fields
+     * that night. That is §G4's sentence and this asserts it rather than
+     * trusting it: the animal on the deck is matched back to `handlerOf` on the
+     * same census slot.
+     */
+    diskFetch();
+    const { world, idle } = await station(40);
+    try {
+      const life = world._stationLife;
+      const { wayPlacesOn } = await import('../../src/game/StationLife.js');
+      const open = wayPlacesOn(40).find((p) => p.way === 'walk');
+      world.player.position.set(open.x, world.player.position.y, open.z);
+      world.player.body?.setTransform?.(world.player.position, null);
+      for (let i = 0; i < 900; i++) world.update(1 / 60, idle);
+
+      const pairs = [];
       for (const [, b] of life.live) {
-        if (!b.wayR) continue;
-        const r = Math.hypot(b.position.x, b.position.z);
-        const a = Math.atan2(b.position.x, b.position.z);
-        const off = b.wayAxis === 'spine'
-          ? Math.abs(((a - b.wayAngle + Math.PI * 3) % (Math.PI * 2)) - Math.PI)
-          : Math.abs(r - b.wayR);
-        if (off > 0.05) strayed++;
+        if (!b._stationAnimal) continue;
+        pairs.push([b, b._stationAnimal]);
       }
-      assert(strayed === 0, `${strayed} walkers left the corridor they were walking`);
-      return `${walk.length} on the open stretches moved a median ${m.toFixed(1)} m in a minute `
-        + `(the ring is ${(2 * Math.PI * 85.5).toFixed(0)} m round); ${stopped.length} who stopped `
-        + `somewhere drifted ${stopped.length ? median(stopped).toFixed(1) : '0'} m; `
-        + '0 left the corridor';
+      assert(pairs.length >= 1,
+        'not one resident on deck 40 has an animal with them — `isHandler` still has no caller '
+        + 'that puts a body on the deck');
+      /* AND IT IS AT HEEL, which is the whole of "with them". `HEEL.back` is
+       * the companion machinery's own station distance and `LEASH` is how far
+       * it may range off it; the bar is read out of that table rather than
+       * typed, because a number here that drifted from the one the animal
+       * actually walks to would pass while the dog stood in another room. */
+      const { HEEL, LEASH } = await import('../../src/game/Companions.js');
+      const far = [];
+      for (const [b, a] of pairs) {
+        assert(a.team === b.team, `${b.stationName}'s animal is on team ${a.team} against ${b.team}`);
+        assert(a._cmpOwner === b, `${b.stationName}'s animal is not owned by them`);
+        const d = Math.hypot(a.position.x - b.position.x, a.position.z - b.position.z);
+        const dy = Math.abs(a.position.y - b.position.y);
+        if (d > HEEL.back + LEASH || dy > 4) far.push(`${b.stationName}'s ${a.stationName} at ${d.toFixed(1)} m (${dy.toFixed(1)} m below)`);
+      }
+      assert(far.length === 0, `an animal is not with its handler: ${far.join(', ')}`);
+      /* THE PIT'S OWN ROLL AND NOT A SECOND ONE. */
+      const { handlerOf } = await import('../../src/game/Pits.js');
+      const { occupant, headcount } = await import('../../src/game/StationLife.js');
+      const { PLACE } = await import('../../src/game/StationPlan.js');
+      /* THE SAME EVENING `spawnResident` HANDED IN. `occupant` takes the hour,
+       * the day, the room's headcount and the player's company, and `barman`
+       * reads three of the four — a call short of them draws a different
+       * person out of the same slot. */
+      const evening = (p) => ({
+        hour: world._station.hour, day: world._station.day ?? 0,
+        heads: headcount(p, world._station.hour), company: life.company || null,
+      });
+      for (const [b] of pairs) {
+        const H = b.stationHandler;
+        assert(H, `${b.stationName} has an animal and no handler record`);
+        const p = PLACE.get(b.stationPlace) || wayPlacesOn(40).find((q) => q.id === b.stationPlace);
+        if (!p) continue;
+        /* Way pseudo-places are not in the gazetteer and `occupant` reads them
+         * the same way `spawnResident` does — the same call, the same seed. */
+        if (b.stationSlot == null) continue;
+        const again = handlerOf(occupant(p, b.stationSlot, evening(p)));
+        assert(again && again.kind === H.kind,
+          `${b.stationName}'s animal is a ${H.kind} and the pit's own roll says `
+          + `${again ? again.kind : 'they are not a handler at all'}`);
+      }
+      return `${pairs.length} handler${pairs.length === 1 ? '' : 's'} on deck 40 with an animal at `
+        + `heel: ${pairs.map(([b, a]) => `${b.stationName}'s ${a.stationName} (${b.stationHandler?.kind})`).join(', ')}`;
     } finally { world.unload(); }
   });
 
@@ -1322,12 +1506,188 @@ export async function run({ check, assert, THREE }) {
       sc.loading(0.5, 'lighting the sky', null);
       assert(bar.style.display !== 'none' && msg.textContent === 'lighting the sky',
         'the ordinary loading screen lost its bar — this is about the seam, not about loads');
+      /**
+       * ── AND IT IS NOT A PHOTOGRAPH ──────────────────────────────────────
+       *
+       * The plate and the bar were half the answer and were read as the whole
+       * of it a second time: what was left was a STILL, and a still the player
+       * stares at while the world is rebuilt is a load screen with a nicer
+       * picture. The car has to look like it is still travelling.
+       *
+       * There is nothing to render at a seam — the old world is disposed, the
+       * new one does not exist, and the thread that would draw a frame is the
+       * thread building it — so the motion is CSS, and it is `transform` only
+       * because that is the one kind of animation Chromium runs on the
+       * compositor thread, off the main thread, and therefore the one kind
+       * that keeps moving through a synchronous build. A keyframe that touched
+       * `background-position`, `top` or `filter` would freeze with everything
+       * else and would look exactly like the bug it was written to fix, which
+       * is why this asserts the property list and not merely the presence of
+       * an animation.
+       */
+      sc.loading(0.4, 'dressing the level', { still: 'data:image/png;base64,AA' });
+      assert(el.classList.contains('seam'),
+        'the seam still does not carry the class that moves it — the player is looking at a photograph');
+      const band = el.children.find((c) => c.className === 'seam-lights');
+      assert(band, 'no shaft-light band over the seam — the levels stopped going past the window');
+
+      const css = await readFile(new URL('../../styles.css', import.meta.url), 'utf8');
+      for (const sel of ['#loading.seam', '#loading .seam-lights']) {
+        const rule = css.slice(css.indexOf(sel));
+        assert(css.includes(sel), `styles.css has no rule for ${sel}, so the class does nothing`);
+        assert(/animation:\s*seam/.test(rule.slice(0, 400)),
+          `${sel} carries no seam animation`);
+      }
+      for (const name of ['seamRise', 'seamShaft']) {
+        const at = css.indexOf(`@keyframes ${name}`);
+        assert(at > 0, `styles.css declares no @keyframes ${name}`);
+        const body = css.slice(at, css.indexOf('}}', at) + 2);
+        const props = [...body.matchAll(/[{;]\s*([a-z-]+)\s*:/g)].map((m) => m[1]);
+        const off = props.filter((k) => k !== 'transform');
+        assert(props.length > 0 && !off.length,
+          `@keyframes ${name} animates ${off.join(', ')} as well as transform — anything but `
+          + 'transform is a main-thread animation, and the main thread is the one building the world, '
+          + 'so it would stand as still as the picture it is drawn over');
+      }
+
       sc.hideLoading();
       assert(!el.classList.contains('still') && !el.style.backgroundImage,
         'the still outlived the load — the menu now wears a photograph of a lift');
+      assert(!el.classList.contains('seam') && !el.children.some((c) => c.className === 'seam-lights'),
+        'the seam motion outlived the load — the menu is now drifting');
     } finally { document.getElementById = was; }
     return 'both lift handlers capture before teardown and hand it on; the screen wears it, shows no '
-      + 'bar and no engine talk over it, says one line in the fiction if the ride runs long, and gives it back';
+      + 'bar and no engine talk over it, says one line in the fiction if the ride runs long, moves on '
+      + 'the compositor while the main thread builds, and gives it all back';
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('station: the seam is a moment, and the rest of the build runs while the doors open', async () => {
+    /**
+     * ══ WHAT THE PLAYER IS FROZEN FOR, BOUNDED ═════════════════════════════
+     *
+     * The clause above holds that the seam shows no plate. This one holds the
+     * only other thing that can make it read as a load: how long it lasts.
+     *
+     * ── THE MEASUREMENT THAT WAS WRONG, AND WHY ──────────────────────────
+     *
+     * An audit reported `buildWorld('station')` at 23.3 s and called the seam
+     * a 23-second freeze-frame. It timed a station built as the FIRST world in
+     * a fresh process. No player can reach one that way: `enterStation` is
+     * called from `world.onDeckLift`, which only exists on a hangar world, so
+     * by the time the lift button is pressed the flight deck has already been
+     * built — and the flight deck has already paid for every procedural
+     * texture in the game. Metered on this box: the hangar's own dress spends
+     * about 7 s baking `src/engine/Textures.js` maps into a module-level cache
+     * that `World.dispose` does not clear and nothing in play ever drops. The
+     * station reuses all of it.
+     *
+     * So the hangar is built here FIRST, and it is not scaffolding — it is the
+     * difference between measuring the seam and measuring a cold process.
+     *
+     * ── AND IT IS CPU, NOT WALL ──────────────────────────────────────────
+     *
+     * `_cpuclock.mjs`'s header has the numbers: on a box with peer lanes live,
+     * wall time on the same fixed work varies 60x and CPU barely moves. The
+     * contention factor is printed beside the reading so a slow gate can be
+     * told from a slow build.
+     *
+     * ── THE CEILING IS DERIVED ───────────────────────────────────────────
+     *
+     * `Screens.SEAM_QUIET` is the game's own statement of how long a seam may
+     * last before it stops being a transition: under it the car says nothing
+     * at all, over it the screen prints "the car is still moving", which is a
+     * line you write for somebody who is waiting. A build that outlasts it has
+     * turned the seam into a wait by the game's own definition. That is the
+     * bound — not a number read off today's run — and at the 23 s the audit
+     * reported it is red by a factor of six.
+     */
+    const { meterCpu, loadPhrase } = await import('./_cpuclock.mjs');
+    const { bootWorld, run: step } = await import('./_coop.mjs');
+    const { SEAM_QUIET } = await import('../../src/ui/Screens.js');
+    const { RIDE } = await import('../../src/game/DeckLift.js');
+    const { prepareStation, finishStationBuild } = await import('../../src/game/Station.js');
+    const { World } = await import('../../src/game/World.js');
+    diskFetch();
+
+    /* THE WORLD THE PLAYER IS STANDING IN WHEN HE PRESSES THE BUTTON. */
+    const deck = await bootWorld({ level: 'hangar', settings: { mode: 'hangar', level: 'hangar', allies: 0 } });
+    /* …AND THE ROOMS, WHICH `main.warmStation` READS WHILE THE DECK IS UP. */
+    await prepareStation();
+    deck.world.dispose?.();
+
+    /**
+     * ── AND THE WINDOW IS ROUND THE SYNCHRONOUS BUILD, NOTHING ELSE ──────
+     *
+     * `cpuMs` counts the whole PROCESS, and this file runs its thirty checks
+     * concurrently — a window opened round an `await` would bill this seam for
+     * whatever the other twenty-nine were doing while it was suspended.
+     * `World.loadLevel` is `for (const step of this._loadSteps(...)) step.run()`
+     * and nothing else: one uninterruptible statement, which is exactly the
+     * interval the player is frozen for. `meterCpu` is `_cpuclock`'s own tool
+     * for this and it puts the method back in the `finally`.
+     *
+     * The game reaches the same list through `loadLevelAsync`, which awaits a
+     * frame between the seven stages. That yield does not make the work
+     * cheaper; it is what lets the compositor keep the seam's own animation
+     * running (see `Screens.seamMotion`), and the sum of the stages is the
+     * same number either way.
+     */
+    const sink = {};
+    const undo = meterCpu(World.prototype, 'loadLevel', sink, 'build');
+    let world, idle;
+    try { ({ world, idle } = await station(40)); } finally { undo(); }
+    try {
+      const t = { cpu: sink.build };
+      /* THE FROZEN INTERVAL. Everything between the last frame of the deck and
+       * the first frame of the station: `World._loadSteps` end to end. */
+      assert(t.cpu <= SEAM_QUIET * 1000,
+        `the seam freezes for ${(t.cpu / 1000).toFixed(2)} s of CPU against Screens.SEAM_QUIET's `
+        + `${SEAM_QUIET} s — past that the screen itself starts telling the player the car is `
+        + 'still moving, which is a thing you say to somebody who is waiting');
+
+      /**
+       * ── AND THE REST OF IT RUNS WHILE SOMETHING IS MOVING ───────────────
+       *
+       * Halving the freeze was done by taking the two biggest things out of
+       * `dressStation` that nobody can see from inside a lift car with its
+       * doors shut — the people and the fleet — and spending them on the
+       * frames after the world is live. So there has to BE a remainder, or the
+       * work has quietly gone back inside the seam.
+       */
+      assert(world._station.pending.length > 0,
+        'dressStation left nothing on the deferred queue — the whole build is back inside the '
+        + 'frozen interval, however fast it happens to be today');
+
+      /**
+       * AND IT FINISHES INSIDE THE DOOR ANIMATION. `dressDeckLift({arrive:
+       * true})` starts the car in `STATE.OPENING`, which takes `RIDE.doors`
+       * to part the leaves, and until they are parted there is no line of
+       * sight out of the car at all. Everything deferred has to be standing
+       * before then, or the player watches a room fill up.
+       */
+      const frames = Math.ceil(RIDE.doors * 60);
+      const life = world._stationLife;
+      let done = -1;
+      for (let i = 0; i < frames; i++) {
+        step(world, 1 / 60, idle);
+        if (done < 0 && !world._station.pending.length && !life.priming) done = i + 1;
+      }
+      assert(done >= 0,
+        `the deferred build was still running after ${frames} frames — the doors take `
+        + `${RIDE.doors} s to open and the player is looking at an unfinished room behind them`);
+      const seated = life.live.size;
+      assert(seated > 4,
+        `${seated} residents are standing after the doors opened; the slices are not filling the pool`);
+      /* AND NOTHING IS LEFT OVER: a drain-it-all on a finished queue is a
+       * no-op, which is what says the slicing terminates rather than looping. */
+      assert(finishStationBuild(world) === 0, 'the deferred queue never empties');
+
+      return `seam ${(t.cpu / 1000).toFixed(2)} s CPU (${await loadPhrase()}) against SEAM_QUIET's `
+        + `${SEAM_QUIET} s; the rest finished on frame ${done} of the ${frames} the doors take, `
+        + `${seated} residents standing`;
+    } finally { world.dispose?.(); }
   });
 
   /* ════════════════════════════════════════════════════════════════════════ */
@@ -1365,7 +1725,19 @@ export async function run({ check, assert, THREE }) {
       assert(dome._orbit.level === outsideLevel(world),
         'the station published a different theatre than outsideLevel resolves — two skies that '
         + 'agree by coincidence do not stay agreeing');
-      /* AND THE FLEET IN REAL GEOMETRY, not just the shader. */
+      /* AND THE FLEET IN REAL GEOMETRY, not just the shader.
+       *
+       * FINISHED FIRST, because the fleet is no longer built inside the
+       * dress: `dressStation` queues it and `drainStationBuild` spends it on
+       * the frames after the world is live, so that fourteen instanced hulls
+       * are not part of the interval the player is frozen for. It is behind
+       * shut lift doors for 1.1 s and cannot be seen in that time. This check
+       * is about the fleet existing, not about which frame it lands on, so it
+       * asks for the station whole — which is the door `finishStationBuild`
+       * exists for. Delete the call and the assertion below goes red, so the
+       * queue cannot quietly stop draining. */
+      const { finishStationBuild } = await import('../../src/game/Station.js');
+      finishStationBuild(world);
       assert(world._deckBattle?.group?.parent,
         'no fleet action outside the station — the shader window is there and dressDeckBattle is not');
       const draws = world._deckBattle.group.children.length;

@@ -255,9 +255,23 @@ export async function run({ check, assert }) {
         `the whole session sent ${st.bytes} B of home, which is more than one full-home packet `
         + `(${packedFull} B) — something is publishing on a timer`);
 
-      /* AND NO FOOD OR COMPANION ON THE WIRE — neither has a reader anywhere
-       * else, and a field sent and read by nobody is the defect
-       * `co-op: no field is put on the wire and read by nobody` catches. */
+      /**
+       * AND NO LARDER AND NO PERCH ON THE WIRE, and the two are off it for
+       * different reasons now.
+       *
+       * `store` is off it because nothing at the far end could read it:
+       * `larder()` reads the LOCAL fold and a guest's food is their own.
+       *
+       * `pad` HAS a reader since V15 §1.3 landed — `Home.dressPad` builds the
+       * fixture and stands the small companion on it — but the reader is fed
+       * from the record the apartment is dressed with, and a guest's record
+       * crosses `packHome`, which is `Coop.js`'s codec and another lane's
+       * file. So a friend's cabin gets their furniture and not their perch,
+       * and the missing metre of wire is stated here rather than left as a
+       * blank room: `Home.homeCompanion` says the ANIMAL can never cross at
+       * all (there is one Kennel per machine and it is yours), so what is
+       * absent from a visit is one fixture and not an animal.
+       */
       const msg = C.packHome(host.world._home.state, 1);
       assert(!('store' in msg) && !('pad' in msg) && !JSON.stringify(msg).includes('store'),
         'the home packet carries the larder or the companion — nothing reads either');

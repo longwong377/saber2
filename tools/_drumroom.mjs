@@ -19,7 +19,7 @@ page.on('console', (m) => { if (m.type() === 'error') errs.push('[console] ' + m
 await page.addInitScript(() => {
   localStorage.setItem('saber.credits.v1', JSON.stringify({ v: 1, purse: 5000, earned: 5000, spent: 0 }));
 });
-await page.goto('file:///tmp/borz.html', { waitUntil: 'domcontentloaded', timeout: 180000 });
+await page.goto('file:///tmp/claude-0/-home-user-saber2/2c88c71e-8985-5aff-85cf-baa467dd4021/scratchpad/drum.html', { waitUntil: 'domcontentloaded', timeout: 900000 });
 await page.waitForSelector('#menu:not(.hidden)', { timeout: 300000 });
 await page.evaluate(() => window.SABER.enterStation());
 await page.waitForFunction(() => !!window.SABER.world?._station, null, { timeout: 300000 });

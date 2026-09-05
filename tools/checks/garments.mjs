@@ -1279,12 +1279,18 @@ export async function run({ check, assert }) {
           + `against the tunic's ${refRigid} and ${refDrop.toFixed(2)} — the default is not the default`);
       }
       if (lower === 'jerkin') {
-        assert(rigid > 0 && rigid < refRigid,
-          `"${cut.name}" is a jerkin and hands out ${rigid} rigid pieces against the robe's ${refRigid} — `
-          + 'a jerkin is the over-skirt ALONE, so it is neither the whole robe nor none of it');
-        assert(d < refDrop - 0.15,
-          `"${cut.name}" is a jerkin and its cloth still reaches ${d.toFixed(2)} m against the robe's `
-          + `${refDrop.toFixed(2)} — the under-robe is still on it`);
+        /* THERE IS A SKIRT ON IT, and it is shorter than the robe's. */
+        assert(d > 0.20 && d < refDrop - 0.15,
+          `"${cut.name}" is a jerkin — a tunic over trousers — and its cloth reaches ${d.toFixed(2)} m `
+          + `against the robe's ${refDrop.toFixed(2)}: it is either bare below the belt or still in the robe`);
+        /* AND IT IS NOT HANDED TO THE SOLVER. `robeSkirt` is the list
+         * `attachSkirt` hides when it takes over, and every cut it can take
+         * over WITH is a full robe — see the note in buildJedi. A jerkin in
+         * that list is a player in a service tunic with a 700 mm robe
+         * simulated over his trousers. */
+        assert(b.robeSkirt === null,
+          `"${cut.name}" hands ${rigid} rigid piece(s) to attachSkirt, which can only replace them with `
+          + 'a full-length robe — a mid-thigh tunic is not one');
       }
       if (lower === 'trousers') {
         /* AND `null`, NOT `[]`. Every reader of this field — Enemy._build,

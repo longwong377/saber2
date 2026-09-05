@@ -67,6 +67,7 @@ const rig = keeper.body.rig;
 const hand = (s) => rig.worldPos(`hand${s}`, new THREE.Vector3());
 let handTotal = { L: 0, R: 0 };
 let hprev = { L: hand('L'), R: hand('R') };
+let hmax = 0;
 
 snap();
 const dt = 1 / 60;
@@ -78,8 +79,16 @@ while (world._cook && f < 900) {
   snap();
   for (const s of ['L', 'R']) {
     const h = hand(s);
-    handTotal[s] += h.distanceTo(hprev[s]);
+    const dd = h.distanceTo(hprev[s]);
+    if (dd > hmax) hmax = dd;
+    handTotal[s] += dd;
     hprev[s] = h;
+  }
+  if (f >= 100 && f < 112) {
+    console.log(`   running handR total=${handTotal.R.toFixed(2)} maxd=${(hmax||0).toFixed(3)}`);
+    const want = set.at(set._lastP.hand.R.x, set._lastP.hand.R.y, set._lastP.hand.R.z, new THREE.Vector3());
+    const sh = rig.worldPos('armR', new THREE.Vector3());
+    console.log(`   f${f} handR=${hprev.R.toArray().map(v=>v.toFixed(3)).join(',')} want=${want.toArray().map(v=>v.toFixed(3)).join(',')} sh=${sh.toArray().map(v=>v.toFixed(3)).join(',')} reach=${sh.distanceTo(want).toFixed(3)}`);
   }
   if (f % 20 === 0) {
     const kp = keeper.body.position;
@@ -98,6 +107,35 @@ for (const n of names) {
   if (!total.has(n)) continue;
   console.log(`#   ${n.padEnd(8)} ${(total.get(n) * 1000).toFixed(1).padStart(9)}   ${(maxv.get(n) * 1000).toFixed(2).padStart(7)}`);
 }
-console.log(`#   handL    ${(handTotal.L * 1000).toFixed(1).padStart(9)}`);
-console.log(`#   handR    ${(handTotal.R * 1000).toFixed(1).padStart(9)}`);
-console.log(`# whole-frame cpu over the cook: ${((cpu.user + cpu.system) / 1000 / f).toFixed(3)} ms/frame`);
+console.log(`#   handL    ${((handTotal.L - hmax) * 1000).toFixed(1).padStart(9)}  (first frame's ${(hmax * 1000).toFixed(0)} mm teleport taken off)`);
+console.log(`#   handR    ${((handTotal.R - hmax) * 1000).toFixed(1).padStart(9)}`);
+
+/* ── WHAT IT COSTS. Baseline first, then the same world with a cook on it. */
+const bench = (label, n, fn) => {
+  for (let i = 0; i < 30; i++) fn();
+  const t0 = process.cpuUsage();
+  for (let i = 0; i < n; i++) fn();
+  const c = process.cpuUsage(t0);
+  const ms = (c.user + c.system) / 1000 / n;
+  console.log(`# ${label}: ${ms.toFixed(4)} ms/frame over ${n}`);
+  return ms;
+};
+const A = bench('world.update, no cook  ', 600, () => world.update(dt, idle));
+let live = null;
+const fresh = () => {
+  const ck = new Food.Cook(row, { say: () => {}, done: () => {} });
+  return new CookSet(world, counter, ck, Food.prepOf(row).id);
+};
+live = fresh();
+world._cook = live;
+const B = bench('world.update, cooking  ', 600, () => {
+  if (!world._cook) { world._cook = fresh(); }
+  world.update(dt, idle);
+});
+world._cook?.dispose();
+world._cook = null;
+console.log(`# the cook costs ${((B - A) * 1000).toFixed(1)} us/frame (${(B - A).toFixed(4)} ms)`);
+const set2 = fresh();
+const C = bench('CookSet.step alone     ', 2000, () => { if (set2.done) { set2.done = false; set2.cook.done = false; set2.cook.i = 0; set2.cook.t = 0; } set2.step(dt); });
+set2.dispose();
+console.log(`# CookSet.step alone: ${(C * 1000).toFixed(1)} us/frame`);

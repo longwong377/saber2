@@ -285,3 +285,443 @@ export class CircuitPilot {
     return this.u;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  AND THE ONE WITH HANDS ON IT
+ * ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ THE DEFECT THIS CLASS EXISTS FOR ══════════════════════════════════════
+ *
+ * `SHARK.md` §4's ask is one sentence and every clause of it is a verb:
+ *
+ *   *"board and launch … six axes, kill-rotation, kill-velocity, chase and
+ *    cockpit cameras … fly past your own hangar and look in … land."*
+ *
+ * What shipped above this line is `CircuitPilot` — AN AUTOPILOT. Driven
+ * headless through a whole sortie, the player's BODY MOVED 0.703 m and stayed
+ * standing in the launch well for the full thirty-six seconds. No seat, no
+ * change of camera, no axis of control, no throttle. Four banner lines and a
+ * re-configured sky dome. The flight model underneath was honest and the lap
+ * was real; the half the note calls the loop was not there at all.
+ *
+ * So: the player boards, sits, and flies it.
+ *
+ * ── WHAT IS ON WHICH HAND, AND WHY NONE OF IT IS A NEW BINDING ────────────
+ *
+ * `Bindings.ACTIONS` is the player's own rebindable table and every row in it
+ * is printed on the pause card and in the Codex. A cockpit that invented six
+ * more rows would be six keys nobody has been told about — `Player._refuse`'s
+ * whole note is about exactly that failure — so this is built out of the keys
+ * a body ALREADY has, read through the seam `Driving.js` opened:
+ *
+ *   THE MOUSE IS THE STICK.      pitch on dy, yaw on dx. `Player._readInput`'s
+ *                                driving branch hands the mouse to the camera,
+ *                                and the camera is bolted to the airframe here,
+ *                                so what the mouse actually moves is the ship.
+ *   `moveF`/`moveB`  THROTTLE    fore and aft along the nose, on the mains.
+ *   `moveL`/`moveR`  SWAY        the lateral RCS quad. Not a turn — a Starfury
+ *                                translates sideways and its nose does not care.
+ *   `jump`/`crouch`  HEAVE       the vertical quad, up and down.
+ *   `rollL`/`rollR`  ROLL        Q and E, whose own label is "roll wrist left /
+ *                                right". A ship rolls about its nose the same
+ *                                way a wrist does, and it is the one axis a
+ *                                mouse cannot carry.
+ *   `blade`          KILL ROTATION   held. The attitude brake, under the hand
+ *                                    that is already on the stick.
+ *   `sprint`         KILL VELOCITY   held. The retro burn: everything the
+ *                                    airframe has, against the way it is going.
+ *   `view`           CHASE / COCKPIT  `Player._readInput` already toggles
+ *                                    `camera.firstPerson` on this key inside
+ *                                    the driving branch. Nothing new; the rig
+ *                                    is simply pointed at the airframe.
+ *   `drive`          THE TRAP     the same key that got you in. `takeControls`
+ *                                 calls `leave` and `leave` calls the bay.
+ *
+ * That is six axes, both brakes, both cameras and a way out, and not one row
+ * of `Bindings.js` changed.
+ *
+ * ── AND THERE IS STILL ONLY ONE FLIGHT MODEL ──────────────────────────────
+ *
+ * Everything below decides WHAT TO ASK FOR and hands it to `Starfury.allocate`
+ * exactly as `CircuitPilot` does. Nothing here integrates, damps or clamps a
+ * velocity: a stick held over is a demand, and a demand the four mains and the
+ * five RCS nozzles cannot meet comes out partially satisfied. THE STICK IS A
+ * TORQUE AND NOT A HEADING — let go of it and the ship keeps turning, which is
+ * why kill-rotation is a control and not a nicety.
+ *
+ * The two brakes are composed into the SAME allocation as the stick rather
+ * than allocated separately and merged, because the allocator sums a
+ * translation term and a rotation term per thruster: two `allocate` calls
+ * merged afterwards is a different ship. That is what
+ * `Starfury.killRotationDemand` and `killVelocityDemand` are for.
+ */
+
+/** How much of the airframe's authority one unit of stick asks for. All in
+ *  0..1 of full deflection, which is the currency `allocate` speaks. */
+export const STICK = Object.freeze({
+  /** Radians of demand per pixel of mouse. A 50 px flick is half authority. */
+  mouse: 0.01,
+  /** Q/E, full deflection. Roll is the cheapest axis on this airframe — the
+   *  mains are outboard on the booms — so it is not given all of it. */
+  roll: 0.6,
+  /** The lateral and vertical quads are 4.2 kN against the mains' 68, so a
+   *  full sideways demand is honest about being small: `allocate` opens the
+   *  quad all the way and the craft still barely moves, which is the point. */
+  sway: 1,
+  heave: 1,
+  throttle: 1,
+});
+
+/** How near the mouth, and how slow, a trap is. Metres and m/s. */
+export const TRAP = Object.freeze({ r: 120, v: 90 });
+
+/**
+ * A seat in a Starfury.
+ *
+ * Held on the player as `player.driving`, which is `Driving.Crew`'s contract
+ * and the whole reason no line of `Player.js` changes: `update` returns true
+ * and owns the frame, `leave` is the way out, `Player.die` and
+ * `Player.dispose` both call `leave` already, and `_readInput` has hidden the
+ * blade, the Force and the walk behind the same field since driving landed.
+ */
+export class PlayerPilot {
+  /**
+   * @param opts.radius  the drum's outer radius, m
+   * @param opts.spin    its rate, rad/s — derived from the radius when absent
+   * @param opts.onLeave (pilot, why) — the bay, told the seat is empty
+   * @param opts.say     (title, line) — the launch officer
+   */
+  constructor(player, opts = {}) {
+    this.player = player;
+    this.world = player?.world || null;
+    this.onLeave = opts.onLeave || null;
+    this.say = opts.say || null;
+
+    const radius = opts.radius ?? 90;
+    const spin = opts.spin ?? Math.sqrt(9.81 / radius);
+    this.craft = new Starfury();
+    this.u = 0;
+    this.travelled = 0;
+    this.lap = 0;
+    /** Seconds at the stick — the ceiling the bay recovers you at. */
+    this.t = 0;
+    this.throttles = new Map();
+    /** What the stick asked for last frame, for anything that wants to show
+     *  it. Read by the probe and by `starfury.mjs`. */
+    this.stick = { pitch: 0, yaw: 0, roll: 0, sway: 0, heave: 0, throttle: 0 };
+    this.killingRotation = false;
+    this.killingVelocity = false;
+    this.left = false;
+
+    /* THE LAUNCH IS THE DRUM'S THROW — `CircuitPilot`'s own arrangement, and
+     * the same three lines, because a player and an autopilot leave the same
+     * bay on the same rail at the same rim speed. */
+    const rim = norm(this.craft.launchFromDrum(spin, radius, 0));
+    const T = tangentAt(0);
+    this.craft.position = P(sample(0));
+    this.craft.velocity = scale(T, rim);
+    const axis = cross([0, 0, 1], T);
+    const s = norm(axis), c = dot([0, 0, 1], T);
+    const ang = Math.atan2(s, c);
+    const a = s > 1e-9 ? scale(axis, 1 / s) : [0, 1, 0];
+    this.craft.orientation = [Math.cos(ang / 2),
+      a[0] * Math.sin(ang / 2), a[1] * Math.sin(ang / 2), a[2] * Math.sin(ang / 2)];
+
+    this._board();
+  }
+
+  get progress() { return this.u; }
+
+  get speed() { return this.craft.speed; }
+
+  get clearance() {
+    const [x, y, z] = this.craft.position;
+    return clearanceAt({ x, y, z });
+  }
+
+  /** How far the craft is from the mouth of the well, in metres. */
+  get toMouth() {
+    const m = sample(0);
+    const [x, y, z] = this.craft.position;
+    return Math.hypot(m.x - x, m.y - y, m.z - z);
+  }
+
+  /** Is the bay able to take you right now? */
+  get trapped() { return this.toMouth <= TRAP.r && this.speed <= TRAP.v; }
+
+  /**
+   * ══ INTO THE SEAT ═════════════════════════════════════════════════════
+   *
+   * `Driving.Crew`'s constructor, minus everything about a tank's team and
+   * its gun, plus the two things a cockpit needs that a cupola does not: the
+   * boom comes out to a ship's length, and the rig's own numbers are
+   * remembered so `leave` is a restore rather than a second table of
+   * defaults that can drift from `CameraRig`'s constructor. That is
+   * `beginMeditationShot`'s discipline and it is here for its reason.
+   */
+  _board() {
+    const p = this.player;
+    if (!p) return;
+    const cam = p.camera;
+    this.was = cam ? {
+      fp: cam.firstPerson, dist: cam.targetDistance, height: cam.height,
+      shoulder: cam.shoulder, roll: cam.roll, rollTarget: cam.rollTarget,
+      yaw: cam.yaw, pitch: cam.pitch, fovTarget: cam.fovTarget,
+    } : null;
+    this.wasLit = !!p.saber?.lit;
+    /* Both hands are on the stick — `Crew`'s line, and its argument. */
+    p.saber?.retract();
+    p.saber?.setVisible(false);
+    p.hum?.retract?.();
+    p.releaseGrip?.();
+    p._abandonStasis?.();
+    if (p.senseActive) p.toggleSense?.(this.world);
+    if (p.shield?.up) p._endShield?.('you are in a cockpit');
+    p.driving = this;
+    if (cam) {
+      /* CHASE FIRST. A launch is the one moment worth watching from outside
+       * the airframe, and `view` is one key away from the cockpit. */
+      cam.firstPerson = false;
+      cam.targetDistance = CHASE.dist;
+      cam.height = CHASE.height;
+      cam.shoulder = 0;
+      cam.eyeOffset?.set?.(0, 0, 0);
+    }
+    p._applyViewMode?.();
+  }
+
+  /**
+   * ONE FRAME AT THE STICK. Returns true: it owns the frame, exactly as
+   * `Crew.update` does, and everything below `Player.update`'s driving branch
+   * is a body on its feet.
+   */
+  update(dt, ctx) {
+    const p = this.player;
+    const input = ctx?.input;
+    if (this.left) return false;
+    /* THE THREE WAYS THIS ENDS THAT ARE NOT THE PLAYER PRESSING THE KEY, and
+     * they are `Crew.update`'s three with a bay in place of a hull. */
+    if (!p || p.alive === false) { this.leave(null); return true; }
+    if (!(dt > 0)) { this.ride(); return true; }
+    this.t += dt;
+
+    /* ── THE SIX AXES ─────────────────────────────────────────────────── */
+    const axis = input?.moveAxis ? input.moveAxis(_stickAxis) : _ZERO_AXIS;
+    const held = (id) => !!input?.act?.(id);
+    const s = this.stick;
+    s.throttle = clamp1(axis.y) * STICK.throttle;
+    s.sway = clamp1(axis.x) * STICK.sway;
+    s.heave = ((held('jump') ? 1 : 0) - (held('crouch') ? 1 : 0)) * STICK.heave;
+    s.roll = ((held('rollR') ? 1 : 0) - (held('rollL') ? 1 : 0)) * STICK.roll;
+    /* THE MOUSE, READ HERE AND NOT THROUGH THE CAMERA. `Player._readInput`
+     * feeds it to `camera.addYaw`/`addPitch`, whose pitch is CLAMPED to a
+     * neck's ±1.28 rad — a ship that may point anywhere cannot have its stick
+     * eaten by a neck. The rig is slaved to the airframe below, so what the
+     * camera did with the same pixels is overwritten on the same frame and
+     * there is no second reader in any sense that matters. */
+    const mx = Number(input?.mouse?.dx) || 0;
+    const my = Number(input?.mouse?.dy) || 0;
+    s.yaw = clamp1(mx * STICK.mouse);
+    /* Screen-down is a positive `dy` and nose-down is a negative body-x
+     * torque, so the sign here is the sign the mouse already has. */
+    s.pitch = clamp1(my * STICK.mouse);
+
+    /* ── AND THE TWO BRAKES, INTO THE SAME ALLOCATION ─────────────────── */
+    this.killingRotation = held('blade');
+    this.killingVelocity = held('sprint');
+    let translate = [s.sway, s.heave, s.throttle];
+    let rotate = [s.pitch, s.yaw, s.roll];
+    if (this.killingRotation) {
+      const d = this.craft.killRotationDemand(dt);
+      if (d) rotate = d;
+    }
+    /**
+     * ══ KILL VELOCITY IS A MANOEUVRE, NOT A NOZZLE ════════════════════════
+     *
+     * `Starfury.killVelocity` burns whatever is pointing the right way, and on
+     * this airframe that is the retro alone: 8.4 kN against the mains' 272.
+     * Measured, holding it from 90 m/s for six seconds took the craft to
+     * **86.6** — 3.4 m/s of a 90 m/s problem, which as a pilot's control is
+     * indistinguishable from a key that does nothing.
+     *
+     * That is not a defect in the model, it is the model being right: there is
+     * no reverse engine on a Starfury and the source says so. What a pilot
+     * does about it is TURN ROUND AND LIGHT THE MAINS, which is the manoeuvre
+     * the source calls normal operation — *"flying backwards while
+     * decelerating"*. So this is the same pointing law `CircuitPilot` steers
+     * with, aimed retrograde, with the throttle opened as the nose comes on.
+     *
+     * The throttle is gated on ALIGNMENT rather than opened flat, because a
+     * full burn through ninety degrees of turn is not a stop, it is a corner.
+     */
+    if (this.killingVelocity) {
+      const v = this.craft.velocity;
+      if (norm(v) > 0.05) {
+        const back = this.craft.worldToBody(scale(unit(v), -1));
+        const axisB = [-back[1], back[0], 0];
+        rotate = capped(sub(scale(axisB, K_POINT), scale(this.craft.angularVelocity, K_RATE)), 1);
+        /* `back[2]` is how much of retrograde is already down the nose: 1 when
+         * the burn is exactly against travel, 0 across it, negative when the
+         * craft is still pointing the way it is going. */
+        translate = [0, 0, Math.max(0, back[2])];
+      }
+    }
+
+    this.craft.allocate(translate, rotate, this.throttles);
+    this.craft.step(dt, this.throttles);
+
+    /* ── where that put it on the circuit ─────────────────────────────── */
+    const next = this._project();
+    this.travelled += wrapU(next - this.u);
+    this.u = ((next % 1) + 1) % 1;
+    while (this.travelled >= 1) { this.travelled -= 1; this.lap++; }
+
+    this.ride();
+    this._frame(dt, ctx);
+    return true;
+  }
+
+  /** `CircuitPilot._project`, and it is the same search for the same reason —
+   *  a craft cannot go round backwards and a symmetric window on a track that
+   *  passes near itself at the mouth can pick the far side. */
+  _project() {
+    let best = this.u, bd = Infinity;
+    const [x, y, z] = this.craft.position;
+    for (let k = -8; k <= 40; k++) {
+      const u = this.u + k * (3 / CIRCUIT_LENGTH);
+      const p = sample(u);
+      const d = (p.x - x) ** 2 + (p.y - y) ** 2 + (p.z - z) ** 2;
+      if (d < bd) { bd = d; best = u; }
+    }
+    return best;
+  }
+
+  /**
+   * THE PILOT RIDES. `Crew.ride`'s three lines and its argument: `position` is
+   * the seat and `velocity` is the craft's, so every reader of "where is this
+   * player and how fast are they going" gets the truth rather than a body
+   * standing still in a bay while a shader pretends.
+   *
+   * This is the measurement the audit was made of. Before it the body moved
+   * 0.703 m across a whole sortie.
+   */
+  ride() {
+    const p = this.player;
+    if (!p) return;
+    const [x, y, z] = this.craft.position;
+    p.position.set(x, y, z);
+    const v = this.craft.velocity;
+    p.velocity.set(v[0], v[1], v[2]);
+    p.grounded = true;
+    p.body?.position?.copy(p.position);
+  }
+
+  /**
+   * ══ THE CAMERA, BOLTED TO THE AIRFRAME ════════════════════════════════
+   *
+   * Two cameras and one rig. `CameraRig` already has everything a cockpit
+   * needs — a first-person eye at the target, a boom behind it, a roll — and
+   * `Player._readInput`'s driving branch already toggles `firstPerson` on
+   * `view`. So COCKPIT is the eye and CHASE is the boom, and all this does is
+   * point the rig where the ship is pointing.
+   *
+   * The rig steers on yaw/pitch/roll and the ship carries a quaternion, so the
+   * angles are DECOMPOSED rather than tracked: the camera's basis is the
+   * ship's turned about its own up (the airframe flies +z forward and a camera
+   * looks down −z), and `YXZ` is the order `syncAim` composes in, so taking
+   * the same order back out is exact at every attitude but the poles.
+   *
+   * AND THE RIG IS DRIVEN FROM HERE. `Player.update`'s driving branch returns
+   * before `_updateCamera`, so nothing else in the frame will move it.
+   */
+  _frame(dt, ctx) {
+    const p = this.player;
+    const cam = p?.camera;
+    if (!cam) return;
+    const [qw, qx, qy, qz] = this.craft.orientation;
+    /* camera = ship · Ry(π), as a quaternion product written out — no THREE in
+     * this file, for the reason its header gives about `Outside` and `Launch`. */
+    const cw = -qy, cx = -qz, cy = qw, cz = qx;
+    /* …and its rotation matrix, only the five elements `YXZ` needs. */
+    const m13 = 2 * (cx * cz + cw * cy);
+    const m23 = 2 * (cy * cz - cw * cx);
+    const m33 = 1 - 2 * (cx * cx + cy * cy);
+    const m21 = 2 * (cx * cy + cw * cz);
+    const m22 = 1 - 2 * (cx * cx + cz * cz);
+    const m11 = 1 - 2 * (cy * cy + cz * cz);
+    const m31 = 2 * (cx * cz - cw * cy);
+    const pitch = Math.asin(Math.max(-1, Math.min(1, -m23)));
+    let yaw, roll;
+    if (Math.abs(m23) < 0.9999999) { yaw = Math.atan2(m13, m33); roll = Math.atan2(m21, m22); }
+    else { yaw = Math.atan2(-m31, m11); roll = 0; }
+    cam.yaw = yaw;
+    cam.pitch = pitch;
+    /* `CameraRig.update` composes the roll as a turn about (0, 0, −1), which
+     * is the negative of the `YXZ` z term. */
+    cam.roll = -roll;
+    cam.rollTarget = -roll;
+    cam.syncAim?.();
+    cam.targetDistance = cam.firstPerson ? 0 : CHASE.dist;
+    cam.height = cam.firstPerson ? 0 : CHASE.height;
+    /* THE LENS OPENS WITH THE SPEED, which is the one cue in the game that
+     * says how fast you are actually going in a place with nothing to pass. */
+    const base = this.world?.settings?.fov ?? 60;
+    cam.fovTarget = base + Math.min(12, this.speed * 0.12);
+    cam.update(dt, p.position, {
+      physics: ctx?.physics, terrain: null,
+      /* The eye is AT the seat: a cockpit is not a head 1.62 m over a hull. */
+      eyeHeight: 0, pelvis: null,
+    });
+  }
+
+  /**
+   * ══ OUT, AND IT IS THE ONLY WAY OUT ═══════════════════════════════════
+   *
+   * Idempotent, and it puts back every field it borrowed. Called by the drive
+   * key through `Player.takeControls`, by `Player.die` — which is the whole of
+   * finding (2)'s recovery, because a death does not run the station's
+   * director and this does not need it — and by `Player.dispose` on a level
+   * change.
+   *
+   * IT DOES NOT DECIDE WHAT HAPPENS NEXT. Whether this was a trap, a tractor
+   * or a corpse is the bay's question, and the bay is `onLeave`. A seat that
+   * started a recovery sequence itself would be a flight file that knows about
+   * `Launch.Sortie`, and `Pilot.js`'s header is about why it must not.
+   */
+  leave(why = null) {
+    const p = this.player;
+    if (this.left) return false;
+    this.left = true;
+    if (p) {
+      if (p.driving === this) p.driving = null;
+      p.velocity.set(0, 0, 0);
+      p.grounded = false;
+      const cam = p.camera, w = this.was;
+      if (cam && w) {
+        cam.firstPerson = w.fp;
+        cam.targetDistance = w.dist;
+        cam.height = w.height;
+        cam.shoulder = w.shoulder;
+        cam.roll = w.roll; cam.rollTarget = w.rollTarget;
+        cam.pitch = w.pitch;
+        cam.fovTarget = w.fovTarget;
+      }
+      if (p.saber) {
+        p.saber.setVisible(!p.saberDown);
+        if (this.wasLit && !p.saberDown && p.alive !== false) { p.saber.ignite(); p.hum?.ignite?.(); }
+      }
+      p._applyViewMode?.();
+    }
+    this.onLeave?.(this, why);
+    return true;
+  }
+}
+
+/** The boom, for a thing nine metres across. A body's 3.05 m puts the camera
+ *  inside the port engine pod. */
+const CHASE = Object.freeze({ dist: 22, height: 3.2 });
+
+const _stickAxis = { x: 0, y: 0 };
+const _ZERO_AXIS = { x: 0, y: 0 };
+const clamp1 = (v) => (v < -1 ? -1 : v > 1 ? 1 : (Number.isFinite(v) ? v : 0));

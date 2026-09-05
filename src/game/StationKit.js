@@ -3276,6 +3276,8 @@ export class CookSet {
     this.done = !cook || !this.gear;
     this.keeper = null;
     this.wantYaw = null;
+    this.yaw = null;
+    this.stand = null;
     if (this.done) return;
 
     const M = world?._station?.mats;
@@ -3299,13 +3301,17 @@ export class CookSet {
        * is not put back afterwards on purpose: a man who moved down the row
        * has moved down the row, and popping him home the moment the bowl
        * lands is the only version of this a player could catch. */
-      if (body && desk.behind) {
-        const dx = body.position.x - desk.behind.x, dz = body.position.z - desk.behind.z;
-        if (dx * dx + dz * dz > AT_DESK * AT_DESK) {
-          body.position.set(desk.behind.x, body.position.y, desk.behind.z);
-          body._poseAt?.copy(body.position);
-        }
-      }
+      /* WHERE HE STANDS TO WORK, and it is NOT `desk.behind`. That point is
+       * 0.55 m clear of the back edge — right for a man serving over a desk
+       * and half a metre too far for one whose hands have to be IN the pan: a
+       * human arm is 0.55 m from the shoulder and the far side of the top is
+       * 0.85 m from `behind`, so every hand target on the counter was out of
+       * reach and the solve straightened both arms at it. He steps in to
+       * work. */
+      this.stand = {
+        x: o.x - fwd.x * (desk.d / 2 + 0.30),
+        z: o.z - fwd.z * (desk.d / 2 + 0.30),
+      };
     } else if (body && world.player?.position) {
       /* NO DESK: the Narn market sells off a stone floor. The frame is taken
        * off the man and he brings his own board — and it faces YOU, because
@@ -3314,9 +3320,10 @@ export class CookSet {
       fwd.set(world.player.position.x - o.x, 0, world.player.position.z - o.z);
       if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, 1);
       fwd.normalize();
-      o.addScaledVector(fwd, 0.8);
+      o.addScaledVector(fwd, 0.62);
       top = 0.98;
       trestle = true;
+      this.stand = { x: body.position.x, z: body.position.z };
     } else { this.done = true; return; }
 
     this.o = o.clone();
@@ -3477,18 +3484,83 @@ export class CookSet {
    */
   poseKeeper(p) {
     const b = this.keeper;
-    if (!b || b.dead || (b.lod ?? 0) > 1) return;
-    const rig = b.rig;
-    if (!rig?.get('armR') || !rig.get('foreR')) return;
-    /* He comes about to face his own counter. Damped rather than snapped, and
-     * safe to write: an idle body with no target and no velocity has `want ===
-     * facing` in `Enemy._move`, so nothing pulls it back. */
+    if (!b || b.dead) return;
+    /**
+     * ══ HE STAYS AT HIS OWN COUNTER FOR THE LENGTH OF THE ORDER ══════════
+     *
+     * Measured, headless, with no cook running at all: a keeper drifts 6.3 m
+     * in three seconds and holds 1.8–2.8 m/s — `Enemy` takes the Player as its
+     * `target` whatever the team, and `dressKeepers`' one line against that,
+     * `if (body.brain) body.brain.idle = true`, is a no-op because an `Enemy`
+     * has no `brain` field at all. So the man behind every shop on the station
+     * walks at you and then past you.
+     *
+     * That is not this lane's bug to fix — it is the shop's, in `Station.js` —
+     * but it is fatal here, because the cook is what the player is being asked
+     * to WATCH: at 2 m/s he is four metres from his own wok by the second
+     * line. So for the four seconds of an order he is held: position and
+     * heading written after the body has moved itself, which is the same seam
+     * `Enemy._poseArms` writes the arms in. Nothing is disabled and nothing is
+     * remembered — the frame the cook ends, he goes back to doing whatever he
+     * was doing.
+     *
+     * The velocity is zeroed as well as the position because the ANIMATOR
+     * reads it: a body pinned by assignment alone runs a full walk cycle on
+     * the spot, which is worse than the drift it replaces.
+     */
+    if (this.stand) {
+      /* THE HIPS COME WITH HIM, and this is the line that took the measuring.
+       * Putting `position` back is not enough: `Enemy._carryPose` has already
+       * added the frame's displacement to the pelvis, and at LOD 3 the gait
+       * only re-places it every 1/12 s, so a body pinned by `position` alone
+       * walks its own skeleton away from itself and comes back on the solve.
+       * Measured before this: the cook's shoulder crept 50 mm a frame for five
+       * frames and snapped back 200 mm on the sixth, which put his hands 250 mm
+       * from the pan they were solved to. Correcting the pelvis by the same
+       * delta is `_carryPose` run backwards, on the same field, at the far end
+       * of the same frame. */
+      const dx = this.stand.x - b.position.x, dz = this.stand.z - b.position.z;
+      const hips = b.rig?.hipsBone?.obj;
+      if (hips) { hips.position.x += dx; hips.position.z += dz; }
+      b.position.x = this.stand.x; b.position.z = this.stand.z;
+      b.velocity?.set?.(0, 0, 0);
+      b._poseAt?.copy(b.position);
+      b._syncBody?.();
+    }
+    /* He comes about to face his own counter, damped — and the damped value is
+     * kept HERE rather than read back off the body, because `Enemy._move` pulls
+     * `facing` toward its own target every frame and a tug-of-war between the
+     * two lands him halfway between the customer and the wok. */
     if (this.wantYaw !== null) {
-      let d = this.wantYaw - b.facing;
+      if (this.yaw === null) this.yaw = b.facing;
+      let d = this.wantYaw - this.yaw;
       while (d > Math.PI) d -= Math.PI * 2;
       while (d < -Math.PI) d += Math.PI * 2;
-      b.facing += d * 0.12;
+      this.yaw += d * 0.14;
+      b.facing = this.yaw;
     }
+    /**
+     * ── AND THE ARMS, AT WHATEVER LOD HE IS PINNED TO ────────────────────
+     *
+     * `Enemy._poseArms` returns past LOD 1 and this deliberately does not, for
+     * a reason that only applies here: `stationResident` pins EVERY body on the
+     * station to LOD 3 outright — §12.2's draw-call answer, 4 draws a figure
+     * instead of 60 — so the early return would mean the cook's hands never
+     * move anywhere on the station, at any distance, including the two metres
+     * you are standing at. And it would be wrong anyway: `MergedSkin` binds
+     * `new THREE.Skeleton(rig.list.map(b => b.obj))`, the body's OWN bones, so
+     * a merged body follows a pose exactly as an unmerged one does —
+     * `frame-budget.mjs` holds that as "the merged skin is the same body, in a
+     * pose it was not baked in".
+     *
+     * What replaces the LOD gate is the honest question: can anybody see this?
+     * Past fourteen metres nobody is watching a man's hands, and the solve is
+     * skipped.
+     */
+    const rig = b.rig;
+    if (!rig?.get('armR') || !rig.get('foreR')) return;
+    const eye = this.world.player?.position;
+    if (eye && eye.distanceToSquared(b.position) > 196) return;
     const chest = rig.get('chest'), spine = rig.get('spine'), head = rig.get('head');
     if (spine) spine.obj.quaternion.copy(spine.restQuat).multiply(_ckQ.setFromEuler(_ckE2.set(p.lean * 0.55, 0, 0, 'XYZ')));
     if (chest) chest.obj.quaternion.copy(chest.restQuat).multiply(_ckQ.setFromEuler(_ckE2.set(p.lean * 0.45, 0, 0, 'XYZ')));
