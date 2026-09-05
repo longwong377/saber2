@@ -52,8 +52,8 @@
 import { PLACE } from './StationPlan.js';
 import { occupant, headcount } from './StationLife.js';
 import {
-  SABACC, playSabacc, sabaccScore, sabaccBot,
-  DEJARIK, dejarikBoard, dejarikMoves, dejarikStep, dejarikWinner, dejarikBot,
+  SABACC, playSabacc, sabaccScore, sabaccBot, sabaccPot, sabaccPays,
+  DEJARIK, dejarikMoves, dejarikBot, playDejarik,
   DRUM, drumAt, drumPays, bandOf,
 } from './Games.js';
 
@@ -198,8 +198,22 @@ export function botFor(who) {
  * shift in this file, which is the defect `StationPlan.js`'s header is about.
  *
  * The player is always seat 0.
+ *
+ * ── AND THE HAND IS PLAYED FOR A POT ─────────────────────────────────────
+ *
+ * *"you can bet your real money."* `ante` is what each of the four seats puts
+ * in the middle before the deal, and it is a PARAMETER rather than a constant
+ * read in here so that the panel's live stake — the one that outlives the door
+ * — is the single authority on what this hand is being played for. A hand
+ * dealt for nothing prices at nothing and says so (`pot: 0`, `pay: 0`), which
+ * is what the room shows before you are in.
+ *
+ * The arithmetic is `Games.sabaccPot` and `Games.sabaccPays` and it is all of
+ * it. NO CREDIT MOVES HERE — see this file's header: a file that both deals
+ * the cards and moves the purse is the one shape the economy doctrine refuses,
+ * so what comes back is a number the panel owes you, and the panel pays it.
  */
-export function sabaccTable(placeId, day = 0, index = 0, acts = [], foes = 3) {
+export function sabaccTable(placeId, day = 0, index = 0, acts = [], foes = 3, ante = 0) {
   /* THREE, because §D1 says three: *"against 3 station NPCs whose play style
    * comes from their species and temper."* Seat 0 is you. */
   const who = [];
@@ -214,6 +228,9 @@ export function sabaccTable(placeId, day = 0, index = 0, acts = [], foes = 3) {
     return acts[views.length - 1] ?? 'hold';
   };
   const r = playSabacc([me, ...who.map(botFor)], seed);
+  const seats = who.length + 1;
+  const stake = Math.max(0, Math.round(Number(ante) || 0));
+  const pot = sabaccPot(stake, seats);
   const asked = views.length;
   const done = acts.length >= asked;
   const view = done ? null : views[acts.length];
@@ -221,6 +238,10 @@ export function sabaccTable(placeId, day = 0, index = 0, acts = [], foes = 3) {
   return {
     game: 'sabacc', place: placeId, day: day | 0, index: index | 0,
     seed, acts: acts.slice(), seats: who,
+    /* WHAT IS ON THE TABLE. `ante` is what each seat put in, `pot` is the
+     * middle, and `staked` is the one a panel branches on: a hand nobody has
+     * paid for is a hand nobody may act on. */
+    ante: stake, pot, staked: stake > 0,
     /* WHAT THE PLAYER MAY SEE. Their own cards and how many everyone else
      * holds — never the deck and never a face-down hand, which is the same
      * view `playSabacc` hands a bot and for the same reason. */
@@ -236,9 +257,15 @@ export function sabaccTable(placeId, day = 0, index = 0, acts = [], foes = 3) {
     result: done ? {
       winner: r.winner, pure: r.pure, hands: r.hands, scores,
       won: r.winner === 0,
-      line: r.winner < 0 ? 'nobody takes it'
-        : r.winner === 0 ? (r.pure ? 'pure sabacc — you take it' : 'you take it')
-          : `${who[r.winner - 1]?.name || 'the house'} takes it`,
+      /* WHAT THE PANEL OWES YOU, in whole credits: the middle less the house's
+       * cut if you took it, your ante back if nobody did, nothing otherwise. */
+      pay: sabaccPays(r.winner, stake, seats),
+      pot,
+      /* WHAT HAPPENED, and not what it paid. The number is `pay` one line up;
+       * the panel is the thing that knows whether the wallet took it. */
+      line: r.winner < 0 ? (stake ? 'nobody takes it — the antes come back' : 'nobody takes it')
+        : r.winner === 0 ? (r.pure ? 'pure sabacc — you take the middle' : 'you take the middle')
+          : `${who[r.winner - 1]?.name || 'the house'} takes the middle`,
     } : null,
     /* Every shift that landed, so the panel can say WHY a made hand died —
      * the shift is the game and a hand that changed under you in silence is
@@ -250,53 +277,194 @@ export function sabaccTable(placeId, day = 0, index = 0, acts = [], foes = 3) {
 /** The next hand at this table. A hand is an index, so nothing is stored. */
 export function nextHand(table) { return { index: (table?.index | 0) + 1, acts: [] }; }
 
+/* ── A LIVE HAND IS A TICKET, AND IT IS THE DRUM'S SHAPE ──────────────────
+ *
+ * `Games.drumTicket` is the worked example: a stake that has been paid for is
+ * a VALUE the panel holds, so it survives the card being taken down and the
+ * player walking out of the room. A hand is the same problem with one more
+ * field — the verbs said so far — because a person who antes, draws, and then
+ * walks out mid-hand has money in a middle that has not been decided yet.
+ *
+ * DROPPING IT AT THE DOOR WOULD BE THE HOUSE KEEPING THE ANTE FOR THE CRIME OF
+ * WALKING OUT, which is the sentence `main.js`'s `drumHeld` was written under
+ * and it is no less true with cards in it. So the ticket carries everything
+ * `sabaccTable` needs to deal the SAME hand again — the place, the day it was
+ * dealt on, the hand index and the ante — and `sabaccHand` is the one reading
+ * that turns it back into a table. The day is on the ticket rather than read
+ * fresh because the station clock keeps running while the panel is shut: come
+ * back after midnight and it must still be YOUR hand, not today's deal.
+ */
+
+/** Strike a hand: the ante is paid, the cards are dealt, nothing is said yet. */
+export function sabaccAnte(placeId, day = 0, index = 0, ante = SABACC.ANTE) {
+  return {
+    game: 'sabacc', place: placeId, day: day | 0, index: index | 0,
+    ante: Math.max(0, Math.round(Number(ante) || 0)), acts: [],
+  };
+}
+
+/** The table a live stake is sitting at. The one reading that settles it. */
+export function sabaccHand(stake, foes = 3) {
+  if (!stake) return null;
+  return sabaccTable(stake.place, stake.day, stake.index, stake.acts || [], foes, stake.ante);
+}
+
+/** Say a verb into a live hand. The stake is a value, so this answers a new one. */
+export function sabaccAct(stake, act) {
+  if (!stake) return stake;
+  return { ...stake, acts: [...(stake.acts || []), act] };
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
- *  3. THE DEJARIK COLUMN — perfect information, so the state IS the board
+ *  3. THE DEJARIK COLUMN — one loop, and the room plays through it
  * ══════════════════════════════════════════════════════════════════════════
  *
- * The opposite of sabacc on purpose: nothing hidden, so there is nothing to
- * replay and the board itself is the whole state. The player is side 0.
+ * ── THE DEFECT THIS SECTION WAS REWRITTEN FOR ────────────────────────────
+ *
+ * This section used to hold its own game loop: `dejarikTurn` stepped the board
+ * itself, asked `dejarikWinner`, and handled exactly one of the two ways a side
+ * can be stuck — the house's. `Games.playDejarik` held the OTHER half of the
+ * rule ("a side with no legal move has lost") and had no caller anywhere under
+ * `src/`. Two implementations of one game, and the defect was in the one a
+ * player could reach: driven 400 columns through this file with legal moves
+ * chosen at random, **112 of 400 ended with `winner: null`, no legal move and
+ * no result line** — 28% — and `main.js` printed `g.line || 'the column is
+ * done'` over the hole, so the missing result read as an ending.
+ *
+ * The rule now lives in `dejarikWinner`, which every path asks, and this
+ * section no longer has a loop at all: a column is `{seed, acts}` and
+ * `playDejarik` replays it, exactly as `sabaccTable` replays a hand.
+ *
+ * ── AND THAT REVERSES WHAT THIS FILE USED TO SAY, ON PURPOSE ─────────────
+ *
+ * The old note here argued the opposite — perfect information, so the board IS
+ * the state and there is nothing to replay. That was true and it was not the
+ * point. The question is not whether a replay is NECESSARY, it is whether the
+ * room and the checks play the same game, and the answer was no. A 60-ply
+ * replay against a one-ply bot on twenty squares costs microseconds; what it
+ * buys is one loop, one stalemate rule, and a column that is a value — so it
+ * can be written down, handed to a check verbatim, and survive the door.
  */
-export function dejarikTable(placeId, day = 0) {
+
+/**
+ * THE HOUSE'S SIDE, seeded on the board's own turn count so the same position
+ * always draws the same reply and a player can study it — and on the column's
+ * `round` as well, so racking them up is a NEW game rather than the same one
+ * back again.
+ */
+function houseSide(placeId, day, round) {
+  return (b) => dejarikBot(b, hashOf(`dejarik:${placeId}:${day | 0}:${round | 0}:${b.turn}`));
+}
+
+/**
+ * THE PLAYER'S SIDE, which is a list of moves already made and nothing else.
+ *
+ * Answering `null` means THE NEXT MOVE IS NOT KNOWN YET, and `playDejarik`
+ * reads it that way — see its note on the two ways to stop. It cannot mean
+ * "no legal move", because `dejarikWinner` ends the game before a side with
+ * nothing to play is ever asked.
+ *
+ * A scripted move that is not legal on the board it arrives at also stops the
+ * replay rather than being played anyway. Nothing can put one there —
+ * `dejarikTurn` checks legality before it appends — and if something ever did,
+ * a column that stands still is a visible fault and a column that teleports a
+ * piece is not.
+ */
+function scriptSide(acts) {
+  let i = 0;
+  return (b) => {
+    const want = acts[i++];
+    if (!want) return null;
+    return dejarikMoves(b).find((m) => m.from === want.from && m.to === want.to) || null;
+  };
+}
+
+/**
+ * WHAT HAPPENED, IN A SENTENCE, AND THERE IS ONE FOR EVERY ENDING.
+ *
+ * Every branch of a decided game answers, so no caller ever needs a `||` on
+ * the way to the screen — the fallback string in the panel is what hid the
+ * deadlock for the whole life of this room. A live game answers `null`, which
+ * is not a missing line: it is the honest answer to "who won" mid-game, and
+ * the panel is showing the board rather than a result at that point.
+ */
+function columnLine(w, b, name) {
+  if (w === null) return null;
+  const n = [0, 0];
+  for (let i = 0; i < b.ring.length; i++) {
+    const p = b.ring[i];
+    if (p && !b.gone[i]) n[p.side]++;
+  }
+  if (w < 0) {
+    return (!n[0] && !n[1]) ? 'the ring closes on both of you'
+      : `time on the column — ${n[0]} against ${n[1]}, and it stands`;
+  }
+  const won = w === 0;
+  const loser = won ? 1 : 0;
+  if (!n[loser]) return won ? 'you sweep the column' : `${name} sweeps the column`;
+  if (b.turn >= DEJARIK.MAX_TURNS) {
+    return won ? `time on the column — you are ahead ${n[0]} to ${n[1]}`
+      : `time on the column — ${name} is ahead ${n[1]} to ${n[0]}`;
+  }
+  /* THE STALEMATE, said out loud rather than left as a blank screen. It is a
+   * quarter of all columns; a player who is never told why the game stopped
+   * would be right to call it a bug, because for the whole life of this room
+   * it was one. */
+  return won ? `${name} has nowhere left to go — you take the column`
+    : `you have nowhere left to go — ${name} takes the column`;
+}
+
+/**
+ * A column, dealt from its seed and the moves you have made in it.
+ *
+ * The player is side 0. `round` is which column this is at the table, the same
+ * way `index` is which hand — so "rack them up" is a number and nothing is
+ * stored anywhere.
+ */
+export function dejarikTable(placeId, day = 0, acts = [], round = 0) {
+  const against = opponentAt(placeId, day, 1);
+  const seed = hashOf(`dejarik:${placeId}:${day | 0}:${round | 0}`);
+  const r = playDejarik([scriptSide(acts), houseSide(placeId, day, round)], seed);
+  const w = r.winner;
+  const name = against?.name || 'the house';
+  let mine = null, theirs = null;
+  for (const m of r.moves) { if (m.side === 0) mine = m; else theirs = m; }
   return {
-    game: 'dejarik', place: placeId, day: day | 0,
-    board: dejarikBoard(),
+    game: 'dejarik', place: placeId, day: day | 0, round: round | 0,
+    seed, acts: acts.map((a) => ({ from: a.from, to: a.to })),
+    board: r.board,
     ring: DEJARIK.RING, shrink: DEJARIK.SHRINK_EVERY, maxTurns: DEJARIK.MAX_TURNS,
-    against: opponentAt(placeId, day, 1),
-    moves: dejarikMoves(dejarikBoard()),
-    winner: null, last: null,
+    against,
+    /* A LIVE GAME HAS MOVES AND A DECIDED ONE HAS NONE. With the stalemate
+     * rule in `dejarikWinner` those two are now the same statement, which is
+     * exactly what was not true before: an empty list with a null winner was
+     * the deadlock, and it was 28% of columns. */
+    moves: w === null ? dejarikMoves(r.board) : [],
+    winner: w, why: null,
+    last: r.moves.length ? { mine, theirs } : null,
+    line: columnLine(w, r.board, name),
   };
 }
 
 /**
  * One turn: your move, then theirs.
  *
- * BOTH IN ONE CALL, because a board handed back with the opponent still to
- * move is a board the panel would have to remember to poke. The reply is
- * named in what comes back so the room can show what they did.
+ * BOTH IN ONE CALL still, because a board handed back with the opponent to
+ * move is a board the panel would have to remember to poke — but it is now one
+ * line, because appending your move to the script and replaying is the whole
+ * of it. The reply is named in what comes back so the room can show what they
+ * did.
  */
 export function dejarikTurn(table, mv) {
-  const legal = dejarikMoves(table.board);
-  const pick = legal.find((m) => m.from === mv?.from && m.to === mv?.to);
+  if (!table || table.winner !== null) return { ...table, why: 'the column is finished' };
+  const pick = dejarikMoves(table.board).find((m) => m.from === mv?.from && m.to === mv?.to);
   if (!pick) return { ...table, why: 'that piece cannot go there' };
-  let b = dejarikStep(table.board, pick);
-  let w = dejarikWinner(b);
-  let reply = null;
-  if (w === null) {
-    /* Seeded on the board's own turn count, so the same position always draws
-     * the same reply and a player can study it. `dejarikBot` takes a seed for
-     * exactly this reason. */
-    reply = dejarikBot(b, hashOf(`dejarik:${table.place}:${table.day}:${b.turn}`));
-    if (!reply) w = 0;
-    else { b = dejarikStep(b, reply); w = dejarikWinner(b); }
-  }
-  return {
-    ...table, board: b, winner: w, why: null,
-    moves: w === null ? dejarikMoves(b) : [],
-    last: { mine: pick, theirs: reply },
-    line: w === null ? null : w === 0 ? 'you take the column' : w === 1 ? `${table.against?.name || 'the house'} takes the column` : 'the ring closes on both of you',
-  };
+  return dejarikTable(table.place, table.day,
+    [...table.acts, { from: pick.from, to: pick.to }], table.round);
 }
+
+/** The next column at this table, the way `nextHand` is the next hand. */
+export function nextColumn(table) { return { round: (table?.round | 0) + 1, acts: [] }; }
 
 /* ══════════════════════════════════════════════════════════════════════════
  *  4. THE DRUM — the one you cannot re-take
@@ -362,7 +530,10 @@ export function drumBets() {
  * with no door shipped green.
  */
 export function openWheelhouse(hour = 0, day = 0, placeId = WHEELHOUSE) {
-  const sabacc = sabaccTable(placeId, day, 0, []);
+  /* DEALT FOR NOTHING, because nobody has anted. `openWheelhouse` is what the
+   * door hands the panel and what the room's own banner reads; the stake is
+   * struck at the table, by a person, and lives in the panel. */
+  const sabacc = sabaccTable(placeId, day, 0, [], 3, 0);
   return {
     place: placeId, name: PLACE.get(placeId)?.name || 'The Wheelhouse',
     hour: ((hour | 0) % 24 + 24) % 24, day: day | 0,

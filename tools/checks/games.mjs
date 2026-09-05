@@ -78,6 +78,20 @@ export async function run({ check, assert, near }) {
     assert(!unfinished, `${unfinished} of 400 games never ended`);
     assert(longest <= G.DEJARIK.MAX_TURNS * 2, `a game ran ${longest} moves`);
 
+    /**
+     * ══ AND THE CLAUSE ABOVE COULD NOT HAVE FAILED ═══════════════════════
+     *
+     * `playDejarik` used to answer `winner: w ?? -1`. `w` is null exactly when
+     * the game has NOT ended, so the one line the clause above is named after —
+     * "400 games all ended" — was reading a fallback that made every unfinished
+     * game look like a draw. The `??` is gone; this is what makes its absence a
+     * thing a check would notice.
+     */
+    const halted = G.playDejarik([() => null, (b) => G.dejarikBot(b, 1)], 11);
+    assert(halted.winner === null && halted.waiting && halted.moves.length === 0,
+      `a game nobody moved in answered winner ${halted.winner} — an unfinished game must say so, and `
+      + 'the `?? -1` that used to sit in that return is what hid 400 of them');
+
     /* AND THINKING WINS. The bot looks one ply ahead and counts; the other
      * side moves legally at random. */
     let s = 999;
@@ -103,6 +117,80 @@ export async function run({ check, assert, near }) {
     assert(opening.length >= 12, `only ${opening.length} opening moves — that is not a board, it is a corridor`);
     return `400 games all ended (longest ${longest} moves); one ply beat none ${(rate * 100).toFixed(1)}% `
       + `of ${decided}; ${opening.length} opening moves`;
+  });
+
+  check('games: a column played in the ROOM always ends with a result', async () => {
+    /**
+     * ══ THE DEFECT: A QUARTER OF ALL COLUMNS ENDED WITH NOTHING ══════════
+     *
+     * The clause above drove `playDejarik`, which had the stalemate rule.
+     * `Casino.dejarikTurn` had its OWN loop, which had half of it — it handled
+     * the house being stuck and never the player. `dejarikWinner`, the function
+     * both asked, never asked whether the side to move could move at all, so it
+     * answered `null` on a dead board and every caller read that as "play on".
+     *
+     * Driven 400 columns through the panel's own two calls with legal moves
+     * chosen at random, on the shipped build:
+     *
+     *     {"0": 47, "1": 248, "DEADLOCK (winner null, line null, moves []) ": 105}
+     *
+     * 105 of 400 — 26% — with no winner, no legal move and no line, and
+     * `main.js` printed `g.line || 'the column is done'` over the hole, so the
+     * missing result read as an ending. That fallback is why nobody saw it.
+     *
+     * ── AND THIS IS DERIVED RATHER THAN SAMPLED ──────────────────────────
+     *
+     * A count of deadlocks over 400 games is a sample and would go green on a
+     * lucky seed. So the count is here AND the invariant it is a consequence
+     * of, checked on every board of every one of those games: a position has a
+     * winner if and only if the side to move has nothing to play or somebody
+     * has run out of pieces or the clock has run out. There is no fourth state.
+     */
+    const G = await import('../../src/game/Games.js');
+    const C = await import('../../src/game/Casino.js');
+    let s = 20260905;
+    const rnd = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+
+    const tally = {}; const kinds = {};
+    let boards = 0, broke = null, noLine = 0, moved = 0;
+    for (let i = 0; i < 400; i++) {
+      let t = C.dejarikTable(C.WHEELHOUSE, i % 30, [], (i / 30) | 0);
+      let guard = 0;
+      while (t.winner === null && t.moves.length && guard++ < 200) {
+        /* THE INVARIANT, on every board the room hands back. */
+        boards++;
+        const live = G.dejarikMoves(t.board).length > 0;
+        const decided = G.dejarikWinner(t.board) !== null;
+        if (live === decided && !broke) {
+          broke = `turn ${t.board.turn}: ${live ? 'moves available' : 'no move'} and the winner is `
+            + `${G.dejarikWinner(t.board)}`;
+        }
+        t = C.dejarikTurn(t, t.moves[Math.floor(rnd() * t.moves.length)]);
+        moved++;
+      }
+      const key = t.winner === null ? 'DEADLOCK' : String(t.winner);
+      tally[key] = (tally[key] || 0) + 1;
+      if (t.winner !== null && !t.line) noLine++;
+      const k = /nowhere/.test(t.line || '') ? 'stalemate' : /sweep/.test(t.line || '') ? 'a side swept'
+        : /time on/.test(t.line || '') ? 'the clock' : 'unnamed';
+      kinds[k] = (kinds[k] || 0) + 1;
+    }
+    assert(boards > 3000, `only ${boards} positions swept across 400 columns — this is not driving the game`);
+    assert(!broke, `a position broke the winner/move invariant — ${broke}`);
+    assert(!tally.DEADLOCK,
+      `${tally.DEADLOCK} of 400 columns played through Casino.dejarikTable/dejarikTurn ended with `
+      + 'no winner, no legal move and no result — that is the defect this clause is named after');
+    assert(!noLine, `${noLine} finished columns had no result line — a decided game the room cannot describe`);
+    assert(!kinds.unnamed, `${kinds.unnamed} columns ended with a line that names no ending`);
+    /* AND THE STALEMATE IS A REAL ENDING RATHER THAN A RARE ONE. It was a
+     * quarter of all columns when it was invisible; if it stops happening at
+     * all, the rule has stopped being load-bearing and this clause has become
+     * decoration. */
+    assert((kinds.stalemate | 0) > 20,
+      `only ${kinds.stalemate | 0} of 400 columns ended in a stalemate — that was 105 before the rule `
+      + 'existed, so a number near zero means the drive is no longer reaching the position');
+    return `400 columns driven through the room: ${Object.entries(tally).map(([k, v]) => `${k}:${v}`).join(' ')}; `
+      + `${boards} positions held the winner/move invariant; endings ${Object.entries(kinds).map(([k, v]) => `${v} ${k}`).join(', ')}`;
   });
 
   check('games: the Drum runs on the station clock, and the house edge is real', async () => {
@@ -295,6 +383,233 @@ export async function run({ check, assert, near }) {
       + `window edge ${(best.e * 100).toFixed(1)}% (${best.label}) to ${(worst.e * 100).toFixed(1)}% (${worst.label}), `
       + `deck ${(byKind.deck * 100).toFixed(2)}% band ${(byKind.band * 100).toFixed(2)}% `
       + `spine ${(byKind.spine * 100).toFixed(2)}% over 240,000 each`;
+  });
+
+  check('games: sabacc is played for a pot, and the pot is priced against the play', async () => {
+    /**
+     * ══ THE DEFECT: THE TABLE TOOK NOTHING AND PAID NOTHING ══════════════
+     *
+     * *"you can bet your real money."* `sabaccTable` returned no `stake`, no
+     * `pot`, no `ante` and no `pay`, and the panel's sabacc branch had no stake
+     * button and called no wallet door — so the room printed the purse over
+     * three tables and let you wager at exactly one. Driven all-hold over 300
+     * days it won 46 of 300 hands, 15.3% against a fair share of 25%, and that
+     * edge cost nothing and paid nothing: it was a card animation.
+     *
+     * A pot is the honest shape for a game against three named residents, so
+     * this holds the three things a pot has to be: it is the sum of the antes,
+     * the house's cut is the only edge in it, and what a player gets back
+     * depends on how they play by much more than the cut.
+     */
+    const G = await import('../../src/game/Games.js');
+    const C = await import('../../src/game/Casino.js');
+
+    /* ── 1. THE ARITHMETIC. Four seats at 25 is a hundred in the middle. */
+    assert(G.SABACC.SEATS === 4, `sabacc seats ${G.SABACC.SEATS} — §D1 asks for you and three`);
+    assert(G.sabaccPot(25, 4) === 100, `four antes of 25 made a middle of ${G.sabaccPot(25, 4)}`);
+    assert(G.sabaccPays(0, 25, 4) === Math.round(100 * (1 - G.SABACC.RAKE)),
+      `taking the middle paid ${G.sabaccPays(0, 25, 4)} of a hundred`);
+    assert(G.sabaccPays(2, 25, 4) === 0, 'a hand somebody else took paid the player');
+    assert(G.sabaccPays(-1, 25, 4) === 25,
+      'a hand nobody won did not return the ante — the house does not rake a pot with no winner');
+    /* AND A LIVE HAND PAYS NOTHING AT ALL. `null !== 0` reads as "somebody
+     * else took it", which would settle an undecided hand as a loss. */
+    assert(G.sabaccPays(null, 25, 4) === 0 && G.sabaccPays(undefined, 25, 4) === 0,
+      'an unfinished hand was priced');
+    assert(G.sabaccPays(0, 0, 4) === 0 && G.sabaccPot(0, 4) === 0,
+      'a hand dealt for nothing is worth something');
+
+    /* ── 2. THE EDGE, MEASURED ALONG THE PATH THE ROOM WALKS. `drumEdge`'s
+     *      lesson: a payout is impossible to eyeball and easy to get wrong by
+     *      a factor of two. Seat 0 against three opponents who know the rules,
+     *      four thousand hands each. */
+    const edgeFor = (me, hands = 4000) => {
+      let staked = 0, back = 0;
+      for (let i = 0; i < hands; i++) {
+        const players = [me, G.sabaccBot, G.sabaccBot, G.sabaccBot];
+        const r = G.playSabacc(players, 700003 + i * 7);
+        staked += G.SABACC.ANTE;
+        back += G.sabaccPays(r.winner, G.SABACC.ANTE, G.SABACC.SEATS);
+      }
+      return 1 - back / staked;
+    };
+    const knows = edgeFor(G.sabaccBot);
+    const stands = edgeFor(() => 'hold');
+    const draws = edgeFor(() => 'draw');
+    assert(knows > 0.005,
+      `a player who knows the rules returns ${((1 - knows) * 100).toFixed(1)}% — at or above even the `
+      + 'table is a printing press and the room closes');
+    assert(knows < 0.10,
+      `the house keeps ${(knows * 100).toFixed(1)}% against the best play there is — past a tenth `
+      + 'nobody sits down twice');
+    /* AND PLAYING BADLY HAS TO COST FAR MORE THAN THE CUT, or the rake is the
+     * game and the cards are decoration. */
+    assert(stands - knows > 0.20 && draws - knows > 0.20,
+      `standing on every hand costs ${((stands - knows) * 100).toFixed(1)} points more than knowing the `
+      + `rules and drawing on every hand ${((draws - knows) * 100).toFixed(1)} — if the gap is not far `
+      + 'bigger than the rake then the house cut is the whole game');
+
+    /* ── 3. AND THE TABLE CARRIES IT. The fields the panel branches on. */
+    const free = C.sabaccTable(C.WHEELHOUSE, 4, 0, [], 3, 0);
+    assert(free.ante === 0 && free.pot === 0 && free.staked === false,
+      'a hand dealt before anybody anted claims to be staked');
+    const live = C.sabaccTable(C.WHEELHOUSE, 4, 0, ['hold', 'hold', 'hold'], 3, G.SABACC.ANTE);
+    assert(live.staked && live.pot === 100 && live.done && live.result,
+      `a staked hand came back ante ${live.ante} pot ${live.pot} done ${live.done}`);
+    assert(Number.isInteger(live.result.pay) && live.result.pay >= 0,
+      `the result owes ${live.result.pay}, which is not a number of credits`);
+    assert(live.result.pay === G.sabaccPays(live.result.winner, live.ante, live.seats.length + 1),
+      'the table and the rules disagree about what the hand is worth');
+    return `middle ${G.sabaccPot(G.SABACC.ANTE)} at an ante of ${G.SABACC.ANTE}, rake `
+      + `${(G.SABACC.RAKE * 100).toFixed(0)}%; the house keeps ${(knows * 100).toFixed(1)}% against a player `
+      + `who knows the rules, ${(stands * 100).toFixed(1)}% against one who stands on everything and `
+      + `${(draws * 100).toFixed(1)}% against one who draws on everything`;
+  });
+
+  check('games: the ante moves real credits, and a live hand outlives the door', async () => {
+    /**
+     * ══ THE PATH, NOT A PICTURE OF IT ════════════════════════════════════
+     *
+     * `games.mjs` measured a game nobody was betting on for the whole life of
+     * this room. So this drives the WALLET — `Credits.spend` takes the ante and
+     * `Credits.pay` hands the middle back, the same two doors the pit and the
+     * shop use — and then holds `src/main.js` to walking it, because a check
+     * that measures a path the panel does not walk is what was here before.
+     */
+    const G = await import('../../src/game/Games.js');
+    const C = await import('../../src/game/Casino.js');
+    const Credits = await import('../../src/game/Credits.js');
+
+    Credits.clearCredits();
+    Credits.pay(500, 'check');
+    const opened = Credits.purse();
+    assert(opened === 500, `the check could not fund a purse — it holds ${opened}`);
+
+    /* ── 1. THE ANTE LEAVES THE PURSE, AND THE HAND EXISTS BECAUSE IT DID. */
+    const took = Credits.spend(G.SABACC.ANTE, 'sabacc');
+    assert(took.ok && Credits.purse() === opened - G.SABACC.ANTE,
+      `the ante did not leave the purse: ${opened} → ${Credits.purse()}`);
+    const stake = C.sabaccAnte(C.WHEELHOUSE, 6, 0, G.SABACC.ANTE);
+    assert(stake.ante === G.SABACC.ANTE && stake.acts.length === 0 && stake.day === 6,
+      'the struck hand did not carry the ante, the day and an empty list of verbs');
+
+    /* ── 2. IT OUTLIVES THE DOOR. The stake is a value, so walking out and
+     *      back in is the SAME hand rather than a fresh deal — and it is dealt
+     *      off the day it was struck on, not the day you came back on. */
+    let held = C.sabaccAct(stake, 'draw');
+    const mid = C.sabaccHand(held);
+    assert(!mid.done && mid.acts.length === 1, 'one verb finished a three-round hand');
+    /* THE CARD IS TAKEN DOWN AND PUT BACK UP: nothing survives but the ticket. */
+    const back = C.sabaccHand(JSON.parse(JSON.stringify(held)));
+    assert(JSON.stringify(back.hand) === JSON.stringify(mid.hand) && back.ante === mid.ante,
+      `the hand changed across the door: [${mid.hand}] became [${back.hand}] — a stake dropped at the `
+      + 'door is the house keeping the ante for the crime of walking out of the room');
+    /* AND A DAY PASSING WHILE YOU WERE AWAY DOES NOT RESHUFFLE IT. */
+    const today = C.sabaccTable(C.WHEELHOUSE, 7, 0, held.acts, 3, held.ante);
+    assert(JSON.stringify(today.hand) !== JSON.stringify(mid.hand) || today.seed !== mid.seed,
+      'the day is not in the deal at all, so the ticket carrying one proves nothing');
+    assert(C.sabaccHand(held).seed === mid.seed, 'the held hand was re-dealt off a different day');
+
+    /* ── 3. AND THE MIDDLE COMES BACK THROUGH THE WALLET. Played out to a
+     *      showdown, the credits the table says it owes are the credits that
+     *      arrive — driven over enough hands that a winner is certain. */
+    let dealt = 0, won = 0, staked = 0, backIn = 0;
+    for (let i = 0; i < 200 && won < 3; i++) {
+      const t = C.sabaccTable(C.WHEELHOUSE, 6, i, ['hold', 'hold', 'hold'], 3, G.SABACC.ANTE);
+      const before = Credits.purse();
+      const spent = Credits.spend(G.SABACC.ANTE, 'sabacc');
+      if (!spent.ok) { Credits.pay(500, 'check'); continue; }
+      dealt++;
+      staked += G.SABACC.ANTE;
+      const owed = t.result.pay;
+      const paid = owed > 0 ? Credits.pay(owed, 'sabacc') : 0;
+      backIn += paid;
+      assert(paid === owed,
+        `the table owed ${owed} and the wallet handed over ${paid} — the cap is ${Credits.PER_RUN_CAP} `
+        + 'and a sabacc pot must never reach it');
+      assert(Credits.purse() === before - G.SABACC.ANTE + paid,
+        `the purse went ${before} → ${Credits.purse()} on a hand that cost ${G.SABACC.ANTE} and paid ${paid}`);
+      if (owed > G.SABACC.ANTE) won++;
+    }
+    assert(won >= 3, `only ${won} winning hands in ${dealt} — the middle never came back at all`);
+    assert(staked > 0 && backIn > 0, 'no credit moved in either direction');
+
+    /* ── 4. AND THE PANEL WALKS IT. `src/main.js` cannot be imported under
+     *      Node, so it is read — the same instrument the Drum's clause uses. */
+    const { readFile } = await import('node:fs/promises');
+    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const room = main.slice(main.indexOf("function showCasino("), main.lastIndexOf("screens.card('casino'"));
+    assert(room.length > 2000, 'the Wheelhouse panel could not be found in main.js');
+    assert(/spend\(amount, 'sabacc'\)/.test(room),
+      'the sabacc table does not take the ante through `Credits.spend` — a table that deals for free is '
+      + 'the defect this whole clause is named after');
+    assert(/pay\(owed, 'sabacc'\)/.test(room),
+      'the sabacc table never pays the middle back through `Credits.pay`');
+    assert(/sabaccAnte\(/.test(room) && /sabaccHand\(/.test(room) && /sabaccAct\(/.test(room),
+      'the panel builds its own sabacc stake instead of using the three calls that carry one — that is '
+      + 'exactly how the Drum lost the bet it was selling');
+    assert(/sabaccHeld = casino\.stake/.test(main) && /stake: sabaccHeld/.test(main),
+      'the live hand does not outlive the card — `screens.card` nulls `casino`, so a stake held only '
+      + 'there is forfeited for walking out of the room');
+    /* AND THE CARDS ARE NOT SHOWN BEFORE THE ANTE. A hand you can look at
+     * before you are in is free information and there is no decision in it. */
+    assert(/if \(live \|\| casino\.shown\) \{/.test(room),
+      'the panel prints your hand whether or not you have anted — a hand shown before the stake is a '
+      + 'table you can sit out for nothing');
+    return `ante ${G.SABACC.ANTE} out through Credits.spend and the middle back through Credits.pay over `
+      + `${dealt} hands (${won} winners, ${staked} staked, ${backIn} returned); the stake survives the door`;
+  });
+
+  check('games: no result in this room is a `||` fallback', async () => {
+    /**
+     * ══ WHAT A FALLBACK STRING ACTUALLY DOES ═════════════════════════════
+     *
+     * `esc(g.line || 'the column is done')`. That `||` was load-bearing for a
+     * quarter of every dejarik game played in this room: the game had no
+     * winner, `columnLine` had nothing to say, and the panel printed a sentence
+     * that reads exactly like an ending. The defect was not the missing rule —
+     * it was that the missing rule was invisible.
+     *
+     * So: every ending has a line, in the file that decides endings, and the
+     * panel prints it raw. A screen that has to invent a result is a screen
+     * that cannot tell a finished game from a broken one.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const C = await import('../../src/game/Casino.js');
+    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const room = main.slice(main.indexOf("function showCasino("), main.lastIndexOf("screens.card('casino'"));
+
+    /* THE PANEL NEVER PAPERS OVER A RESULT. */
+    const holes = [...room.matchAll(/\b(?:g|t|casino\.shown)\??\.(?:line|settled)[^\n]*?\|\|/g)]
+      .map((m) => m[0].trim());
+    assert(!holes.length,
+      `the Wheelhouse panel falls back on a string when a game has no result: ${holes.join(' / ')} — `
+      + 'that is how 26% of dejarik games shipped looking finished');
+    assert(/esc\(g\.line\)/.test(room), 'the column\'s result line is not printed straight');
+
+    /* AND EVERY DECIDED GAME HAS ONE TO PRINT, over both games and every way
+     * each of them can end. */
+    const missing = [];
+    for (let day = 0; day < 12; day++) {
+      const t = C.sabaccTable(C.WHEELHOUSE, day, 0, ['hold', 'hold', 'hold'], 3, 25);
+      if (!t.result?.line) missing.push(`sabacc day ${day} winner ${t.result?.winner}`);
+      const nowt = C.sabaccTable(C.WHEELHOUSE, day, 0, ['fold'], 3, 25);
+      if (!nowt.result?.line) missing.push(`sabacc folded day ${day}`);
+    }
+    let s = 4242;
+    const rnd = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+    for (let i = 0; i < 120; i++) {
+      let t = C.dejarikTable(C.WHEELHOUSE, i % 12, [], i);
+      let g = 0;
+      while (t.winner === null && t.moves.length && g++ < 200) {
+        t = C.dejarikTurn(t, t.moves[Math.floor(rnd() * t.moves.length)]);
+      }
+      if (t.winner !== null && !t.line) missing.push(`dejarik ${i} winner ${t.winner}`);
+      if (t.winner === null && t.line) missing.push(`dejarik ${i} is live and claims a result`);
+    }
+    assert(!missing.length,
+      `${missing.length} finished games had no result of their own: ${missing.slice(0, 4).join('; ')}`);
+    return 'the panel prints `g.line` raw; 132 finished games all carried a line of their own';
   });
 
   check('games: they are pure, and a table is not a wallet', async () => {

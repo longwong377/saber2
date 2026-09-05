@@ -57,7 +57,49 @@ const streamFor = (seed) => (seed == null ? gamesRng : makeRng((seed >>> 0) || 1
  *     redrawn. A player who knows the shift chance plays a different game to
  *     one who does not, and that difference is the skill.
  */
-export const SABACC = { TARGET: 23, HAND: 2, ROUNDS: 3, SHIFT: 0.22 };
+/**
+ * ── AND THE LAST THREE FIELDS ARE THE MONEY, WHICH IS WHY THEY ARE HERE ───
+ *
+ * *"you can bet your real money."* A sabacc table with no stake is a card
+ * animation: the panel printed the purse over three tables and let you wager
+ * at exactly one, and a hand you cannot lose anything on has no decision in
+ * it — driven all-hold over three hundred days it won 15.3% against a fair
+ * share of 25% and that cost nothing and paid nothing.
+ *
+ * So the shape is a POT, because sabacc is a pot game against three named
+ * residents and not a wheel with a payout table:
+ *
+ *   SEATS  four, which is you and the three §D1 asks for.
+ *   ANTE   what each seat puts in the middle before the deal. Everyone antes
+ *          the same, which is what makes the pot a number and not a ledger.
+ *   RAKE   the house's cut of a decided middle, and it is the ONLY edge in
+ *          this game — there is no house seat, so without it four players
+ *          would be passing one pot round a table for nothing.
+ *
+ * The rake is priced against measurement rather than taste. `sabaccEdge` drives
+ * four thousand hands with a player who knows the rules at seat 0 and three who
+ * do at the rest, and again with a player who does not, and the two numbers are
+ * the whole justification for the 0.10:
+ *
+ *     knows the rules   the house keeps  2.6%   (97.4 back per 100 staked)
+ *     stands on every hand             36.5%
+ *     draws on every hand              38.8%
+ *
+ * ── AND THE HOUSE KEEPS LESS THAN IT RAKES, BECAUSE SEAT 0 IS THE BEST SEAT
+ *
+ * 2.6% and not 10% because the seats are not equal and the player always has
+ * the first one. `playSabacc` asks the seats in order and they draw off one
+ * deck, so seat 0 sees the earliest cards: four identical bots over 20,000
+ * hands take 27.2 / 25.6 / 24.5 / 22.5 per cent. That is a real 2.2-point
+ * advantage to the player over a fair share, and the rake is set knowing it —
+ * ten per cent of the middle less a two-point seat is a house that keeps about
+ * two and a half, which is a card room rather than a grating.
+ *
+ * WHAT IS NOT HERE IS A BALANCE. This prices a pot; `Credits.js` is still the
+ * only file that holds one, and the two lines that move it are in the panel
+ * beside the pit's, exactly as this file's header promises.
+ */
+export const SABACC = { TARGET: 23, HAND: 2, ROUNDS: 3, SHIFT: 0.22, SEATS: 4, ANTE: 25, RAKE: 0.10 };
 
 function sabaccDeck() {
   const d = [];
@@ -193,6 +235,52 @@ export function sabaccBot(view) {
 /** The largest magnitude in the deck — a face card at seventeen. */
 const BIGGEST = 17;
 
+/* ── THE MIDDLE ───────────────────────────────────────────────────────────
+ *
+ * Two functions, both pure, and between them they are the whole of what a
+ * hand is worth. They take the ANTE rather than reading one so a check can
+ * price a table at any stake, and they answer in whole credits because that is
+ * what a purse is counted in — `drumPays` rounds for the same reason and
+ * `drumEdge`'s note records what happens to a measurement that forgets it.
+ */
+
+/** What is in the middle: every seat's ante, including yours. */
+export function sabaccPot(ante = SABACC.ANTE, seats = SABACC.SEATS) {
+  return Math.max(0, Math.round(Number(ante) || 0)) * Math.max(1, seats | 0);
+}
+
+/**
+ * What seat 0 is owed when the hand is over, and it is three cases.
+ *
+ *   YOU TOOK IT      the middle, less the house's cut.
+ *   NOBODY TOOK IT   everybody folded or bombed out, so the antes come back —
+ *                    the house does not rake a hand nobody won, because a cut
+ *                    of a pot with no winner is a fee for having been dealt to.
+ *   ANYBODY ELSE     nothing. The ante is already gone; it went in at the deal.
+ *
+ * A hand that has NOT FINISHED pays nothing at all, and the explicit null is
+ * why: `winner` is `null` mid-hand and `null !== 0` would otherwise have read
+ * as "somebody else took it" — a live hand quietly settled as a loss.
+ */
+export function sabaccPays(winner, ante = SABACC.ANTE, seats = SABACC.SEATS) {
+  const a = Math.max(0, Math.round(Number(ante) || 0));
+  if (!a || winner === null || winner === undefined) return 0;
+  if (winner < 0) return a;
+  if (winner !== 0) return 0;
+  return Math.round(sabaccPot(a, seats) * (1 - SABACC.RAKE));
+}
+
+/*
+ * ── AND THE EDGE IS MEASURED IN THE CHECK AND NOT EXPORTED FROM HERE ──────
+ *
+ * `drumEdge` and `drumTicketEdge` are instruments that live in this file with
+ * no caller under `src/` — `reachable.mjs` carries both as residue, which is a
+ * debt it says may only fall. Sabacc's edge is measured the same way and by the
+ * same argument as those two, so it is driven in `tools/checks/games.mjs`
+ * against `sabaccPays` rather than adding a third name here that no room calls.
+ * The numbers it produces are the ones written on `SABACC` above.
+ */
+
 /* ══════════════════════════════════════════════════════════════════════════
  *  2. THE DEJARIK COLUMN
  * ══════════════════════════════════════════════════════════════════════════
@@ -308,6 +396,44 @@ export function dejarikWinner(b) {
   if (!a) return 1;
   if (!c) return 0;
   if (b.turn >= DEJARIK.MAX_TURNS) return a === c ? -1 : (a > c ? 0 : 1);
+  /**
+   * ══ AND THE SIDE THAT CANNOT MOVE HAS LOST ══════════════════════════════
+   *
+   * THE DEFECT. This asked only "has somebody run out of pieces" and "has the
+   * clock run out", and never "can the side to play actually play". On a ring
+   * a piece is blocked by its own side and by the squares the shrink has taken,
+   * so a side can have four pieces on the board and nowhere to put any of them
+   * — and this answered `null`, which every caller reads as "the game goes on".
+   * Driven 400 games through the panel's own path with legal moves chosen at
+   * random: **112 of 400 ended with no winner, no result and no legal move**,
+   * 28% of them, and the panel printed `g.line || 'the column is done'` over
+   * the hole so it read as an ending. A `||` fallback is how a missing result
+   * gets shipped.
+   *
+   * ── WHY THE STUCK SIDE LOSES, RATHER THAN IT BEING A DRAW ────────────────
+   *
+   * Chess makes stalemate a draw because its object is the KING, and a king
+   * that cannot be taken has not been beaten. Dejarik's object is the BOARD:
+   * you win by having a piece left when the other side does not, on a ring that
+   * is closing. Being unable to move here is not an accident of geometry, it is
+   * what losing looks like one move early — your pieces are packed against your
+   * own and the ring, and every square that disappears next takes one of them
+   * with it. The side that did that to you played to do it.
+   *
+   * And the alternative is worse than merely arbitrary: a draw would make
+   * SELF-IMMOBILISATION A STRATEGY. A player behind on pieces could shuffle
+   * into a block and cash a losing position for half a result, and with the
+   * shrink helping them it happened in better than a quarter of driven games —
+   * so the dominant line in this game would have been "stop playing it", which
+   * is the exact defect `DEJARIK`'s own note about a corridor is about.
+   *
+   * It is also the rule the rest of the file already assumed: `playDejarik`
+   * has answered `1 - b.side` here since it was written, and `Casino`'s turn
+   * handler has always given the player the column when the house had no reply.
+   * The rule was correct in two places and absent from the one function every
+   * path asks. It lives HERE now, so there is one answer to the question.
+   */
+  if (!dejarikMoves(b).length) return 1 - b.side;
   return null;
 }
 
@@ -337,19 +463,48 @@ export function dejarikBot(b, seed = null) {
   return best;
 }
 
-/** Play a whole game out. Answers the winner and the moves. */
+/**
+ * ══ PLAY A COLUMN OUT — and this is the ONE loop, for both callers ════════
+ *
+ * *"the function that fixes this exists and nothing calls it."* This had the
+ * stalemate rule and no caller under `src/`; `Casino.dejarikTurn` had a second,
+ * shorter loop that did not. Two implementations of one game, and the defect
+ * was in the one a player could reach — which is this tree's recurring shape.
+ *
+ * So the rule moved into `dejarikWinner`, where every path asks it, and this
+ * is now what the ROOM plays through: `Casino.dejarikTable` runs a column from
+ * its seed and the moves the player has made, exactly as `sabaccTable` re-runs
+ * a hand from `{seed, acts}`. Perfect information made a replay look pointless
+ * — Casino's header said so — but a replay of a 60-ply game against a one-ply
+ * bot costs microseconds, and what it buys is that the board on the screen and
+ * the board this file's checks measure are produced by the same twelve lines.
+ *
+ * ── TWO WAYS TO STOP, AND THEY ARE NOT THE SAME STOP ─────────────────────
+ *
+ * A bot answering `null` no longer means "I am beaten". It cannot: this is
+ * only ever asked when `dejarikWinner` said the game is live, and a live game
+ * has a legal move in it by the rule above. It means THE MOVE IS NOT KNOWN YET
+ * — the scripted player has run out of script and the panel is waiting on a
+ * person. So the loop breaks and `winner` stays `null`, which is the honest
+ * answer to "who won" halfway through a game.
+ *
+ * AND `winner` IS RETURNED RAW. It used to answer `w ?? -1`, which turned an
+ * unfinished game into "the ring closes on both of you" — a `||` fallback in
+ * the return of the function whose own check counts unfinished games. That
+ * check could not have failed. `waiting` is the same fact said out loud.
+ */
 export function playDejarik(bots, seed = null) {
   let b = dejarikBoard();
   const moves = [];
   let w = dejarikWinner(b);
   while (w === null && moves.length < DEJARIK.MAX_TURNS * 2) {
     const mv = bots[b.side](b, seed == null ? null : seed + moves.length);
-    if (!mv) { w = 1 - b.side; break; }
+    if (!mv) break;
     moves.push({ side: b.side, ...mv });
     b = dejarikStep(b, mv);
     w = dejarikWinner(b);
   }
-  return { winner: w ?? -1, moves, board: b };
+  return { winner: w, moves, board: b, waiting: w === null };
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
