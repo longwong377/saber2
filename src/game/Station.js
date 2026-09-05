@@ -51,28 +51,37 @@ import { loadRoom, materialKeyFor } from './StationMesh.js';
 import { PLACES, PLACE, DECK_Y, DRUM, CORRIDOR, SHAFTS, placesOn, floorOf, sectorAt } from './StationPlan.js';
 import { buildPlace, SHAPES, buildWays, dressWayfinding } from './StationKit.js';
 import { dressDeckLift, stepDeckLift, undressDeckLift, liftKey, liftFloors } from './DeckLift.js';
-import { dressStationLife, primeStationLife, stepStationLife, undressStationLife, dressTram } from './StationLife.js';
+import { dressStationLife, primeStationLife, stepStationLife, undressStationLife, dressTram,
+  STOPS, headcount, servedHere } from './StationLife.js';
 import { dressObelisk, dressBoards, stepBoards, standingReading, companyOf } from './StationBoards.js';
 /* What a man on the roll is CALLED — one rule, `Company.js`'s own, so the job
  * board names him exactly as the company tab does. See `questContext`. */
 import { nameOf } from './Company.js';
-import { dressNotices, stepNotices, noticeReading } from './Notices.js';
-import { stationHour, setStationHour, stationName, setStationName, standing, setStanding, stationDay, DEFAULT_NAME, NAME_MAX } from './StationSave.js';
+/* THE RUNGS, for the two rooms that read a rank: #30's officers and #59's
+ * velvet rope. `Bars.js` already imports the same two, so this adds no edge to
+ * the station's graph that `stationKey` did not already have. */
+import { RANKS, rankFor } from './Command.js';
+import { dressNotices, stepNotices, noticeReading, noticesFor } from './Notices.js';
+import { stationHour, setStationHour, stationName, setStationName, standing, setStanding, stationDay, DEFAULT_NAME, NAME_MAX, kiosksShut, brigPending } from './StationSave.js';
 import { outsideLevel } from './Hangar.js';
-import { dressDeckBattle, stepDeckBattle, undressDeckBattle } from './DeckBattle.js';
+import { dressDeckBattle, stepDeckBattle, undressDeckBattle, deckBattleState } from './DeckBattle.js';
 import { dressHome, stepHome, leaveHome, undressHome, homeKey, inHome } from './Home.js';
-import { myApartment } from './Coop.js';
+import { myApartment, apartments, GUEST_ROOMS, addressOf } from './Coop.js';
 import { TERRAIN_PRESETS } from '../world/Terrain.js';
 import { Warp, canJump } from './Warp.js';
 import { countersAt, counterById, COUNTERS } from './Vendors.js';
 /* THE KEEPERS' BODIES come off the same census every other resident does — see
  * `dressKeepers`. One import, no new archetype. */
-import { resident } from './StationCast.js';
-import { stepMedbay } from './Medbay.js';
+import { resident, barkFor, roomLine, residentLine, RHYTHMS, homeFor } from './StationCast.js';
+/* `isHurt` IS THE MEDBAY'S OWN QUESTION and #21's reading asks it rather
+ * than comparing `m.hp` to 1: `FIT` is the threshold the ward triages on, and
+ * two files disagreeing about what "carrying something" means would be the
+ * eighth hand-maintained twin. */
+import { stepMedbay, isHurt } from './Medbay.js';
 /* THE LEAVE LEDGER. `isBar` names the rooms a soldier drinks in and `stepLeave`
  * is what pays him for standing in one — see the branch at the bottom of
  * `stationKey` and the call beside `stepMedbay` in `stepStation`. */
-import { isBar, stepLeave } from './Bars.js';
+import { isBar, barById, stepLeave } from './Bars.js';
 import { pitAtPlace } from './Pits.js';
 /* THE ROOM'S OWN NOISE — see `stepCrowd`. The same singleton sixteen other
  * game files reach for; §G4's crowd is a cue on the engine, not a new path. */
@@ -874,7 +883,23 @@ function roomColliders(world, place, opts = {}) {
 /*  THE LIGHT — the deck's rig, per deck, never a loader's (§9.1)             */
 /* ══════════════════════════════════════════════════════════════════════════ */
 
-function lightStation(world, deck) {
+/**
+ * ══ AND THE RIG IS PUBLISHED, BECAUSE ONE EVENT DIMS IT ═══════════════════
+ *
+ * §3.4's *"REACTOR SURGE — the lights dip across the drum"* set a number
+ * (`StationLife.life.dip`) that no file in `src/` ever read, so the lights did
+ * not dip: the row was a banner. `StationLife.stepDip` is the reader now, and
+ * what it needs is the three lights THIS function already made together with
+ * the intensity each was built at — a dip that guessed at a base would put the
+ * deck back at the wrong brightness the second time it ran.
+ *
+ * ON `st` AND NOT A MODULE FIELD, so it goes down with the station like every
+ * other thing the dress makes, and so `undressStation` needs no line for it.
+ * The materials are already published beside it (`st.mats`) for exactly this
+ * reason — see the note there and `orderJump`'s transit amber, which is the
+ * other thing in the game that reaches for the deck's own nine.
+ */
+function lightStation(world, deck, st) {
   const P = DECK_PALETTE[deck] || DECK_PALETTE[40];
   /**
    * ONE KEY DOWN THE ATRIUM, because the void is the station's own light
@@ -893,6 +918,7 @@ function lightStation(world, deck) {
 
   const fill = new THREE.HemisphereLight(P.fill, P.fog, 0.34);
   world.scene.add(fill); world.levelLights.push(fill);
+  if (st) st.rig = { key, amb, fill, base: [key.intensity, amb.intensity, fill.intensity], lit: 1 };
   return 3;
 }
 
@@ -1150,7 +1176,7 @@ export function dressStation(world) {
     });
   }
 
-  lightStation(world, deck);
+  lightStation(world, deck, st);
 
   /* ── AND THE PEOPLE (§11). The pool re-seats itself round the player on the
    * first frame, so a player who arrives at the Concourse at 13:00 walks into
@@ -1495,6 +1521,10 @@ export class StationDirector {
      * out of places that are drawn — and before the lift, which is the one
      * thing on the station that moves the player. */
     stepStationLife(this.world, dt);
+    /* AFTER the life, because `stepTram` has just moved the car and a rider
+     * written before it would stand a frame behind the box. See
+     * `stepTramRide` — the riding is on this side and the guideway is not. */
+    stepTramRide(this.world, dt);
     stepDeckLift(this.world, dt);
   }
 
@@ -2020,6 +2050,437 @@ function endStationName(world) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
+/*  TALKING — §14, and the sixty people who had names nobody could read       */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ THE DEFECT: NOBODY COULD BE TALKED TO AND NOBODY HAD A NAME ON SCREEN ══
+ *
+ * `spawnResident` writes `body.stationName` onto EVERY resident in the drum
+ * and `dressKeepers` writes it onto every shopkeeper. Nothing read it. There
+ * was no `onTalk`, no `talkTo` and no bark table anywhere in the tree, and
+ * `HUD._nameplates` walked `command.roster.living` — your own troopers — and
+ * could not see a resident at all. Sixty people with a species, a job, a
+ * faction, a home quarter and a daily rhythm stood in the rooms and the whole
+ * of what a player could learn about one was its silhouette.
+ *
+ * ── HOW THE TARGET IS CHOSEN, AND WHY IT CANNOT EAT A ROOM'S PRESS ────────
+ *
+ * The same question the HUD's plate asks, asked once: the smallest angle
+ * between the aim and the line to the body, inside a SHORT reach. 2.4 m and an
+ * 18° cone is "you walked up to somebody and you are looking at them" — a
+ * deliberate act, not a room you happen to be standing in. Step back, or look
+ * off him, and the room's own door has the press back.
+ *
+ * That is why the plate matters as much as the branch: `HUD` lights the
+ * nameplate on exactly the body this returns, so the player is never surprised
+ * about which of the two things the key is about to do. It is the contract
+ * `counterHere` already has one function up — a fixture you stand at, measured
+ * in world coordinates — with a person in the fixture's place.
+ *
+ * KEEPERS ARE NOT TALKED TO. A man behind a desk is a SHOP, the counter branch
+ * above claims that press, and `showCounter` already prints `keeperOf().said`
+ * over the goods. Two doors onto one body would be the "branch that claims a
+ * press it did not use" defect stated as a person.
+ */
+export const TALK_REACH = 2.4;
+/** cos 18°. */
+export const TALK_CONE = 0.951;
+
+/**
+ * The resident the player is looking at, or null. Also the HUD's plate.
+ *
+ * ══ THE REACH IS OFF THE BODY AND THE AIM IS OFF THE EYE ═════════════════
+ *
+ * Not a nicety — the two are three metres apart. `player.camera.pos` in third
+ * person sits behind the shoulder (measured on deck 40: body at
+ * (−24.0, 0.0, 2.0), eye at (−24.5, 1.7, −1.0)), so a reach measured from the
+ * eye would be the camera's arm's length and not the player's: standing 1.6 m
+ * from somebody put the eye 5.1 m away and `residentFacing` refused everybody
+ * the player was close enough to touch.
+ *
+ * So the distance test is against `player.position` — where the man actually
+ * is — and the cone is against the eye, because the cone has to agree with the
+ * crosshair and the crosshair is drawn from the camera. `HUD._nameplates` does
+ * the aim half exactly this way one file over, and for the same reason.
+ */
+export function residentFacing(world, reach = TALK_REACH) {
+  const p = world?.player;
+  const list = world?.enemies;
+  if (!p?.position || !list?.length) return null;
+  const eye = p.camera?.pos || p.position;
+  const aim = p.aimDir;
+  let best = null, bestDot = TALK_CONE, bestD = reach;
+  for (const e of list) {
+    if (!e || e.dead || !e.stationResident || !e.stationName) continue;
+    if (e.stationKeeper) continue;
+    /* CLOSE ENOUGH TO SPEAK TO — from the player, not the camera. */
+    const d = Math.hypot(e.position.x - p.position.x, e.position.y - p.position.y,
+      e.position.z - p.position.z);
+    if (d > reach) continue;
+    if (!aim) { if (d < bestD) { bestD = d; best = e; } continue; }
+    /* AND LOOKED AT — from the eye, so the cone agrees with the crosshair.
+     * THE HEAD AND NOT THE FEET, which is the plate's own offset: a ray to a
+     * body's origin points at the floor in front of it. */
+    const ex = e.position.x - eye.x;
+    const ey = e.position.y + (e.A?.hipHeight ?? 0.95) + 0.5 - eye.y;
+    const ez = e.position.z - eye.z;
+    const len = Math.hypot(ex, ey, ez) || 1;
+    const dot = (ex * aim.x + ey * aim.y + ez * aim.z) / len;
+    if (dot > bestDot) { bestDot = dot; best = e; }
+  }
+  return best;
+}
+
+/**
+ * A resident BODY read back as the row it was built from.
+ *
+ * `spawnResident` and `dressKeepers` both scatter the same five facts across
+ * `station*` fields, and `occupant`'s seed is recoverable from two of them —
+ * so the bark a body is given is the bark its ROW would have been given, and a
+ * check can ask `occupant` the same question and get the same sentence.
+ */
+export function whoOfBody(body) {
+  if (!body?.stationName) return null;
+  const species = body.stationSpecies || 'human';
+  const role = body.stationRole || 'visitor';
+  return {
+    seed: (body.stationPlace != null && body.stationSlot != null)
+      ? `p${body.stationPlace}s${body.stationSlot}` : String(body.stationName),
+    name: body.stationName,
+    species, role,
+    faction: body.stationFaction || 'merchants',
+    home: homeFor(species, role),
+    rhythm: RHYTHMS[species] || RHYTHMS.human,
+  };
+}
+
+/** Today's wall, as one line, picked per resident rather than in turn.
+ *  `noticeReading` advances a cursor on every call and belongs to #25's own
+ *  key — a bark that spent it would make the wall skip pages. */
+function noticeFor(day, seed) {
+  try {
+    const board = noticesFor(day, 13);
+    if (!board?.length) return null;
+    const one = board[Math.abs(seed | 0) % board.length];
+    return one.say || (one.rows || []).filter(Boolean).join(' — ').toLowerCase() || null;
+  } catch { return null; }
+}
+
+/**
+ * Say something. Returns true when the press was spent.
+ *
+ * ANIMALS ANSWER TOO, and with the one fact they carry: `StationLife` writes
+ * a pet's `stationRole` as "massiff — Thulith's", which is the whole of what
+ * a dog at heel has to say and is worth more than a refusal.
+ */
+export function talkTo(world, body) {
+  if (!body?.stationName) return false;
+  const day = stationDay();
+  const who = whoOfBody(body);
+  if (!who || !body.stationSpecies) {
+    world.notify?.(String(body.stationName).toUpperCase(),
+      String(body.stationRole || 'it looks at you and does not move'));
+    return true;
+  }
+  const place = body.stationPlace != null ? PLACE.get(body.stationPlace) : null;
+  const said = barkFor(who, day, {
+    hour: world._station?.hour ?? stationHour(),
+    place,
+    notice: noticeFor(day, (body.stationSlot | 0) + (body.stationPlace | 0)),
+    companion: body._stationAnimal?.stationRole?.split(' —')[0] || null,
+    standing: standing(),
+  });
+  if (!said) {
+    world.notify?.(residentLine(who).toUpperCase(), 'nothing to say to you today');
+    return true;
+  }
+  world.notify?.(said[0], said[1]);
+  return true;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE ROOMS THAT ANSWERED WITH THEIR OWN PROMPT                             */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ EIGHTEEN ROOMS PRINTED THE VERB AND DID NOTHING ═══════════════════════
+ *
+ * Driven, the whole gazetteer, one press per room on its own deck: with every
+ * panel hook wired **16 of the 62 places with a verb** answered the interact
+ * key with `notify(place.name.toUpperCase(), place.verb)`, and with the room's
+ * own doors refusing — no job on the board today, no bout, the bar's rope up —
+ * **37 did**. §14's *"every verb row in §3.2 is a prompt string"* was, for
+ * those rooms, the whole of what the verb was.
+ *
+ * Each function below is one of those rooms given a real answer out of a
+ * system the game already has, and the note on each says which system. What is
+ * NOT here is as important: no room gets an invented mechanic and no room gets
+ * a hand-written paragraph — where there was genuinely nothing to do, the room
+ * falls to `StationCast.roomLine`, which derives its sentence from §3.2's own
+ * `who` and `idle` columns and therefore cannot go stale.
+ */
+
+/** #24 Security post — §3.2: *"the standing number lives here"*. */
+function securityReading(world) {
+  const s = standing();
+  const served = servedHere(world);
+  const life = world?._stationLife;
+  const bits = [`your standing is ${s > 0 ? '+' : ''}${s}`];
+  /* THE BAN IS A DURATION NOW (`StationSave.kiosksShut`) and this is the desk
+   * that tells you it is running. Before this the player learned it by being
+   * refused at a counter with no reason given. */
+  if (kiosksShut()) bits.push('the counters are shut to you until the day turns');
+  else if (!served) bits.push('the counters will not serve you at this number');
+  else bits.push('the counters serve you');
+  if (brigPending()) bits.push('and there is a cell waiting on deck 48');
+  else if (life?.alarm > 0) bits.push('and a patrol is moving right now');
+  return ['SECURITY POST', bits.join(' — ')];
+}
+
+/** #45 Morgue & memorial — §14: *"their names go on the memorial wall (#45)"*. */
+function memorialReading(day) {
+  let co = null;
+  try { co = companyOf(); } catch {}
+  const fallen = (co?.fallen || []).filter(Boolean);
+  if (!fallen.length) {
+    return ['MORGUE & MEMORIAL', 'the wall is cut and blank — none of yours is on it yet'];
+  }
+  /* ONE NAME A DAY, off the same day counter every other daily reroll on the
+   * station reads, so the wall is a thing you come back to rather than a list
+   * you read once. */
+  const m = fallen[Math.abs(day | 0) % fallen.length];
+  const rank = RANKS[m.rank | 0]?.title || 'Trooper';
+  const call = m.callsign ? ` "${m.callsign}"` : (m.nickname ? ` "${m.nickname}"` : '');
+  const how = m.fate === 'left'
+    ? `left behind${m.where ? ` on ${m.where}` : ''}`
+    : `${m.killer ? `killed by ${m.killer}` : 'killed'}${m.where ? ` on ${m.where}` : ''}`
+      + (Number.isFinite(m.at) ? `, ${m.at} minutes in` : '');
+  return [`MORGUE & MEMORIAL — ${fallen.length} NAME${fallen.length === 1 ? '' : 'S'}`,
+    `${rank} ${m.designation}${call}, ${m.runs | 0} run${(m.runs | 0) === 1 ? '' : 's'}, `
+    + `${m.kills | 0} kill${(m.kills | 0) === 1 ? '' : 's'} — ${how}`];
+}
+
+/** #47 The Brig — the room §11's arrest actually puts you in. */
+function brigReading(world) {
+  const life = world?._stationLife;
+  if (life?.arrest?.woke) {
+    return ['THE BRIG', `you woke on this bench${kiosksShut()
+      ? ' — the counters stay shut until the day turns' : ' — and the shutter is up again'}`];
+  }
+  if (brigPending()) return ['THE BRIG', 'a cell here has your name on it — the transfer is booked'];
+  if (kiosksShut()) return ['THE BRIG', 'you are out, and the counters are still shut to you today'];
+  const s = standing();
+  return ['THE BRIG', s < 0
+    ? `six cells, two guards, and a standing of ${s} — they know the number in here`
+    : 'six cells and two guards. Cut somebody in this hull and you wake on that bench'];
+}
+
+/** #30 Officers' quarters — "knock", and it is your own officers behind them. */
+function officersReading() {
+  let co = null;
+  try { co = companyOf(); } catch {}
+  const men = (co?.men || []).filter((m) => m && m.alive !== false);
+  const officers = men
+    .map((m) => ({ m, r: rankFor(m.xp | 0) }))
+    .filter((o) => o.r >= 2)
+    .sort((a, b) => b.r - a.r);
+  if (!officers.length) {
+    return ["OFFICERS' QUARTERS", men.length
+      ? `${men.length} on the roll and not one of them ranks a door on this corridor yet`
+      : 'six doors, none of them yours — you have no company on the roll'];
+  }
+  const say = officers.slice(0, 3)
+    .map((o) => `${RANKS[o.r].short} ${nameOf(o.m)}`).join(', ');
+  return ["OFFICERS' QUARTERS", `${officers.length} of yours billet on this corridor — ${say}`];
+}
+
+/** #38 Transient hostel — §3.2's tail species, and the co-op guest's home. */
+function hostelReading(world) {
+  let rows = [];
+  try { rows = apartments(world).filter((a) => !a.mine && GUEST_ROOMS.includes(a.place)); } catch {}
+  const here = rows.filter((a) => a.place === 38);
+  if (here.length) {
+    return ['TRANSIENT HOSTEL', `${here.map((a) => a.name).join(', ')} `
+      + `${here.length === 1 ? 'has' : 'have'} a capsule on this wall — ${addressOf(38)}`];
+  }
+  if (rows.length) {
+    return ['TRANSIENT HOSTEL', `${rows.length} guest${rows.length === 1 ? '' : 's'} aboard, `
+      + `none of them on this wall — the capsules here are ${addressOf(38)}`];
+  }
+  /* NO SESSION IS THE COMMON CASE and it is still a real answer: this is the
+   * room a joining player is HOUSED in (`Coop.GUEST_ROOMS`), which is a fact
+   * about the station a solo player has no other way to learn. */
+  return ['TRANSIENT HOSTEL', `capsules by the day — ${addressOf(38)}. `
+    + 'A player who joins your game is housed on this wall'];
+}
+
+/** #21 Gym — "take a beat", and the beat is your company's condition. */
+function gymReading(world) {
+  let co = null;
+  try { co = companyOf(); } catch {}
+  const men = (co?.men || []).filter((m) => m && m.alive !== false);
+  const hurt = men.filter((m) => isHurt(m)).length;
+  const heads = headcount(PLACE.get(21), world?._station?.hour ?? stationHour());
+  if (!men.length) return ['GYM', `${heads} on the running gallery, and none of them yours`];
+  return ['GYM', `${heads} on the gallery. ${men.length} of yours standing`
+    + (hurt ? `, ${hurt} of them carrying something` : ', none of them carrying anything')];
+}
+
+/** #54 Observation dome — §3.2 calls it *"the best seat"*, and this is what it
+ *  is the best seat FOR: the fleet action `DeckBattle` is already running
+ *  outside the glass and no room in the game said a word about it. */
+function domeReading(world) {
+  const b = deckBattleState(world);
+  if (!b) return ['OBSERVATION DOME', 'nothing outside the glass but the drum turning'];
+  const what = b.phase === 'lull' ? 'the line has gone quiet'
+    : b.victimSide != null ? `round ${b.round}, and something on ${b.victimSide ? 'their' : 'our'} side is burning`
+      : `round ${b.round}`;
+  return ['OBSERVATION DOME', `${b.shown} hulls and ${b.fighters} fighters up — ${what}`];
+}
+
+/** #59 The Ascendant — the rope, when `openBar` did not take the press. */
+function ascendantReading() {
+  const rope = barById(59)?.rope | 0;
+  if (!rope) return ['THE ASCENDANT', 'a quiet floor, and somebody takes your coat at the door'];
+  const need = RANKS[rope]?.title || 'Sergeant';
+  let co = null;
+  try { co = companyOf(); } catch {}
+  const in_ = (co?.men || []).filter((m) => m && m.alive !== false
+    && (m.post === true || rankFor(m.xp | 0) >= rope)).length;
+  return ['THE ASCENDANT', in_
+    ? `${in_} of your company are ${need}s or better and drink up here`
+    : `the rope is a ${need}'s — promote somebody and this room opens to your men`];
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE TRAM — §3.1 rule 3's "cars you can ride"                              */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ IT CARRIED NOBODY ═════════════════════════════════════════════════════
+ *
+ * §3.1 rule 3 asks for *"cars you can ride"* and §3.2 #40's verb is *"ride"*.
+ * `StationLife.stepTram` moved one box round the rim on a ninety-second loop
+ * and `life.tram` was `{t, at, car}` — no passenger of any kind. Four platforms
+ * in the gazetteer, a car passing each of them every 22.5 s, and pressing the
+ * key on one printed the word "ride".
+ *
+ * ── THE RIDING IS ON THIS SIDE, WHICH IS THE HONEST SPLIT ─────────────────
+ *
+ * `stepTram` owns the CAR: where it is on the guideway and when it reaches the
+ * next stop. Nothing about a passenger belongs in it, and nothing here reaches
+ * into it — `STOPS` is its own export, `life.tram.at` and `.t` are its own
+ * state, and this reads both exactly as the guideway maths does. So the tram
+ * gained a rider without `StationLife.js` changing by one character.
+ *
+ * ── AND THE PLAYER IS PINNED, NOT SIMULATED ──────────────────────────────
+ *
+ * `putInCell` in `StationLife` is the shape: write the position, write the
+ * actor, zero the velocity. Done every frame while aboard, because the car is
+ * out at `DRUM.tramR` — 97 m, seven metres OUTSIDE the drum's skin — where
+ * there is no floor to stand on and gravity would have the rider off it in
+ * half a second. Stepping off puts them on the platform's own floor, which is
+ * a place in the gazetteer and therefore solid.
+ */
+
+/** One scratch vector for the ride — a rider is written every frame and an
+ *  allocation a frame is the one thing §12.2 will not have. */
+const _tramAt = new THREE.Vector3();
+
+/** Seconds a leg takes — `StationLife.TRAM_LEG`, read off the stop count and
+ *  §3.2 #40's own "trams every 90 s" rather than typed twice. */
+const TRAM_LOOP = 90;
+const TRAM_LEG = TRAM_LOOP / STOPS.length;
+/** How long the car counts as standing AT a platform. */
+const TRAM_DWELL = 4.5;
+
+/** Which stop the car is standing at right now, or null between them. */
+export function tramAtStop(world) {
+  const t = world?._stationLife?.tram;
+  if (!t) return null;
+  return t.t <= TRAM_DWELL ? STOPS[t.at % STOPS.length] : null;
+}
+
+/** Seconds until the car reaches `stopId`, and which stop it is leaving now. */
+export function tramDue(world, stopId) {
+  const t = world?._stationLife?.tram;
+  if (!t) return null;
+  const i = STOPS.indexOf(Number(stopId));
+  if (i < 0) return null;
+  const from = t.at % STOPS.length;
+  let legs = (i - from + STOPS.length) % STOPS.length;
+  /* THE CAR IS ALREADY HERE when it has not left this platform yet. */
+  if (legs === 0 && t.t <= TRAM_DWELL) return { secs: 0, at: STOPS[from] };
+  if (legs === 0) legs = STOPS.length;
+  return { secs: Math.max(0, legs * TRAM_LEG - t.t), at: STOPS[from] };
+}
+
+/** Get on. Answers false when there is no car standing at this platform.
+ *  Getting OFF is at the top of `stationKey` and cannot be here: the car is out
+ *  at `DRUM.tramR`, seven metres past the skin, where `placeUnder` finds no
+ *  place at all — a rider who could only dismount inside a room could not
+ *  dismount. */
+function rideTram(world, place) {
+  const life = world?._stationLife;
+  if (!life?.tram) return false;
+  const here = tramAtStop(world);
+  if (here == null || Number(here) !== Number(place.id)) return false;
+  world._tramRide = { boardedAt: place.id, from: life.tram.at };
+  world.notify?.(String(place.name).toUpperCase(),
+    `aboard — next stop ${PLACE.get(STOPS[(life.tram.at + 1) % STOPS.length])?.name || 'the next platform'}`);
+  return true;
+}
+
+/** Put the rider down on a platform. */
+function setDownFromTram(world, why) {
+  const ride = world._tramRide;
+  world._tramRide = null;
+  const life = world?._stationLife;
+  const stop = PLACE.get(STOPS[(life?.tram?.at ?? 0) % STOPS.length]);
+  const p = world.player;
+  if (stop && p?.position) {
+    _tramAt.set(stop.x, floorOf(stop) + 0.1, stop.z);
+    p.position.copy(_tramAt);
+    p.actor?.setPosition?.(_tramAt);
+    if (p.velocity) p.velocity.set(0, 0, 0);
+    p.fallSpeed = 0;
+    p._sweepFromY = _tramAt.y;
+  }
+  if (stop) {
+    world.notify?.(String(stop.name).toUpperCase(),
+      ride && Number(ride.boardedAt) === Number(stop.id) ? why : `${why} — ${stop.name.toLowerCase()}`);
+  }
+}
+
+/**
+ * One frame of the ride. Called from the station director AFTER
+ * `stepStationLife`, so the car has already been moved this frame and the
+ * rider is never a frame behind the box they are standing in.
+ */
+export function stepTramRide(world, dt) {
+  if (!world?._tramRide) return;
+  const life = world._stationLife;
+  const car = life?.tram?.car;
+  const p = world.player;
+  if (!car || !p?.position) { world._tramRide = null; return; }
+  /* THE LEG ENDED — the car is standing at the next platform, so the ride is
+   * over. `t.at` is `stepTram`'s own counter and this is the only thing that
+   * reads it, which is what keeps the two halves from disagreeing. */
+  if (life.tram.at !== world._tramRide.from && life.tram.t <= TRAM_DWELL) {
+    setDownFromTram(world, 'the doors open at');
+    return;
+  }
+  world._tramRide.from = life.tram.at;
+  _tramAt.set(car.position.x, floorOf(PLACE.get(STOPS[0])) + 0.1, car.position.z);
+  p.position.copy(_tramAt);
+  p.actor?.setPosition?.(_tramAt);
+  if (p.velocity) p.velocity.set(0, 0, 0);
+  p.fallSpeed = 0;
+  p._sweepFromY = _tramAt.y;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE ONE KEY — §14's interact prompt, and §3.2's verb column               */
 /* ══════════════════════════════════════════════════════════════════════════ */
 
@@ -2074,15 +2535,24 @@ export function stationKey(world) {
    * answers false anywhere else, so #27's verb still reaches the prompt. See
    * `Home.homeKey` for the four things one press can mean in there. */
   if (homeKey(world)) return true;
+  /**
+   * ── GETTING OFF THE TRAM, AND IT HAS TO BE THIS HIGH ────────────────────
+   *
+   * A rider is out on the guideway at `DRUM.tramR` — 97 m, seven metres past
+   * the drum's skin — where `placeUnder` finds nothing and the refusal twenty
+   * lines down would eat the press. So the one key means "stop here" for as
+   * long as you are aboard, which is also the only thing it could sensibly
+   * mean while you are standing in a moving box. See `stepTramRide`.
+   */
+  if (world._tramRide) { setDownFromTram(world, 'you step off'); return true; }
   const p = world.player?.position;
   if (!p) return false;
   const place = placeUnder(world, p.x, p.z);
-  if (!place || !place.verb) return false;
   /* THE REGISTER IN #13, ahead of the kiosk branch below it: the rotunda is a
    * kiosk place and one of its eight terminals is the station's own register
    * (V15 §1.1). Standing at that one names the station; the other seven — and
    * the rest of the room — open the codex on the next line. */
-  if (place.id === 13 && atRegister(world)) return beginStationName(world);
+  if (place?.id === 13 && atRegister(world)) return beginStationName(world);
   /**
    * ── A COUNTER, IF YOU ARE STANDING AT ONE — V16 Lane B ──────────────────
    *
@@ -2130,10 +2600,42 @@ export function stationKey(world) {
    * reachable — measured after the fix, at the door of #10 and at its counter,
    * and the two presses raise different panels.
    */
-  const shop = counterHere(world, place);
+  const shop = place ? counterHere(world, place) : null;
   if (shop && world.onCounter) {
     if (world.onCounter(shop.id) !== false) return true;
   }
+  /**
+   * ── SOMEBODY IS STANDING IN FRONT OF YOU — §14's talking ────────────────
+   *
+   * AFTER the counter and BEFORE every panel below it, and the position is
+   * the argument. A shop is a person behind a desk and `counterHere` has
+   * already claimed that press; everything below this line is a PANEL, and a
+   * named person you have walked up to and are looking at is the more
+   * specific thing in the room than the room is.
+   *
+   * It cannot eat a room's press by accident: `residentFacing` wants 2.4 m and
+   * an 18° cone, refuses keepers outright, and `HUD` lights that body's
+   * nameplate — so the one frame in which this branch will fire is the one
+   * frame the player is being shown a name. Step back and the room answers.
+   *
+   * §3.2 #14 asks for exactly this in as many words — *"sit, drink (a beat),
+   * talk to a resident"* — and it is the only one of the three that was not a
+   * seat or a panel.
+   */
+  const facing = residentFacing(world);
+  if (facing && talkTo(world, facing)) return true;
+  /**
+   * ── AND THE PLACE TEST IS *BELOW* THE TALK BRANCH, WHICH IS THE POINT ───
+   *
+   * This refusal used to sit twelve lines up, before anything else could
+   * look at the room. `placeUnder` answers null on the ring walk and in the
+   * spines — the corridors §3.1 rule 3 fills with people going somewhere, and
+   * `stepWalkers` keeps a moving crowd in them — so with the guard above,
+   * every resident in the between-space was unaddressable and the only people
+   * you could speak to were the ones standing still inside a room. The
+   * corridors are where you MEET somebody.
+   */
+  if (!place || !place.verb) return false;
   /**
    * ── #29 COMPANY BARRACKS: THE LIBERTY BOARD — V16 Lane C2 ──────────────
    *
@@ -2164,9 +2666,24 @@ export function stationKey(world) {
   if (place.id === 29 && world.onLeave) {
     if (world.onLeave(place.id) !== false) return true;
   }
-  /* A counter opens the panel it names; everything else answers with its own
-   * verb, which is the prompt and, until its system lands, the whole of it. */
-  if (place.kiosk && world.onKiosk) { world.onKiosk(place.kiosk); return true; }
+  /**
+   * ══ AND EVERY PANEL BRANCH BELOW IS A FALL-THROUGH ═════════════════════
+   *
+   * Six of them used to read `return world.onX(...) !== false`, which spends
+   * the press and answers FALSE when the panel refuses — so `Player.
+   * _readInput` did nothing and the player got silence. Driven with every hook
+   * refusing (a build with no overlay, or a room that turned you away), that
+   * was sixteen places where the interact key was inert: #10, #11, #12, #13,
+   * #18, #19, #20, #28, #29, #41, #42, #43, #44, #46, #50 and #57.
+   *
+   * It is the pit branch's own rule, stated for the whole family: a branch
+   * that claims a press it did not use is the defect. A refusing panel now
+   * hands the press on, and the room's own line at the bottom of this function
+   * catches it — so the key always says SOMETHING, in every room, on every
+   * day, whatever is or is not wired above it.
+   */
+  /* A counter opens the panel it names; a kiosk opens a page of the menu. */
+  if (place.kiosk && world.onKiosk && world.onKiosk(place.kiosk) !== false) return true;
   /**
    * ── #56 THE STANDING: THE KEY READS THE ROLLS ─────────────────────────
    *
@@ -2192,7 +2709,7 @@ export function stationKey(world) {
    * overlay with its own root, which is also the only shape that is safe
    * against `Screens.clear()` running every card's hide on every clear.
    */
-  if (place.id === 28 && world.onHabitat) return world.onHabitat() !== false;
+  if (place.id === 28 && world.onHabitat && world.onHabitat() !== false) return true;
   /**
    * ── #41 COMMAND / CIC — V16 Lane A1 ─────────────────────────────────────
    *
@@ -2213,9 +2730,8 @@ export function stationKey(world) {
   /* ── THE BENCH, at #42 and #50 — V16 Lane A3. You make the thing at
    * Fabrication and you tune the call at Comms, which is where a fire mission
    * is called from and which has had no job at all until now. */
-  if ((place.id === 42 || place.id === 50) && world.onBench) {
-    return world.onBench(place.id === 50 ? 'make' : 'tune') !== false;
-  }
+  if ((place.id === 42 || place.id === 50) && world.onBench
+    && world.onBench(place.id === 50 ? 'make' : 'tune') !== false) return true;
   /**
    * ── #43 AND #44, THE MEDBAY — V16 Lane B3 ───────────────────────────────
    *
@@ -2230,9 +2746,8 @@ export function stationKey(world) {
    * gives the page its rows; `main.js` owns the overlay, on `openMeditation`'s
    * own-root shape for `Screens.clear()`'s reason.
    */
-  if ((place.id === 43 || place.id === 44) && world.onMedbay) {
-    return world.onMedbay(place.id) !== false;
-  }
+  if ((place.id === 43 || place.id === 44) && world.onMedbay
+    && world.onMedbay(place.id) !== false) return true;
   /**
    * ── #51 THE DROID POOL — V16 Lane B5's *"instead of"* ───────────────────
    *
@@ -2299,7 +2814,7 @@ export function stationKey(world) {
    * a program into a mode, and it is not a station file. The room raises its
    * own id and stops.
    */
-  if (place.id === 57 && world.onHolodeck) return world.onHolodeck(place.id) !== false;
+  if (place.id === 57 && world.onHolodeck && world.onHolodeck(place.id) !== false) return true;
   /**
    * ── #18, #19 AND #20, THE TOTE — V16 Lane D2 ───────────────────────────
    *
@@ -2314,7 +2829,7 @@ export function stationKey(world) {
    * parameter a ticket could hide in.
    */
   const tote = venueAtPlace(place.id);
-  if (tote && world.onTote) return world.onTote(tote.id) !== false;
+  if (tote && world.onTote && world.onTote(tote.id) !== false) return true;
   /**
    * ── #14, #54 AND #59, THE BARS — V16 Lane C2's OTHER HALF ──────────────
    *
@@ -2345,6 +2860,18 @@ export function stationKey(world) {
   if (isBar(place.id) && world.onBar) {
     if (world.onBar(place.id) !== false) return true;
   }
+  /**
+   * ── AND THE TWO OF THE FOUR THAT ARE ALSO SOMETHING ELSE ───────────────
+   *
+   * `openBar` may refuse — a build with no panel, or a room that turned you
+   * away — and both of these answered the verb back when it did. #54 is a
+   * WINDOW before it is a bar and there has been a fleet action running
+   * outside it since `DeckBattle` landed with no room saying so; #59's whole
+   * design is a door your company earns, and "take a table" told a player
+   * nothing about why they were not at one.
+   */
+  if (place.id === 54) { const [h, l] = domeReading(world); world.notify?.(h, l); return true; }
+  if (place.id === 59) { const [h, l] = ascendantReading(); world.notify?.(h, l); return true; }
   if (place.id === 41 && world._warp && !world._warp.done) {
     world.notify?.('COMMAND / CIC', 'the jump is under way');
     return true;
@@ -2402,7 +2929,20 @@ export function stationKey(world) {
    * reason: five branches in here would be five more things to read before you
    * reach the one you want.
    */
-  if (FLIGHT_PLACES.has(place.id)) return flightKey(world, place);
+  /**
+   * ── THE FOUR PLATFORMS — §3.1 rule 3's *"cars you can ride"* ───────────
+   *
+   * ABOVE the job board, and only when there is a car standing at THIS
+   * platform. A car at the doors is a thing with 4.5 seconds left in it and
+   * a job on the board is not, so the press goes to the one that is leaving.
+   * When the car is elsewhere this answers false and the press carries on —
+   * a giver at the platform still gets you, and the room's own line at the
+   * bottom of this function says how long the next one is.
+   */
+  if (STOPS.includes(Number(place.id)) && rideTram(world, place)) return true;
+  /* A FALL-THROUGH like every other panel branch above: `flightKey` refusing
+   * used to answer false and eat the press with it. */
+  if (FLIGHT_PLACES.has(place.id) && flightKey(world, place)) return true;
   /**
    * ── SOMEBODY IN HERE HAS A JOB — V16 Lane C3 ───────────────────────────
    *
@@ -2468,9 +3008,95 @@ export function stationKey(world) {
     world.notify?.(head, line);
     return true;
   }
-  world.notify?.(place.name.toUpperCase(), place.verb);
+  /**
+   * ══ AND THE ROOMS THAT HAD NOTHING BUT THEIR OWN PROMPT ═════════════════
+   *
+   * BELOW the job board, all of them, for the reason `#25`'s note gives one
+   * branch up: these are rooms in the thirty-two that fall through to
+   * `offersAt`, and a branch above the quest door would make each of them the
+   * one room in the gazetteer where a giver could not be spoken to.
+   *
+   * Each is a reading off a system that was already running and had no room
+   * reading it — see the note over `securityReading`. What replaces the verb
+   * is never a paragraph typed here; it is the number, the name or the state
+   * the room is FOR.
+   */
+  const room = ROOM_READINGS[place.id];
+  if (room) { const [head, line] = room(world, day); world.notify?.(head, line); return true; }
+  /**
+   * ── #22 THE CHAPEL: "kneel and connect", and it is the existing verb ────
+   *
+   * §3.2's own words. The Holocron is already in the game and already opens
+   * on a kneel — `main.js`'s `communePrompt` charges on a held crouch — and
+   * §3.2 gave the one room on the station that is FOR kneeling the same
+   * sentence as its prompt and no door. This is the door; `main.js` answers
+   * it with `openMeditation`, the overlay it already owns.
+   *
+   * A FALL-THROUGH, not a claim: a build with no panel gets the room's own
+   * line below rather than a press that vanishes.
+   */
+  if (place.id === 22 && world.onCommune && world.onCommune(place.id) !== false) return true;
+  /**
+   * ── A COUNTER IN THE ROOM YOU ARE NOT STANDING AT ──────────────────────
+   *
+   * `counterHere` at the top of this function is a reach test on the DESK, so
+   * every shop room answers the verb back from anywhere else in it — #15's
+   * "eat" from four metres inside its own terrace. `keeperOf` is the panel's
+   * own reader and it already builds the sentence: who is behind the counter,
+   * what species and what job. Saying it here is the difference between a
+   * room that looks shut and a room you have not walked far enough into.
+   */
+  const desks = countersAt(place.id);
+  if (desks.length) {
+    const k = keeperOf(desks[0], world);
+    if (k?.said) {
+      world.notify?.(place.name.toUpperCase(), `${k.said} — at the counter, and waiting`);
+      return true;
+    }
+  }
+  /**
+   * ══ AND THE LAST LINE IS NO LONGER THE PROMPT ═══════════════════════════
+   *
+   * `notify(place.name.toUpperCase(), place.verb)` — the interact key
+   * answering with the interact prompt — was the last line of this function
+   * for every room the branches above did not want. `StationCast.roomLine`
+   * derives its sentence from §3.2's OWN `who` and `idle` columns, which no
+   * file in the game had ever read, plus the live headcount for this hour. A
+   * room added to the gazetteer tomorrow gets a true answer with nothing
+   * written anywhere, and `station.mjs` fails the commit that adds one which
+   * would have echoed instead.
+   */
+  const hour = world._station?.hour ?? stationHour();
+  let extra = null;
+  /* THE PLATFORMS SAY WHEN. `rideTram` above only claims the press when a car
+   * is at the doors; this is the other half of the answer. */
+  if (STOPS.includes(Number(place.id))) {
+    const due = tramDue(world, place.id);
+    if (due) {
+      extra = due.secs <= 0 ? 'a car is at the platform now'
+        : `next car in ${Math.round(due.secs)} s`;
+    }
+  }
+  const [head, line] = roomLine(place, {
+    heads: place.heads ? headcount(place, hour) : null, extra,
+  });
+  world.notify?.(head, line);
   return true;
 }
+
+/**
+ * The rooms with a reading of their own, by place id. A table rather than nine
+ * more `if`s in `stationKey`, which is already the longest function in this
+ * file — and a table a check can walk, which is what `station.mjs` does.
+ */
+const ROOM_READINGS = {
+  21: (world) => gymReading(world),
+  24: (world) => securityReading(world),
+  30: () => officersReading(),
+  38: (world) => hostelReading(world),
+  45: (world, day) => memorialReading(day),
+  47: (world) => brigReading(world),
+};
 
 /**
  * What a job may be rolled against: the men on the roll and the kinds you

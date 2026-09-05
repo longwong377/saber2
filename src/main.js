@@ -72,13 +72,14 @@ import {
 import { headcount } from './game/StationLife.js';
 import * as Food from './game/Food.js';
 import {
-  openWheelhouse, sabaccTable, nextHand, dejarikTable, dejarikTurn,
+  openWheelhouse, sabaccTable, sabaccAnte, sabaccHand, sabaccAct, nextHand,
+  dejarikTable, dejarikTurn, nextColumn,
   drumTable, drumBets, drumQuote, WHEELHOUSE,
 } from './game/Casino.js';
 /* THE DRUM'S TICKET IS A RULE AND NOT A PANEL DETAIL, so its shape lives in
  * `Games.js` where it can be swept and measured. See `drumTicket`'s note: this
  * panel used to build the ticket by hand and destroyed the bet doing it. */
-import { drumTicket, drumDue, drumStop, drumClockOf } from './game/Games.js';
+import { drumTicket, drumDue, drumStop, drumClockOf, SABACC, sabaccPot } from './game/Games.js';
 import { takeJob, openJobs, dropJob, settleRun } from './game/Quests.js';
 import { programById, programSettings, rack, rackLines, Cycle } from './game/Holodeck.js';
 import { LESSONS } from './game/Dojo.js';
@@ -1289,6 +1290,14 @@ async function enterStation(floorRow = null, opts = {}) {
      * C2. See `openLeave` and `openBar`. */
     world.onLeave = () => openLeave();
     world.onBar = (id) => openBar(id);
+    /**
+     * #22 THE CHAPEL — §3.2's own verb is *"kneel and connect"*, which is the
+     * Holocron, which the game already has. `communePrompt` charges it on a
+     * held crouch anywhere; the one room on the station that is FOR kneeling
+     * had the sentence and no door, so the key printed it back. The overlay is
+     * `openMeditation`'s, unchanged — this adds a way in, not a second panel.
+     */
+    world.onCommune = () => { openMeditation(); return true; };
   }
   cancelDeathCard();
   menu.hideMenu();
@@ -2730,17 +2739,42 @@ screens.card('pit', () => { clearPitTimer(); pit = null; closePane('pit'); });
  * decide. The panel therefore holds a list of the verbs you have said and no
  * cards at all — so nothing on this screen can drift out of step with the
  * rules the way a hand-kept board would, and shutting the card and opening it
- * again is the same hand rather than a new deal. The dejarik board is the
- * opposite and for the honest reason: it is perfect information, so the board
- * IS the state and there is nothing to replay.
+ * again is the same hand rather than a new deal.
  *
- * ── AND THE MONEY MOVES IN `Station.js`, NOT HERE ────────────────────────
+ * THE COLUMN IS NOW THE SAME SHAPE, and this note used to say the opposite —
+ * that dejarik is perfect information, so the board IS the state and there is
+ * nothing to replay. True, and not the point: `Casino.dejarikTurn` kept its own
+ * game loop to make that true, and the stalemate rule was in the OTHER loop, so
+ * a quarter of every column played in this room ended with no winner and no
+ * line. `Casino.dejarikTable` replays `{seed, acts}` through `Games.playDejarik`
+ * now — one loop, one rule — and what the panel holds is a value either way.
  *
- * `Station.stakeAtDrum` and `payAtDrum` are the two lines where the purse
- * moves, beside `stakeAtTote` and `payAtTote`, under the same `PER_RUN_CAP`.
- * A ticket lives until the turn it rides comes round — see `drumHeld`, and
+ * ── AND THE MONEY MOVES THROUGH ONE WALLET, WHICHEVER DOOR IT COMES BY ───
+ *
+ * The Drum's purse moves in `Station.js` — `stakeAtDrum` and `payAtDrum`,
+ * beside `stakeAtTote` and `payAtTote`, under the same `PER_RUN_CAP`. A ticket
+ * lives until the turn it rides comes round: see `drumHeld`, and
  * `Games.drumTicket` for why the turn it rides and the thing it backs are two
  * fields and not one.
+ *
+ * SABACC'S ANTE MOVES HERE, through `Credits.spend` and `Credits.pay`, which
+ * is the same wallet and the same cap and is what `showPit` three hundred
+ * lines up already does. It is not in `Station.js` because there would be
+ * nothing to put there: `stakeAtDrum` earns its place by pricing a bet against
+ * a stop the station's own clock decides, and a sabacc ante is decided by the
+ * hand THIS PANEL is holding. A named door whose whole body is `spend(n)` is a
+ * second name for the wallet, not a second wall around it — and `Games.js`
+ * still prices the middle (`sabaccPot`, `sabaccPays`) without knowing a purse
+ * exists, which is the separation the doctrine is actually about.
+ *
+ * ── WHAT A SABACC HAND COSTS, AND WHY YOU CANNOT SEE IT FIRST ────────────
+ *
+ * *"you can bet your real money."* Four seats ante; the middle goes to the
+ * hand that ends nearest 23 on either side, less the house's cut. The cards
+ * are NOT SHOWN until the ante is paid — a hand you can look at before you are
+ * in is free information, you would fold every bad deal for nothing, and a pot
+ * nobody has to pay into is the thing this room had before: driven all-hold
+ * over 300 days it won 15.3% of hands and that cost nothing and paid nothing.
  *
  * ── ITS OWN ROOT, WHICH IS THE ONLY SHAPE SAFE AGAINST `Screens.clear()` ──
  *
@@ -2839,6 +2873,24 @@ function casinoBell() {
  */
 let drumHeld = null;
 
+/**
+ * AND A LIVE HAND OUTLIVES IT TOO, for the same reason and one more.
+ *
+ * The Drum's ticket survives the door because the wheel turns whether you are
+ * there or not. A sabacc hand does not turn — but you have paid an ante into a
+ * middle that has not been decided, and a card that dropped it on the way out
+ * would be the house keeping the stake for the crime of walking out of the
+ * room. Worse than the Drum's version of that defect, because a person can
+ * walk out of a card game mid-hand for a hundred honest reasons.
+ *
+ * `Casino.sabaccAnte` is what makes one — the place, the day it was DEALT on,
+ * the hand index and the ante, plus the verbs said so far — and `sabaccHand`
+ * is the reading that turns it back into the same table. The day is on the
+ * ticket rather than read fresh so that coming back after midnight is still
+ * your hand and not today's deal.
+ */
+let sabaccHeld = null;
+
 /** The pips on a sabacc card, signed. `−13` reads as a card, `-13` does not. */
 function cardOf(v) { return `${v < 0 ? '−' : ''}${Math.abs(v)}`; }
 
@@ -2846,7 +2898,43 @@ function showCasino() {
   const el = casinoRoot();
   const day = stationDay();
   const hour = casinoHour();
-  if (!casino) casino = { tab: 'sabacc', index: 0, acts: [], board: null, ticket: drumHeld, settled: null, said: null };
+  if (!casino) {
+    casino = {
+      tab: 'sabacc', board: null, ticket: drumHeld, settled: null, said: null,
+      /* THE TWO THAT SURVIVED THE DOOR, and the two that did not: a hand and a
+       * ticket are money on the table, a tab and a board are not. */
+      stake: sabaccHeld, shown: null, index: sabaccHeld ? sabaccHeld.index : 0,
+    };
+  }
+
+  /**
+   * THE HAND IS SETTLED BEFORE ANYTHING IS PAINTED, AND NOT IN THE BUTTON.
+   *
+   * Not in the button, because this panel redraws four times a second off its
+   * own bell — the Drum's lesson, written down below — so a result built inside
+   * a click handler is on the screen for 250 ms and gone. And BEFORE the header
+   * rather than inside the sabacc branch, because the header is where the purse
+   * is printed: settling underneath it showed the middle coming back and the
+   * old balance in the same frame, and it took a bell to agree with itself.
+   *
+   * The first render that finds the hand finished pays it, writes the line down
+   * where the next render can still read it, and says it through `notify` as
+   * well — the middle can be decided while the tab is somewhere else.
+   */
+  if (casino.stake) {
+    const done = sabaccHand(casino.stake);
+    if (done.done) {
+      const owed = done.result.pay;
+      const paid = owed > 0 ? pay(owed, 'sabacc') : 0;
+      casino.settled = done.result.line
+        + (owed ? ` — ${paid} credits` : ` — the ${casino.stake.ante} you anted is gone`)
+        + (paid < owed ? ` (the wallet capped it at ${paid} of ${owed})` : '');
+      casino.shown = done;
+      casino.index = done.index;
+      casino.stake = null;
+      world?.notify?.('SABACC', owed ? `${paid} credits` : 'the middle goes the other way');
+    }
+  }
 
   const room = openWheelhouse(hour, day, WHEELHOUSE);
   let html = `<div class="pane"><h2>${esc(room.name)}</h2>`;
@@ -2855,43 +2943,64 @@ function showCasino() {
     + `<button class="tab-t" data-tab="${t.id}"${casino.tab === t.id ? ' disabled' : ''}>${esc(t.name)}</button>`
     + `<span>${esc(t.line)}</span></div>`).join('') + '</div>';
 
-  /* ── SABACC. Your hand, what everyone else is holding, and three verbs. */
+  /* ── SABACC. Four seats, one middle, and three verbs once you are in. */
   if (casino.tab === 'sabacc') {
-    const t = sabaccTable(WHEELHOUSE, day, casino.index, casino.acts);
-    html += `<p class="sub">Nearest ${t.target} on either side. Over is a bomb-out.</p>`;
-    html += `<div class="rows"><div class="row"><b>Your hand</b>`
-      + `<span>${t.hand.map(cardOf).join('  ')} <i>= ${cardOf(t.score.sum)}, `
-      + `${t.score.bomb ? 'bombed out' : `${t.score.off} off`}</i></span></div>`;
+    const live = casino.stake ? sabaccHand(casino.stake) : null;
+    /* THE TABLE ON THE SCREEN: the hand you are in, or the last one you played,
+     * or — before you have anted — a nothing hand dealt for nothing, which is
+     * there so the SEATS can be shown. Who is at the table is not information
+     * you have to pay for; your cards are. */
+    const t = live || casino.shown || sabaccTable(WHEELHOUSE, day, casino.index, [], 3, 0);
+    const ante = SABACC.ANTE;
+    html += `<p class="sub">Nearest ${t.target} on either side; over is a bomb-out. `
+      + `Four seats ante ${ante}, so the middle is ${sabaccPot(ante)} `
+      + `— the house takes ${Math.round(SABACC.RAKE * 100)}% of a decided one.</p>`;
+    html += '<div class="rows">';
+    /* YOUR CARDS ONLY ONCE THEY ARE YOURS. A hand shown before the ante is
+     * free information: you would sit out every bad deal at no cost, which is
+     * not a decision, and it is what this table was before it had a stake. */
+    if (live || casino.shown) {
+      html += `<div class="row"><b>Your hand</b>`
+        + `<span>${t.hand.map(cardOf).join('  ')} <i>= ${cardOf(t.score.sum)}, `
+        + `${t.score.bomb ? 'bombed out' : `${t.score.off} off`}</i></span></div>`;
+    }
     t.seats.forEach((s, i) => {
       const held = t.others[i + 1];
       html += `<div class="row"><b>${esc(s.name)}</b><span>the ${esc(s.species)}, ${esc(s.role)} `
         + `<i>${held === 0 ? 'folded' : `${held} cards`}</i></span></div>`;
     });
     html += '</div>';
-    if (!t.done) {
-      html += `<p class="sub">Round ${t.round + 1} of ${t.rounds}. `
+    if (live && !live.done) {
+      html += `<p class="sub">Round ${t.round + 1} of ${t.rounds}. ${t.pot} in the middle. `
         + `Every card may shift before the next one.</p><div class="rows">`
         + t.can.map((v) => `<div class="row"><button class="act" data-act="${v}">${v}</button>`
           + `<span>${v === 'hold' ? 'stand on it and let the shift come'
-            : v === 'draw' ? 'take another card' : 'throw the hand in'}</span></div>`).join('')
+            : v === 'draw' ? 'take another card' : 'throw the hand in and lose the ante'}</span></div>`).join('')
         + '</div>';
     } else {
-      html += `<p class="sub"><b>${esc(t.result.line)}</b>`
-        + (t.shifts ? ` — ${t.shifts} of your cards shifted under you.` : '') + '</p>';
-      html += '<div class="rows">' + t.result.hands.map((h, i) => {
-        const who = i === 0 ? 'you' : (t.seats[i - 1]?.name || 'the house');
-        const s = t.result.scores[i];
-        return `<div class="row"><b>${esc(who)}</b><span>${h.map(cardOf).join('  ')} `
-          + `<i>${s.out ? 'folded' : s.bomb ? 'bomb-out' : cardOf(s.sum)}</i></span></div>`;
-      }).join('') + '</div>';
-      html += '<div class="rows"><div class="row"><button class="deal">deal again</button>'
-        + '<span>a new hand at the same table</span></div></div>';
+      if (casino.settled) html += `<p class="sub"><b>${esc(casino.settled)}</b></p>`;
+      if (casino.shown) {
+        html += `<p class="sub">${casino.shown.shifts
+          ? `${casino.shown.shifts} of your cards shifted under you.` : 'nothing shifted under you.'}</p>`;
+        html += '<div class="rows">' + casino.shown.result.hands.map((h, i) => {
+          const who = i === 0 ? 'you' : (casino.shown.seats[i - 1]?.name || 'the house');
+          const sc = casino.shown.result.scores[i];
+          return `<div class="row"><b>${esc(who)}</b><span>${h.map(cardOf).join('  ')} `
+            + `<i>${sc.out ? 'folded' : sc.bomb ? 'bomb-out' : cardOf(sc.sum)}</i></span></div>`;
+        }).join('') + '</div>';
+      }
+      const afford = purse() >= ante;
+      html += '<div class="rows"><div class="row">'
+        + `<button class="ante" data-ante="${ante}"${afford ? '' : ' disabled'}>ante ${ante}</button>`
+        + `<span>${casino.shown ? 'a fresh deal at the same table'
+          : 'the cards come after the ante — four seats, one middle'}</span></div></div>`;
     }
+    if (casino.said) html += `<p class="sub">${esc(casino.said)}</p>`;
   }
 
   /* ── THE DEJARIK COLUMN. Twenty squares round a ring, and it shrinks. */
   if (casino.tab === 'dejarik') {
-    if (!casino.board) casino.board = dejarikTable(WHEELHOUSE, day);
+    if (!casino.board) casino.board = dejarikTable(WHEELHOUSE, day, [], 0);
     const g = casino.board;
     html += `<p class="sub">Against ${esc(g.against?.name || 'the house')}`
       + `${g.against ? `, the ${esc(g.against.species)}` : ''}. `
@@ -2905,14 +3014,21 @@ function showCasino() {
         return `<b>${p.side === 0 ? p.id[0].toUpperCase() : p.id[0]}</b>`;
       }).join(' ') + '</span></div></div>';
     if (g.winner === null && g.moves.length) {
-      html += `<p class="sub">${g.last ? `They played ${g.last.theirs.from}→${g.last.theirs.to}. ` : ''}`
+      html += `<p class="sub">${g.last?.theirs ? `They played ${g.last.theirs.from}→${g.last.theirs.to}. ` : ''}`
         + 'Your move — capitals are yours.</p><div class="rows">'
         + g.moves.slice(0, 14).map((m) => `<div class="row">`
           + `<button class="mv" data-from="${m.from}" data-to="${m.to}">${m.from}→${m.to}</button>`
           + `<span>${esc(g.board.ring[m.from].id)}${m.takes ? ' <i>takes</i>' : ''}</span></div>`).join('')
         + '</div>';
     } else {
-      html += `<p class="sub"><b>${esc(g.line || 'the column is done')}</b></p>`
+      /* NO `||` HERE ANY MORE, AND THAT IS THE WHOLE DEFECT. `g.line` was null
+       * on 28% of columns — every one of them a game that had deadlocked with
+       * no winner and no legal move — and this fallback string printed "the
+       * column is done" over the hole so it read as an ending. `columnLine`
+       * now answers for every way a column can finish, the stalemate included,
+       * and a missing line would be a fault worth seeing rather than one worth
+       * papering over. */
+      html += `<p class="sub"><b>${esc(g.line)}</b></p>`
         + '<div class="rows"><div class="row"><button class="rack">rack them up</button>'
         + '<span>a fresh column</span></div></div>';
     }
@@ -2974,13 +3090,35 @@ function showCasino() {
   for (const b of el.querySelectorAll('button.tab-t')) {
     b.addEventListener('click', () => { casino.tab = b.dataset.tab; casino.said = null; showCasino(); });
   }
+  /* A VERB GOES INTO THE TICKET AND NOT INTO A LIST BESIDE IT. The ticket is
+   * the thing that survives the door, so a hand held anywhere else is a hand
+   * that half-survives it. `sabaccAct` answers a new ticket rather than
+   * pushing into this one, for the reason `Casino.js` gives: a stake is a
+   * value, and a value cannot be half-written. */
   for (const b of el.querySelectorAll('button.act')) {
-    b.addEventListener('click', () => { casino.acts = [...casino.acts, b.dataset.act]; audio.ui('click'); showCasino(); });
-  }
-  for (const b of el.querySelectorAll('button.deal')) {
     b.addEventListener('click', () => {
-      const n = nextHand({ index: casino.index });
-      casino.index = n.index; casino.acts = n.acts; audio.ui('good'); showCasino();
+      if (!casino.stake) return;
+      casino.stake = sabaccAct(casino.stake, b.dataset.act);
+      audio.ui('click'); showCasino();
+    });
+  }
+  /* THE ANTE — one of the two lines in this room where the purse moves for
+   * cards. It is `Credits.spend`, the same door the pit and the shop use, and
+   * it is taken BEFORE `sabaccAnte` strikes the ticket: a hand dealt on money
+   * that was refused is the shape every window in this file is written to
+   * make impossible. */
+  for (const b of el.querySelectorAll('button.ante')) {
+    b.addEventListener('click', () => {
+      const amount = +b.dataset.ante;
+      const paid = spend(amount, 'sabacc');
+      if (!paid.ok) { casino.said = paid.short ? `${paid.short} credits short` : paid.why; showCasino(); return; }
+      /* THE NEXT HAND AT THE SAME TABLE, so a fresh ante is a fresh deal and
+       * not the same cards again — `nextHand` is the one authority on that. */
+      const index = casino.shown ? nextHand(casino.shown).index : casino.index;
+      casino.stake = sabaccAnte(WHEELHOUSE, stationDay(), index, amount);
+      casino.index = index;
+      casino.shown = null; casino.settled = null; casino.said = null;
+      audio.ui('good'); showCasino();
     });
   }
   for (const b of el.querySelectorAll('button.mv')) {
@@ -2990,7 +3128,15 @@ function showCasino() {
     });
   }
   for (const b of el.querySelectorAll('button.rack')) {
-    b.addEventListener('click', () => { casino.board = dejarikTable(WHEELHOUSE, stationDay()); showCasino(); });
+    b.addEventListener('click', () => {
+      /* A NEW COLUMN AND NOT THE SAME ONE BACK. The house's replies are seeded
+       * on the column's `round` as well as the position, so racking them up
+       * deals a genuinely different game rather than the one you just lost
+       * with the moves rubbed out. */
+      const n = nextColumn(casino.board);
+      casino.board = dejarikTable(WHEELHOUSE, stationDay(), n.acts, n.round);
+      audio.ui('good'); showCasino();
+    });
   }
   for (const b of el.querySelectorAll('button.stake')) {
     b.addEventListener('click', () => {
@@ -3011,7 +3157,11 @@ function showCasino() {
     });
   }
   el.classList.remove('hidden');
+  /* THE TWO THINGS THAT ARE MONEY ON THE TABLE, WRITTEN OUT WHERE THE CARD
+   * CANNOT TAKE THEM DOWN WITH IT. `screens.card('casino')` nulls `casino`;
+   * these two outlive it. */
   drumHeld = casino.ticket;
+  sabaccHeld = casino.stake;
   casinoBell();
 }
 

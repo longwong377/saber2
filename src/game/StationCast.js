@@ -1126,3 +1126,263 @@ for (const R of BORZ_RESIDENTS) {
 Object.assign(ARCHETYPES, STATION_UNITS);
 
 export { STATION_UNITS };
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  WHAT THE STATION SAYS — §14's talking, and a room's own last line         */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ NOBODY COULD BE TALKED TO, AND NOBODY HAD A NAME ON SCREEN ════════════
+ *
+ * §14 asks for talking. Before this there was no bark table anywhere, no
+ * `onTalk` and no `talkTo` in any file, and `body.stationName` — written onto
+ * EVERY resident body in `StationLife.spawnResident` and onto every keeper in
+ * `Station.dressKeepers` — was read by nothing at all. Sixty people with names,
+ * jobs, factions, homes and a daily rhythm stood in the drum and the player
+ * could not learn one thing about any of them.
+ *
+ * ── THE RULE THIS TABLE KEEPS, AND IT IS THE SAME ONE §3.2 KEEPS ──────────
+ *
+ * A bark is BUILT FROM WHAT THE GAME ALREADY KNOWS, never typed beside it.
+ * Every line below reads a row this file or the gazetteer already owns —
+ * `ROLE_BY`'s shift, `RHYTHMS`' sleep and meals, `FACTIONS`' ground, `HOMES`'
+ * quarter, `FRICTION`'s verb, `place.idle` — so a species rehoused, a shift
+ * moved or a room renamed changes what its people say without a word being
+ * edited here. That is HANDOFF §2.3's rule: the hand-maintained twin beside
+ * its generated original is this project's signature defect, and a bark table
+ * of literal small talk would have been the ninth one.
+ *
+ * ── AND IT IS SEEDED ON (RESIDENT, DAY) ───────────────────────────────────
+ *
+ * Same person, same day, same line — everywhere in the game and for every
+ * player in a co-op session, because `hashF` is the same pure hash `occupant`
+ * seeds a face with and there is no `Math.random` anywhere under `src/`. Ask
+ * twice in one day and you are told the same thing, which is what a person
+ * is; come back tomorrow and it has moved on, which is what a day is.
+ */
+
+/** 6.5 → "06:30". The station tells the time the way its boards do. */
+function hhmm(h) {
+  const t = ((h % 24) + 24) % 24;
+  const m = Math.round((t - Math.floor(t)) * 60);
+  return `${String(Math.floor(t) + (m === 60 ? 1 : 0)).padStart(2, '0')}:${String(m === 60 ? 0 : m).padStart(2, '0')}`;
+}
+
+const placeName = (id) => PLACE.get(id)?.name || null;
+
+/** A resident in one line — the nameplate's own words. */
+export function residentLine(who) {
+  if (!who) return '';
+  const role = String(who.role || 'visitor').replace(/_/g, ' ');
+  return `${who.name}, a ${who.species} ${role}`;
+}
+
+/**
+ * ══ THE TOPICS ════════════════════════════════════════════════════════════
+ *
+ * Each row answers with a sentence or with null, and null means "this person
+ * has nothing to say on this" — a visitor has no shift, a Vorlon takes no
+ * meals, a room nobody else holds has no friction in it. The pick is over what
+ * SURVIVES that filter, so a resident is never handed an empty line and the
+ * spread of what you hear is a fact about the person rather than about the
+ * table's length.
+ */
+export const BARK_TOPICS = [
+  {
+    id: 'shift',
+    say(who) {
+      const R = ROLE_BY.get(who.role);
+      if (!R) return null;
+      const where = placeName(R.where);
+      if (!(R.hours > 0)) {
+        return `no shift and no berth${where ? ` — I wait at ${where.toLowerCase()}` : ''}. That is the whole of my day.`;
+      }
+      return `on at ${hhmm(R.start)}, off at ${hhmm(R.start + R.hours)}`
+        + `${where ? ` — ${R.hours} hours at ${where.toLowerCase()}` : ''}.`;
+    },
+  },
+  {
+    id: 'sleep',
+    say(who) {
+      const R = who.rhythm;
+      if (!R || !(R.hours > 0)) return null;
+      /* THE ODDITY IS COMPUTED OFF THE ROW'S NUMBERS and not lifted out of its
+       * prose `note`. Both would be true today; only one of them stays true
+       * when somebody moves a Brakiri's sleep hour and forgets the sentence
+       * under it. A block that starts between 04:00 and 12:00 IS sleeping
+       * through the station day, whatever the note says about it. */
+      const bits = [`I sleep at ${hhmm(R.sleep)} for ${R.hours} hours`];
+      if (R.sleep >= 4 && R.sleep < 12) bits.push('through your day, and I work through your night');
+      else if (R.hours <= 4.5) bits.push('which is not much, and it is why I am about at odd hours');
+      else if (R.hours >= 9) bits.push('which is longer than yours');
+      return `${bits.join(' — ')}.`;
+    },
+  },
+  {
+    id: 'meal',
+    say(who, ctx) {
+      const R = who.rhythm;
+      if (!R?.meals?.length) return null;
+      const now = Number.isFinite(ctx.hour) ? ctx.hour : 12;
+      let next = null, gap = 99;
+      for (const m of R.meals) {
+        const d = ((m - now) % 24 + 24) % 24;
+        if (d < gap) { gap = d; next = m; }
+      }
+      const air = R.atmos === 'methane'
+        ? ' — and it has to be taken in the methane quarter, which is the whole of why I go back there'
+        : '';
+      return `next meal at ${hhmm(next)}${air}.`;
+    },
+  },
+  {
+    id: 'home',
+    say(who, ctx) {
+      const home = placeName(who.home);
+      if (!home) return null;
+      const hd = PLACE.get(who.home)?.deck, here = ctx.place?.deck;
+      const far = Number.isFinite(hd) && Number.isFinite(here) && hd !== here
+        ? ` — deck ${hd}, and I am on ${here} until I am not` : '';
+      return `I live in ${home.toLowerCase()}${far}.`;
+    },
+  },
+  {
+    id: 'faction',
+    say(who) {
+      const F = FACTIONS.find((f) => f.id === who.faction);
+      if (!F) return null;
+      const held = (F.holds || []).map(placeName).filter(Boolean);
+      if (!held.length) return null;
+      return `${F.name} — we keep ${held.slice(0, 3).map((n) => n.toLowerCase()).join(', ')}. `
+        + `Our hours: ${F.hours}.`;
+    },
+  },
+  {
+    id: 'friction',
+    say(who, ctx) {
+      /* WHO ELSE HOLDS THIS GROUND. `frictionBetween` is the corridor rule the
+       * residents already walk by; this is the same answer said out loud, and
+       * it is the one topic that is about somebody other than the speaker. */
+      const id = ctx.place?.id;
+      if (id == null) return null;
+      const other = FACTIONS.find((f) => f.id !== who.faction && (f.holds || []).includes(id));
+      if (!other) return null;
+      const [mine] = frictionBetween(who.faction, other.id);
+      const does = VERBS[mine]?.does;
+      if (!does || mine === 'none') return null;
+      return `${other.name} is in here too. When one of them comes down the corridor, one of us ${does}.`;
+    },
+  },
+  {
+    id: 'room',
+    say(who, ctx) {
+      const p = ctx.place;
+      if (!p?.idle || p.idle === '—') return null;
+      return `here? ${p.idle}. Same every shift.`;
+    },
+  },
+  {
+    id: 'notice',
+    say(who, ctx) {
+      if (!ctx.notice) return null;
+      return `there is a notice up on the wall: ${ctx.notice}`;
+    },
+  },
+  {
+    id: 'companion',
+    say(who, ctx) {
+      if (!ctx.companion) return null;
+      return `the ${ctx.companion} is mine. Do not feed it — it is on a ration.`;
+    },
+  },
+  {
+    id: 'air',
+    say(who) {
+      const R = who.rhythm;
+      if (!R || R.breather === 'none') return null;
+      return R.breather === 'suit'
+        ? `this is not my air. The suit is the only reason I am standing in it.`
+        : `the mask stays on out here. Your air is dry enough to crack a shell.`;
+    },
+  },
+  {
+    id: 'standing',
+    say(who, ctx) {
+      if (!Number.isFinite(ctx.standing) || Math.abs(ctx.standing) < 4) return null;
+      return ctx.standing > 0
+        ? `your company's name is good in here. That is not nothing on a station this size.`
+        : `we heard what you did in this hull. People are counting.`;
+    },
+  },
+];
+
+/**
+ * One resident, one day, one thing worth hearing.
+ *
+ * `who` is a resident row (`resident()`'s own shape) or anything carrying the
+ * same five fields — which is what a resident BODY carries, under the
+ * `station*` names `spawnResident` writes. Returns `[head, line]`, the two
+ * halves of the game's own banner, or null when there is nothing to say.
+ */
+export function barkFor(who, day = 0, ctx = {}) {
+  if (!who?.name) return null;
+  const said = [];
+  for (const t of BARK_TOPICS) {
+    let s = null;
+    try { s = t.say(who, ctx); } catch { s = null; }
+    if (s) said.push(s);
+  }
+  if (!said.length) return null;
+  /* SEEDED ON THE PERSON AND THE DAY. The seed is the resident's own — a slot
+   * seed where there is one, the name otherwise — so two readers asking about
+   * the same body are told the same thing without either holding state. */
+  const seed = `${who.seed || who.name}|${who.role || ''}|${who.species || ''}`;
+  const i = Math.floor(hashF(seed, `bark${day | 0}`) * said.length) % said.length;
+  return [residentLine(who).toUpperCase(), said[i]];
+}
+
+/**
+ * ══ A ROOM'S OWN LAST LINE, AND IT IS NEVER THE PROMPT READ BACK ══════════
+ *
+ * `Station.stationKey`'s last line was `notify(place.name.toUpperCase(),
+ * place.verb)` — the interact key answering with the interact prompt. Driven
+ * across all sixty-two places with a verb: sixteen rooms answered that way
+ * with every panel hook wired, and thirty-seven did when the room's own doors
+ * had nothing for you that day. §14 says *"every verb row in §3.2 is a prompt
+ * string"*; for those rooms it was ONLY a prompt string.
+ *
+ * This is what the key says instead, and the important property is that it is
+ * DERIVED. §3.2 already carries two columns of truth about every room — `who`
+ * is standing in it and what they are `idle`-ly doing — and neither had a
+ * reader anywhere in the game. A room added to the gazetteer tomorrow gets a
+ * real answer out of its own row with nothing written here, and
+ * `station.mjs`'s sweep fails the commit that adds one which does not.
+ */
+export function roomLine(place, opts = {}) {
+  if (!place) return null;
+  const bits = [];
+  const heads = Number.isFinite(opts.heads) ? opts.heads : null;
+  /* THE LIVE COUNT WHERE THERE IS ONE, and the gazetteer's own census where
+   * there is not — the room is emptier at 04:00 than at 13:00 and saying so
+   * is the difference between a description and a reading. */
+  if (heads != null && place.heads) {
+    bits.push(heads === 0 ? 'nobody in here at this hour'
+      : `${heads} in here at this hour`);
+  } else if (place.who && place.who !== '—') {
+    /* SOME `who` COLUMNS ARE JUST A HEADCOUNT ("6", "10", "30 droids"), which
+     * is a census entry and not a sentence — so a bare number is given the
+     * words that make it one rather than being printed on its own. */
+    const w = String(place.who);
+    bits.push(/^\d+$/.test(w) ? `${w} in here` : w);
+  }
+  if (place.idle && place.idle !== '—') bits.push(String(place.idle));
+  if (opts.extra) bits.push(String(opts.extra));
+  let line = bits.join(' — ');
+  /* THE ONE THING IT MUST NOT BE. A gazetteer row whose `who` or `idle` was
+   * written to match its verb would put the prompt back; this is the guard
+   * that stops the whole point of the function being lost to one row. */
+  if (!line || line === place.verb) {
+    line = `deck ${place.deck ?? '—'}, and nothing is happening in it`;
+  }
+  return [String(place.name).toUpperCase(), line];
+}

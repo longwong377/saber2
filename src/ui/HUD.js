@@ -60,6 +60,22 @@ import { supportCost } from '../game/Stratagems.js';
 // at all. Audio.js owns both the table and the speaking; the wheel prints.
 import { wordsFor, canSpeakWords } from '../engine/Audio.js';
 import { openState, openMul } from '../game/Combat.js';
+/**
+ * ══ THE STATION'S OWN PLATE ═══════════════════════════════════════════════
+ *
+ * `_nameplates` below walks `command.roster.living` — your own troopers — and
+ * has never been able to see a resident. `body.stationName` is written onto
+ * every one of the sixty people in the drum and onto every shopkeeper behind
+ * a counter, and until this line it was read by nothing anywhere in the game.
+ *
+ * `residentFacing` IMPORTED AND NOT COPIED. It is the same call
+ * `Station.stationKey`'s talk branch makes, so the plate and the key cannot
+ * disagree about who you are looking at — a plate on one body and a bark from
+ * another would be worse than no plate. That is HANDOFF §2.3's rule: the
+ * hand-maintained twin beside its original is this project's signature defect,
+ * and an aim cone re-typed here would be one.
+ */
+import { residentFacing, whoOfBody } from '../game/Station.js';
 
 const _v = new THREE.Vector3();
 const num = (v, d) => (Number.isFinite(v) ? v : d);
@@ -1433,6 +1449,9 @@ export class HUD {
     this._markPool = [];
     /** Pooled nameplate nodes, one per living trooper. See `_nameplates`. */
     this._plates = [];
+    /** The ONE plate a station resident gets — you look at one person at a
+     *  time, so this is a node and not a pool. See `_residentPlate`. */
+    this._resPlate = null;
     this.whyTimer = 0;
     /* The last state+multiplier drawn, so the two strings are only written when
      * one of them has actually changed. null means the readout is hidden. */
@@ -1901,6 +1920,99 @@ export class HUD {
       P.node.classList.toggle('shaken', braveryOf(e) < SHAKEN_AT);
       P.node.classList.toggle('broken', !!t.broken);
     }
+  }
+
+  /**
+   * ══ A NAMEPLATE WHEN YOU LOOK AT A RESIDENT — §14 ═══════════════════════
+   *
+   * The other half of the talk key, and it has to be: `stationKey` claims a
+   * press for a bark only when `residentFacing` returns a body, so the ONE
+   * frame in which the key means "talk to him" rather than "open the room" is
+   * the one frame this plate is on the screen. The player is never surprised
+   * about which of the two the key is about to do, and stepping back or
+   * looking off him hands the room its door back — visibly.
+   *
+   * ── IT IGNORES `troopNames`, AND THAT IS DELIBERATE ─────────────────────
+   *
+   * That setting is about a battlefield full of your own men: 'aimed' keeps
+   * twenty-four labels off the screen in a firefight. This is one label, on
+   * one person, at arm's length, and it is a PROMPT rather than a roster
+   * readout — hiding it would hide the fact that a key press is available,
+   * which is precisely what §14's *"a player never wonders what is usable"*
+   * forbids. The plate a resident gets carries no bars for the same reason:
+   * a shopkeeper has no morale you are commanding.
+   *
+   * ── AND NO NODE IS BUILT UNTIL SOMEBODY IS LOOKED AT ────────────────────
+   *
+   * `residentFacing` returns null on every level that is not the station and
+   * on nearly every frame of the one that is, so the cost off the station is
+   * one property read a frame — the same bar `stepCook` and `stepBells` are
+   * held to on the other side of the wall.
+   */
+  _residentPlate(world, player, camera) {
+    const host = this.el.troopnames;
+    if (!host || !world?._station || !player) {
+      if (this._resPlate?._shown) { this._resPlate.node.style.display = 'none'; this._resPlate._shown = false; }
+      return;
+    }
+    let body = null;
+    try { body = residentFacing(world); } catch { body = null; }
+    if (!body) {
+      if (this._resPlate?._shown) { this._resPlate.node.style.display = 'none'; this._resPlate._shown = false; }
+      return;
+    }
+    let P = this._resPlate;
+    if (!P) {
+      const node = document.createElement('div');
+      node.className = 'tplate aimed';
+      /* THE RANK CHIP'S SLOT CARRIES THE KEY instead, which is what turns the
+       * plate from a label into §14's *"one prompt style"*: a resident has no
+       * rank and the one thing the player needs to be told is that this body
+       * is a body the interact key does something with. `_chip` is the same
+       * reader the fire-mission footer and the pilot's seat prompt use, so it
+       * follows a rebind and a pad. */
+      node.innerHTML = '<div><span class="tp-rank"></span><span class="tp-name"></span>'
+        + '<span class="tp-squad"></span></div>';
+      host.appendChild(node);
+      P = this._resPlate = { node, rank: node.querySelector('.tp-rank'),
+        name: node.querySelector('.tp-name'),
+        squad: node.querySelector('.tp-squad'), _shown: false, _name: null, _role: null, _key: null };
+    }
+    /* THE HEAD, not the origin — `_nameplates`' own offset and its reason: a
+     * plate at a body's feet reads as belonging to the ground. */
+    _v.set(body.position.x, body.position.y + (body.A?.hipHeight ?? 0.95) + 1.15, body.position.z);
+    const eye = player.camera ? player.camera.pos : player.position;
+    const dist = _v.distanceTo(eye);
+    _v.project(camera);
+    if (_v.z > 1) {
+      if (P._shown) { P.node.style.display = 'none'; P._shown = false; }
+      return;
+    }
+    if (!P._shown) { P.node.style.display = ''; P._shown = true; }
+    P.node.style.left = `${(_v.x * 0.5 + 0.5) * 100}%`;
+    P.node.style.top = `${(-_v.y * 0.5 + 0.5) * 100}%`;
+    P.node.style.opacity = String(clamp(1.3 - dist / 4, 0.35, 1));
+    const key = this._chip('focus');
+    if (P._key !== key) {
+      P._key = key;
+      P.rank.textContent = key;
+      P.rank.style.background = 'var(--panel-hi)';
+      P.rank.style.color = 'var(--ink)';
+    }
+    if (P._name !== body.stationName) { P._name = body.stationName; P.name.textContent = body.stationName; }
+    /**
+     * WHAT HE IS, off the same row the bark is built from — `whoOfBody` is
+     * `Station.js`'s reader and `residentLine` is the sentence, so the plate
+     * and the banner name the same person the same way. A pet has no species
+     * and carries its whole description in `stationRole` ("massiff —
+     * Thulith’s"), which is exactly the right line for it.
+     */
+    let role = body.stationRole || '';
+    try {
+      const who = whoOfBody(body);
+      if (who && body.stationSpecies) role = `${who.species} ${String(who.role).replace(/_/g, ' ')}`;
+    } catch { /* the plate is worth having with only a name on it */ }
+    if (P._role !== role) { P._role = role; P.squad.textContent = role; }
   }
 
   _buildPowers(bindings = null) {
@@ -3152,6 +3264,8 @@ export class HUD {
 
     // ── who is who. Note #16; see `_nameplates`.
     this._nameplates(world, player, camera);
+    // ── …and who the station is. See `_residentPlate`.
+    this._residentPlate(world, player, camera);
 
     // ── the support calls, while one is being spelled. See `_stratagemPanel`.
     this._stratagemPanel(player);

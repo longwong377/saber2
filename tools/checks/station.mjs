@@ -2966,7 +2966,7 @@ export async function run({ check, assert, THREE }) {
 
   /* ════════════════════════════════════════════════════════════════════════ */
 
-  check('station: #51 charges a droid, and hands a man his own verb back', async () => {
+  check('station: #51 charges a droid, and hands a man the press back', async () => {
     /**
      * ══ V16 Lane B5's *"instead of"*, and it had no door ══════════════════
      *
@@ -2981,7 +2981,19 @@ export async function run({ check, assert, THREE }) {
      *
      * AND THE BRANCH DOES NOT CLAIM A PRESS IT DID NOT USE, which is the
      * lesson of #20's pit door two branches along: `main.js` hands the press
-     * back for anybody with a stomach, and #51's own verb still prints.
+     * back for anybody with a stomach, and the room answers him anyway.
+     *
+     * ── WHAT THE MAN GETS BACK IS NO LONGER THE VERB ──────────────────────
+     *
+     * This clause used to assert that a man at #51 was shown `place.verb` —
+     * *"call the astromech"*, the interact prompt printed by the interact key.
+     * That was the whole of §14's defect and it is gone: the fall-through now
+     * lands on `StationCast.roomLine`, which says what is in the room off
+     * §3.2's own `who` and `idle` columns. The PROPERTY the clause was written
+     * for is unchanged and is what is measured — the rack is asked, it
+     * refuses, and the press is not eaten — and the sibling clause "no place
+     * answers the interact key by printing its own verb" now holds the other
+     * half over all sixty-two rooms.
      */
     const { PLACE } = await import('../../src/game/StationPlan.js');
     const St = await import('../../src/game/Station.js');
@@ -3002,22 +3014,24 @@ export async function run({ check, assert, THREE }) {
       assert(charged === 51, `the key at #51 raised ${charged || 'nothing'} — the rack has no door`);
       assert(said === null, 'the room both charged and printed its verb — one press, one answer');
 
-      /* ── A MAN: the hook refuses and the verb comes back. ───────────── */
+      /* ── A MAN: the hook refuses and the room answers him anyway. ───── */
       charged = 0; said = null;
       world.onCharge = (id) => { charged = id; return false; };
       assert(St.stationKey(world), '#51 stopped answering the key when the rack refused');
       assert(charged === 51, 'the room was not even asked');
       assert(said && said.startsWith('DROID POOL'),
-        `a man at #51 got "${said}" instead of the room's own verb — a branch that claims a press `
+        `a man at #51 got "${said}" instead of the room's own answer — a branch that claims a press `
         + 'it did not use is the defect #20 was fixed for');
-      assert(said.includes(p51.verb), `the verb printed was "${said}" and the gazetteer says "${p51.verb}"`);
+      assert(!said.endsWith(p51.verb),
+        `#51 answered the key with its own prompt — "${said}"`);
 
       /* ── AND WITH NO PANEL WIRED AT ALL, nothing changes. ───────────── */
       delete world.onCharge;
       said = null;
       assert(St.stationKey(world), '#51 went dead with no handler installed');
-      assert(said && said.includes(p51.verb), `#51 with no handler said "${said}"`);
-      return `#51 raised the rack for a droid; refused, it fell through to "${p51.verb}"`;
+      assert(said && said.startsWith('DROID POOL') && !said.endsWith(p51.verb),
+        `#51 with no handler said "${said}"`);
+      return `#51 raised the rack for a droid; refused, it fell through to "${said}"`;
     } finally { a.world.dispose?.(); }
   });
 
@@ -3371,4 +3385,314 @@ export async function run({ check, assert, THREE }) {
         + `#10 stands a ${live.n}-mesh body wearing all of them, under "${line}"`;
     } finally { a.world.dispose?.(); }
   });
+
+  /* ════════════════════════════════════════════════════════════════════════
+   *  §14 — THE ONE KEY, AND WHAT IT MAY NOT ANSWER WITH
+   * ════════════════════════════════════════════════════════════════════════ */
+
+  check('station: no place answers the interact key by printing its own verb', async () => {
+    /**
+     * ══ THE DEFECT, DRIVEN ACROSS THE WHOLE GAZETTEER ═════════════════════
+     *
+     * §14: *"The interact prompt. One key, one prompt style, on every verb in
+     * §3.2 … Every verb row in §3.2 is a prompt string."* `Station.stationKey`
+     * ended in `world.notify(place.name.toUpperCase(), place.verb)` — the key
+     * answering with the prompt and doing nothing. Measured before the fix, by
+     * standing at every one of the sixty-two places with a verb, on its own
+     * deck, and pressing:
+     *
+     *     every panel hook wired      39 hooks · 7 lines · **16 verb echoes**
+     *     every hook refusing          0 hooks · 9 lines · **37 verb echoes**
+     *
+     * The second row is the one that matters and is why this check drives BOTH
+     * answers. A room whose only door is the job board echoes its verb on
+     * every day the board has nothing for it, so "the panel exists" is not the
+     * same question as "the room answers".
+     *
+     * ── WHAT IS ASSERTED, AND WHY IT IS DERIVED ──────────────────────────
+     *
+     * Not a list of rooms — a PROPERTY, compared against `place.verb` itself:
+     * whatever the key says, it is not the string the gazetteer put in the
+     * verb column. A room added to §3.2 tomorrow with nothing behind it fails
+     * on the commit that adds it, and no list here needs editing for that to
+     * be true.
+     */
+    const { stationKey, placeUnder } = await import('../../src/game/Station.js');
+    const { PLACES, floorOf } = await import('../../src/game/StationPlan.js');
+
+    /* EVERY DOOR `stationKey` CAN KNOCK ON. Stubbed to the SAME answer for one
+     * whole sweep, which is the only way the two questions above stay separate
+     * — a mixture would measure neither. */
+    const HOOKS = ['onKiosk', 'onHabitat', 'onCounter', 'onBench', 'onMedbay', 'onPit',
+      'onCasino', 'onQuest', 'onTote', 'onLarder', 'onCharge', 'onHolodeck', 'onLeave',
+      'onBar', 'onCommune', 'onFlight', 'onCert', 'onLaunch', 'onSortie'];
+    const decks = [...new Set(PLACES.map((p) => p.deck).filter((d) => d != null))].sort((a, b) => a - b);
+
+    const echoes = [];
+    const silent = [];
+    const tally = { yes: { hooks: 0, lines: 0 }, no: { hooks: 0, lines: 0 } };
+    let pressed = 0;
+    for (const answer of [true, false]) {
+      const t = tally[answer ? 'yes' : 'no'];
+      for (const deck of decks) {
+        const a = await station(deck);
+        try {
+          for (let i = 0; i < 90; i++) a.world.update(1 / 60, a.idle);
+          for (const p of PLACES) {
+            if (p.deck !== deck || !p.verb) continue;
+            const said = [];
+            let fired = 0;
+            a.world.notify = (h, l) => said.push([h, l]);
+            for (const h of HOOKS) a.world[h] = () => { fired++; return answer; };
+            /* NOT RIDING between rooms: a press at one platform boards the car
+             * and the next press anywhere would be the rider stepping off. */
+            a.world._tramRide = null;
+            a.world.player.position.set(p.x, floorOf(p) + 1, p.z);
+            /* THE PLACE THE KEY ITSELF RESOLVED TO. A footprint may hold
+             * another place's door — #26's centre stands inside #40.3's — and
+             * the echo test has to be against the verb the KEY read. */
+            const at = placeUnder(a.world, p.x, p.z) || p;
+            pressed++;
+            assert(stationKey(a.world) === true,
+              `#${p.id} ${p.name} did not answer the interact key at all`);
+            /* A HOOK THAT REFUSED IS NOT A ROOM THAT ANSWERED, so the tally
+             * counts the panel only on the sweep where panels answer. */
+            if (fired && answer) t.hooks++;
+            else if (said.length) t.lines++;
+            else silent.push(`#${p.id} ${p.name}`);
+            for (const [head, line] of said) {
+              if (line === at.verb) echoes.push(`#${at.id} ${at.name} → "${line}"`);
+            }
+          }
+        } finally { a.world.dispose?.(); }
+      }
+    }
+    assert(!echoes.length,
+      `${echoes.length} place${echoes.length === 1 ? '' : 's'} answered the key with the verb column read `
+      + `back at the player: ${echoes.slice(0, 6).join('; ')}`);
+    /* A ROOM THAT SAYS NOTHING AND RAISES NOTHING is the same defect wearing a
+     * quieter coat, so it is held here too — the only presses allowed to be
+     * silent are the ones a hook took. */
+    assert(!silent.length,
+      `${silent.length} place${silent.length === 1 ? '' : 's'} spent the press and neither raised a panel `
+      + `nor said anything: ${silent.slice(0, 6).join('; ')}`);
+    return `${pressed} presses over ${decks.length} decks. Panels answering: `
+      + `${tally.yes.hooks} raised one, ${tally.yes.lines} said something of their own. `
+      + `Every panel refusing: ${tally.no.lines} answered out of the room's own state. `
+      + '0 echoed the verb either way, 0 spent a press in silence';
+  });
+
+  check('station: a resident you look at has a name, and says something worth hearing', async () => {
+    /**
+     * ══ NOBODY COULD BE TALKED TO AND NOBODY HAD A NAME ON SCREEN ═════════
+     *
+     * §14 asks for talking. There was no bark table in `StationCast.js`, no
+     * `onTalk` or `talkTo` in any file, and `HUD._nameplates` read
+     * `roster.living` and never `body.stationName` — a field `spawnResident`
+     * writes onto EVERY resident and `dressKeepers` onto every keeper, and
+     * which was shown to the player nowhere.
+     *
+     * Three things are held here, and the second is the one that would rot:
+     *
+     *   THE TARGET IS THE PLATE'S TARGET. `HUD._residentPlate` and the key's
+     *     talk branch both call `residentFacing`, so the frame the plate is up
+     *     is the frame the key will talk. Driven by standing the player in
+     *     front of a real spawned body and asking.
+     *   THE BARK IS SEEDED ON (RESIDENT, DAY). Same person, same day, same
+     *     line, from any caller — which is what makes it the same for both
+     *     machines in a co-op session — and a different line tomorrow.
+     *   IT IS BUILT FROM WHAT THE GAME KNOWS. Every topic reads a row this
+     *     game already owns, so the assertion is that the sentence CONTAINS
+     *     the fact rather than that it matches a string.
+     */
+    const St = await import('../../src/game/Station.js');
+    const C = await import('../../src/game/StationCast.js');
+    const { PLACE } = await import('../../src/game/StationPlan.js');
+
+    /* ── the table, off the seed, with no world at all ──────────────────── */
+    const who = C.resident('p9s3');
+    const a1 = C.barkFor(who, 0, { hour: 12, place: PLACE.get(9) });
+    const a2 = C.barkFor(who, 0, { hour: 12, place: PLACE.get(9) });
+    assert(a1 && a1[1], 'a resident with a species, a job and a rhythm had nothing to say');
+    assert(a1[1] === a2[1], 'the same resident said two different things on the same day');
+    assert(a1[0].includes(String(who.name).toUpperCase()),
+      `the banner's head is "${a1[0]}" and does not name ${who.name}`);
+    /* A DAY IS A DAY. Sweeping the days must actually move the line, or the
+     * seed is not reaching the pick and every resident is a fixed sentence. */
+    const overDays = new Set();
+    for (let d = 0; d < 40; d++) overDays.add(C.barkFor(who, d, { hour: 12, place: PLACE.get(9) })[1]);
+    assert(overDays.size >= 3,
+      `forty days of ${who.name} produced ${overDays.size} distinct line(s) — the day is not in the seed`);
+    /* AND TWO PEOPLE ARE TWO PEOPLE. */
+    const others = new Set();
+    for (let i = 0; i < 24; i++) {
+      const r = C.resident(`p9s${i}`);
+      const b = C.barkFor(r, 0, { hour: 12, place: PLACE.get(9) });
+      if (b) others.add(b[1]);
+    }
+    assert(others.size >= 6,
+      `twenty-four residents of the Concourse said ${others.size} distinct thing(s) between them`);
+
+    /* NO `Math.random` ANYWHERE IN THE LANE. The whole station is seeded and a
+     * bark drawn off the global stream would be the one thing in the drum two
+     * machines in a session could disagree about. */
+    const { readFile } = await import('node:fs/promises');
+    /* COMMENTS STRIPPED FIRST — both files argue about `Math.random` in prose
+     * and a grep over the raw text would be measuring the argument. */
+    const bare = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    for (const f of ['StationCast.js', 'Station.js']) {
+      const src = bare(await readFile(new URL(`../../src/game/${f}`, import.meta.url), 'utf8'));
+      assert(!/Math\.random/.test(src), `${f} reaches for Math.random`);
+    }
+
+    /* ── and now the body in the room ──────────────────────────────────── */
+    const a = await station(40, 'high');
+    try {
+      for (let i = 0; i < 240; i++) a.world.update(1 / 60, a.idle);
+      const people = a.world.enemies.filter((e) => e && !e.dead && e.stationResident
+        && e.stationName && !e.stationKeeper && e.stationSpecies);
+      assert(people.length >= 5,
+        `only ${people.length} named residents are standing on deck 40 — there is nobody to talk to`);
+      const him = people[0];
+      /* STAND IN FRONT OF HIM AND LOOK AT HIM, which is the only thing the
+       * branch accepts — the aim is the game's own `aimDir` and the eye is the
+       * game's own camera. TWO FRAMES AFTER THE MOVE, because `camera.pos` is
+       * written by `Player.update` and a check that aimed off a stale eye
+       * would be measuring nothing. */
+      const p = a.world.player;
+      const dx = Math.cos(0.6), dz = Math.sin(0.6);
+      p.position.set(him.position.x - dx * 1.6, him.position.y, him.position.z - dz * 1.6);
+      for (let i = 0; i < 2; i++) a.world.update(1 / 60, a.idle);
+      const eye = p.camera?.pos || p.position;
+      const ex = him.position.x - eye.x;
+      const ey = him.position.y + (him.A?.hipHeight ?? 0.95) + 0.5 - eye.y;
+      const ez = him.position.z - eye.z;
+      const len = Math.hypot(ex, ey, ez);
+      /* THE REACH IS OFF THE BODY, which is three metres from the eye in third
+       * person — see `residentFacing`. The check stands the player next to him
+       * and aims from wherever the camera ended up. */
+      const reach = Math.hypot(him.position.x - p.position.x, him.position.z - p.position.z);
+      assert(reach <= St.TALK_REACH, `the check stood ${reach.toFixed(2)} m away, outside the talk reach`);
+      p.aimDir.set(ex / len, ey / len, ez / len);
+      assert(St.residentFacing(a.world) === him,
+        'standing a metre and a half in front of a resident and looking at him found nobody — '
+        + 'the plate and the talk key are both dead');
+      const said = [];
+      a.world.notify = (h, l) => said.push([h, l]);
+      for (const h of ['onKiosk', 'onCounter', 'onQuest', 'onBar', 'onTote', 'onPit']) a.world[h] = () => true;
+      assert(St.stationKey(a.world) === true, 'the key did not answer in front of a resident');
+      assert(said.length === 1, `talking to somebody raised ${said.length} banners`);
+      assert(said[0][0].includes(String(him.stationName).toUpperCase()),
+        `the key answered "${said[0][0]}" and the man in front of the player is ${him.stationName}`);
+      /* AND IT IS THE SAME LINE THE ROW WOULD HAVE BEEN GIVEN — the body's
+       * `station*` fields recover `occupant`'s seed, so a check can ask the
+       * table the same question the room asked. */
+      const row = St.whoOfBody(him);
+      assert(row.name === him.stationName && row.species === him.stationSpecies,
+        'a resident body no longer reads back as the row it was built from');
+      /* LOOK AWAY AND THE ROOM HAS ITS DOOR BACK. This is the contract the
+       * plate makes, and without it the talk branch would be shadowing every
+       * panel in the game. */
+      p.aimDir.set(-ex / len, 0, -ez / len).normalize();
+      assert(St.residentFacing(a.world) === null,
+        'turning your back on a resident still talks to him — the cone is not a cone');
+      return `${people.length} named residents on deck 40; ${overDays.size} lines over forty days for one `
+        + `man, ${others.size} across twenty-four of them; "${said[0][1].slice(0, 60)}…"`;
+    } finally { a.world.dispose?.(); }
+  });
+
+  check('station: the tram carries you — §3.1 rule 3’s "cars you can ride"', async () => {
+    /**
+     * ══ IT CARRIED NOBODY ═════════════════════════════════════════════════
+     *
+     * §3.1 rule 3 asks for *"cars you can ride"*; §3.2 #40's verb is *"ride"*.
+     * `life.tram` was `{t, at, car}` — no passenger list of any kind — and
+     * nothing in the tree ever put the player or a resident on it. Pressing
+     * the key on a platform printed the word "ride".
+     *
+     * Driven here through the real key at the real platform: board, be carried
+     * round the rim by the guideway `StationLife.stepTram` owns, and be set
+     * down on the NEXT platform in the loop. The two halves stay separate —
+     * nothing under test reaches into `stepTram`, and `Station.stepTramRide`
+     * reads `STOPS`, `tram.at` and `tram.t`, which are that file's own exports
+     * and state.
+     */
+    const St = await import('../../src/game/Station.js');
+    const { STOPS } = await import('../../src/game/StationLife.js');
+    const { PLACE, floorOf } = await import('../../src/game/StationPlan.js');
+    const a = await station(44);
+    try {
+      for (let i = 0; i < 60; i++) a.world.update(1 / 60, a.idle);
+      const life = a.world._stationLife;
+      assert(life?.tram?.car, 'no tram car was dressed on deck 44');
+      /* WAIT FOR A CAR, exactly as a passenger does. The loop is 90 s over
+       * four stops, so one is never more than 22.5 s away. */
+      const first = PLACE.get(STOPS[0]);
+      a.world.player.position.set(first.x, floorOf(first) + 1, first.z);
+      let waited = 0;
+      while (St.tramAtStop(a.world) !== STOPS[0] && waited < 100) { a.world.update(1 / 60, a.idle); waited += 1 / 60; }
+      assert(St.tramAtStop(a.world) === STOPS[0],
+        `no car reached ${first.name} in ${Math.round(waited)} s`);
+      const said = [];
+      a.world.notify = (h, l) => said.push(`${h} / ${l}`);
+      a.world.onQuest = () => true;
+      assert(St.stationKey(a.world) === true, 'the key did nothing on a platform with a car at it');
+      assert(a.world._tramRide, `pressing at ${first.name} with a car standing there did not board it`);
+
+      const start = [a.world.player.position.x, a.world.player.position.z];
+      let moved = 0, rode = 0;
+      while (a.world._tramRide && rode < 40) {
+        a.world.update(1 / 60, a.idle); rode += 1 / 60;
+        moved = Math.max(moved, Math.hypot(a.world.player.position.x - start[0],
+          a.world.player.position.z - start[1]));
+        /* THE RIDER IS ON THE CAR, not near it. */
+        const car = life.tram.car.position;
+        assert(Math.hypot(a.world.player.position.x - car.x, a.world.player.position.z - car.z) < 1.5,
+          'the rider came off the car mid-leg');
+      }
+      assert(!a.world._tramRide, `the ride never ended — ${Math.round(rode)} s aboard`);
+      assert(moved > 40, `the car carried the player ${moved.toFixed(1)} m, which is not a journey`);
+      const next = PLACE.get(STOPS[1]);
+      const off = Math.hypot(a.world.player.position.x - next.x, a.world.player.position.z - next.z);
+      assert(off < 3, `set down ${off.toFixed(1)} m from ${next.name} rather than on it`);
+
+      /* AND A PLATFORM WITH NO CAR AT IT HANDS THE PRESS ON. `rideTram`
+       * answers false there, which is what keeps a job giver at #40 reachable
+       * — the rule the pit branch states at length in `stationKey`. Driven
+       * both ways: with a giver on the board the board opens, and with nothing
+       * on it the press falls the whole way to the room's own line, which says
+       * when the next car is. */
+      a.world._tramRide = null;
+      const third = PLACE.get(STOPS[2]);
+      a.world.player.position.set(third.x, floorOf(third) + 1, third.z);
+      while (St.tramAtStop(a.world) === STOPS[2]) a.world.update(1 / 60, a.idle);
+      let took = 0;
+      a.world.onQuest = () => { took++; return true; };
+      said.length = 0;
+      assert(St.stationKey(a.world) === true, 'a platform with no car did not answer at all');
+      assert(!a.world._tramRide, 'the key boarded a car that was not at the platform');
+      assert(said.length === 1 && /next car in \d+ s/.test(said[0]),
+        `a platform with no car said "${said[0]}" rather than when the next one is due`);
+      const due = St.tramDue(a.world, STOPS[2]);
+      assert(due && due.secs > 0 && due.secs <= 90, `the next car is ${due?.secs} s away`);
+      /* AND THE BOARD IS STILL BELOW THE RIDE AND ABOVE THE ROOM'S LINE, which
+       * is the ordering that keeps a giver at a platform reachable. Asserted
+       * on the source the way `work.mjs` asserts the same property, because
+       * `offersAt` puts nobody on a platform on most days and waiting for one
+       * would be a check that passes by luck. */
+      const { readFile } = await import('node:fs/promises');
+      const src = await readFile(new URL('../../src/game/Station.js', import.meta.url), 'utf8');
+      const key = src.slice(src.indexOf('export function stationKey('));
+      const body = key.slice(0, key.indexOf('\n}'));
+      assert(body.indexOf('rideTram(') < body.indexOf('offersAt(')
+        && body.indexOf('offersAt(') < body.indexOf('roomLine('),
+        'the ride, the job board and the room line are no longer in that order — '
+        + 'a platform will either eat a giver\'s press or never board a car');
+      assert(took === 0, 'the empty platform opened a board that had nobody on it');
+      return `boarded at ${first.name}, carried ${moved.toFixed(0)} m round the rim in `
+        + `${rode.toFixed(0)} s, set down ${off.toFixed(1)} m from ${next.name}; `
+        + 'an empty platform hands the press to the board';
+    } finally { a.world.dispose?.(); }
+  });
+
 }
