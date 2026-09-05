@@ -221,10 +221,14 @@ export function run({ check, assert }) {
        * fold's own ordering is asserted. */
       // eslint-disable-next-line no-new-func
       const make = new Function('scope', 'recordRun', 'sessionOr', 'settings', 'foldCompanion', 'emptyLarder',
-        'payForRun', 'clearTuning', 'holdLessons',
+        'payForRun', 'clearTuning', 'holdLessons', 'awayFor', 'HOURS_PER_SECOND', 'settleRun', 'isRun',
         `const world = scope.world;\n${body}\nreturn record;`);
+      /* …and the last three free names: the station clock the ending winds
+       * (`awayFor`, `HOURS_PER_SECOND`) and the job board it settles
+       * (`settleRun`). No-ops for the same reason `foldCompanion` is one. */
       const rec = make({ world }, (s) => { handed = s; return recordRun(s); },
-        () => 'waves', { order: 'jedi', species: 'human' }, () => {}, () => {}, () => {}, () => {}, () => {});
+        () => 'waves', { order: 'jedi', species: 'human' }, () => {}, () => {}, () => {}, () => {}, () => {},
+        () => {}, 1 / 120, () => [], () => true);
       rec({ wave: 12, score: 9000, kills: 40, won: false });
       assert(handed, 'the lifted record() never called recordRun');
       assert(Array.isArray(handed.woken),

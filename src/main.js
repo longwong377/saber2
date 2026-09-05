@@ -28,7 +28,7 @@ import { theatreFor, LEVELS } from './game/Levels.js';
 import { deployCard, runReport } from './game/Session.js';
 // No `FORMATIONS` import any more: the orders reach this file as ordinary
 // bindings through `ORDER_ACTIONS` below, which is the point of the seam.
-import { recordRun, loadProgress, clearLesson, lessonsCleared } from './game/Progress.js';
+import { recordRun, loadProgress, clearLesson, lessonsCleared, isRun } from './game/Progress.js';
 /* V16 Lane B's purse and Lane A3's bench. `Progress.js`'s own header carries
  * the amendment that lets a currency exist at all; these are the two doors it
  * is spent and earned through. */
@@ -57,14 +57,15 @@ import { guardZoneOf } from './game/Bolts.js';
 import { emptyLarder, stowFood, takeFood } from './game/Home.js';
 import { noteApartment, larderAt } from './game/Coop.js';
 import { habitatPanel, careAt, writePlaques } from './game/Habitat.js';
-import { wardRows, wakePlan, arrivalNotice, checkIn, discharge, tanksFree, wounded, TANKS, soonestOut } from './game/Medbay.js';
+import { wardRows, wakePlan, arrivalNotice, checkIn, discharge, tanksFree, wounded, TANKS, soonestOut,
+  awayFor } from './game/Medbay.js';
 import { watch as toteWatch, resultOf as toteResult, venueAtPlace, MAX_STAKE } from './game/Tote.js';
 import * as Food from './game/Food.js';
 import {
   openWheelhouse, sabaccTable, nextHand, dejarikTable, dejarikTurn,
   drumTable, drumBets, drumQuote, WHEELHOUSE,
 } from './game/Casino.js';
-import { takeJob, openJobs } from './game/Quests.js';
+import { takeJob, openJobs, dropJob, settleRun } from './game/Quests.js';
 import { programById, programSettings, rack, rackLines, Cycle } from './game/Holodeck.js';
 import { LESSONS } from './game/Dojo.js';
 import { stakeAtTote, payAtTote, tickStationClock, stakeAtDrum, payAtDrum, payForJob,
@@ -92,7 +93,7 @@ import { benchFor } from './game/Bench.js';
  */
 import { STRATAGEMS as CALL_ROWS } from './game/Stratagems.js';
 import { loadStation, standing, stationDay as stationDayOf, stationHour,
-  passStationHours, HOURS_PER_SECOND } from './game/StationSave.js';
+  HOURS_PER_SECOND } from './game/StationSave.js';
 /* THE IDENTITIES a provision is merged against — see `runProvisions`. One
  * table, and it is the one every boon in the game is already written against. */
 import { defaultBoonMods } from './game/Player.js';
@@ -2589,6 +2590,25 @@ function showWork(board) {
   let html = `<div class="pane"><h2>${esc(board.name)}</h2>`;
   html += `<p class="sub">${purse()} credits · carrying ${openJobs().length} of 3</p>`;
   if (work?.said) html += `<p class="sub">${esc(work.said)}</p>`;
+  /**
+   * WHAT YOU ARE CARRYING, AND THE ONE CONTROL THAT PUTS IT DOWN.
+   *
+   * `OPEN_MAX` is three and there was no way to be rid of one: three jobs a
+   * player could not finish — a mercy in a mode that never fields that kind,
+   * a name off a roll that has since been wiped — and the board answered "you
+   * are already carrying 3" in every room in the gazetteer for the rest of the
+   * save. A board that can permanently brick is worse than one that forgets.
+   *
+   * THE ROW IS ALSO THE ONLY PLACE A PLAYER CAN READ WHAT THEY TOOK. Every
+   * other panel in this file lists what you are being offered; a job is the
+   * one thing you carry out of the room, and it was written down nowhere.
+   */
+  const carrying = openJobs();
+  if (carrying.length) {
+    html += '<div class="rows">' + carrying.map((j) => `<div class="row">`
+      + `<b>${esc(j.shape)}</b><span>${esc(j.line)}</span>`
+      + `<button class="drop" data-id="${esc(j.id)}">drop</button></div>`).join('') + '</div>';
+  }
   if (board.owed.length) {
     html += '<div class="rows">' + board.owed.map((j) => `<div class="row">`
       + `<b>owed</b><span>${esc(j.line)}</span>`
@@ -2606,6 +2626,14 @@ function showWork(board) {
       const offer = board.offers.find((o) => o.id === b.dataset.id);
       const got = takeJob(offer);
       work = { said: got.ok ? `taken — you are carrying ${got.carrying}` : got.why };
+      audio.ui(got.ok ? 'good' : 'click');
+      showWork(board);
+    });
+  }
+  for (const b of el.querySelectorAll('button.drop')) {
+    b.addEventListener('click', () => {
+      const got = dropJob(b.dataset.id);
+      work = { said: got.ok ? `put down — you are carrying ${got.carrying}` : got.why };
       audio.ui(got.ok ? 'good' : 'click');
       showWork(board);
     });
@@ -4189,7 +4217,14 @@ function record(stats = null) {
    * sentence. `passStationHours` refuses a zero, a negative and a NaN, so an
    * ending with no duration cannot put the station back to midnight.
    */
-  passStationHours((world?.time || 0) * HOURS_PER_SECOND);
+  /* THROUGH `Medbay.awayFor` AND NOT `passStationHours` DIRECT, and the door
+   * is the whole of §C1's other half: it settles the ward on the clock as it
+   * stands, passes the hours through that same one writer, and re-stamps the
+   * ward at the new time — so the men `bank()` is about to fold, who were hurt
+   * at the END of this run, do not come off the ramp having been mending for
+   * the length of it. The ward's own span is `day * 24 + hour` now; the hour
+   * alone could not tell a 48-minute run from no time at all. */
+  awayFor((world?.time || 0) * HOURS_PER_SECOND);
   /**
    * ══ V16 §B5 — WHAT A RUN CONSUMES, AND WHAT IT DOES NOT ═══════════════
    *
@@ -4303,6 +4338,56 @@ function record(stats = null) {
     seed: world.runSeed ?? null,
     rules: world.director?.rules ? [...world.director.rules] : [],
   });
+  /**
+   * ══ AND A JOB YOU TOOK IS EITHER DONE OR IT IS NOT — V16 Lane C3 ══════
+   *
+   * `Quests.settleRun` is the ONLY function that moves a job from `open` to
+   * `done`, and until this line nothing in `src/` called it. Only
+   * `tools/checks/work.mjs` did, which is why that suite was 4/4 green over a
+   * feature no player could finish: take a 300-credit job at #7, play a real
+   * skirmish, die — `done: []`, the job still open — and after three of those
+   * every board in the gazetteer answers "you are already carrying 3" for the
+   * rest of the save. That is the whole of *"when you complete a certain quest
+   * it is recorded and you go back to that npc"*, and it was the one sentence
+   * of it that never happened.
+   *
+   * HERE, because this is the funnel every ending goes through — a win, a
+   * wipe, and `quitToMenu` walking out — and a job settled anywhere else would
+   * be a job that only some endings could finish.
+   *
+   * OFF THE SAME SUMMARY THE RECORD IS WRITTEN FROM, so a job cannot be
+   * finished by anything the record does not also say happened. `stats` is
+   * absent on a walk-away, and `runStats()` is what the World would have sent
+   * had anybody ended it — the walk-away still killed what it killed.
+   *
+   * AND `null` IS NOT A ZERO. `fallen` is null in every mode with no army and
+   * `manifest` is null until an ending seals one; `settleRun` leaves a job
+   * whose evidence is missing OPEN rather than passing or failing it, which is
+   * the rule its own note states. A run that could not answer the question is
+   * not a run that answered it badly.
+   */
+  const facts = stats || (typeof world.runStats === 'function' ? world.runStats() : {});
+  /* AND ONLY FOR A MODE THAT IS A RUN. `quitToMenu` reaches this from anywhere,
+   * the station included — and a walk across the drum reports 0 kills, 0 limbs
+   * and an empty kind tally, which is a run that did nothing to look at. It
+   * would have finished a manner and a mercy for free. `Progress.isRun` is the
+   * one list of which modes are runs and it is the same one the record itself
+   * is filed under, so the board and the store cannot disagree about what a run
+   * is. */
+  const finished = !isRun(sessionOr('mode')) ? [] : settleRun({
+    kills: facts.kills,
+    depth: facts.wave,
+    limbs: facts.limbs,
+    saves: facts.saves,
+    forceCasts: facts.forceCasts,
+    killedKinds: facts.killedKinds,
+    lost: facts.fallen,
+    home: Array.isArray(world.manifest) ? world.manifest.map((t) => t?.id).filter(Boolean) : null,
+  });
+  if (finished.length) {
+    world.notify?.(finished.length === 1 ? 'THAT IS THE JOB DONE' : `${finished.length} JOBS DONE`,
+      'go back and get paid — they are waiting for you');
+  }
   /**
    * ══ AND THE RUN PAYS — V16 Lane B ═════════════════════════════════════
    *

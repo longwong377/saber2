@@ -53,6 +53,10 @@ import { buildPlace, SHAPES, buildWays, dressWayfinding } from './StationKit.js'
 import { dressDeckLift, stepDeckLift, undressDeckLift, liftKey } from './DeckLift.js';
 import { dressStationLife, stepStationLife, undressStationLife, dressTram } from './StationLife.js';
 import { dressObelisk, dressBoards, stepBoards, standingReading, companyOf } from './StationBoards.js';
+/* What a man on the roll is CALLED — one rule, `Company.js`'s own, so the job
+ * board names him exactly as the company tab does. See `questContext`. */
+import { nameOf } from './Company.js';
+import { dressNotices, stepNotices, noticeReading } from './Notices.js';
 import { stationHour, setStationHour, stationName, setStationName, standing, setStanding, stationDay, DEFAULT_NAME, NAME_MAX } from './StationSave.js';
 import { outsideLevel } from './Hangar.js';
 import { dressDeckBattle, stepDeckBattle, undressDeckBattle } from './DeckBattle.js';
@@ -81,6 +85,7 @@ import {
 } from './FlightOps.js';
 import { Sortie, canLaunch } from './Launch.js';
 import { sample as orbitSample, sightLine, CIRCUIT_LENGTH } from './Outside.js';
+import { CircuitPilot, TOP_SPEED } from './Pilot.js';
 import { GANTRY_Y } from './StationKit.js';
 import { flightState, setFlightState } from './StationSave.js';
 
@@ -962,6 +967,17 @@ export function dressStation(world) {
      * does not survive one.
      */
     hour: world.run?.stationHour ?? stationHour(),
+    /**
+     * WHICH DAY IT IS, ON THE STATION FROM THE FRAME IT IS DRESSED.
+     *
+     * `tickStationClock` republishes this every frame, but the pool primes on
+     * the DRESS frame — `dressStationLife` seats residents before any update
+     * has run — and `spawnResident` reads `st.day ?? 0`. Without this line the
+     * first bodies in the room are day 0's people and the rest of the station
+     * is today's, which is the two-answers-in-one-room failure the day was
+     * centralised to end.
+     */
+    day: stationDay(),
     /** What the player calls this place (V15 §1.1). Read by every board. */
     name: stationName(),
     /** The height of this deck, for anything placing itself against it. */
@@ -1100,6 +1116,11 @@ export function dressStation(world) {
   dressObelisk(world, st, M);
   dressBoards(world, st, M);
   dressWayfinding(world, st, M);
+  /* ── AND #25'S WALL, which is forty blank rectangles until something writes
+   * on it. Measured before this line: `{"meshes":7,"texts":0}` in a room whose
+   * verb is "read the notices". `Notices.js` reads the day's stores; nothing
+   * here knows what a notice says. No-op on the two decks the room is not on. */
+  dressNotices(world, st, M);
   /* ── AND THE PEOPLE BEHIND THE COUNTERS (V16 Lane B) ───────────────────
    *
    * AFTER `dressStationLife`, so the pool has already claimed its budget and
@@ -1281,6 +1302,9 @@ export function undressStation(world) {
   world._sortie = null;
   world._flying = false;
   world._orbitU = 0;
+  /* …and the craft that was flying it. One `Starfury` and its throttle map,
+   * which is the whole of what a sortie allocates. */
+  world._pilot = null;
   if (world._flight) { try { setFlightState(world._flight); } catch {} }
   world._flight = null;
   st.bells = [];
@@ -1369,6 +1393,42 @@ export class StationDirector {
     stepStationLife(this.world, dt);
     stepDeckLift(this.world, dt);
   }
+
+  /**
+   * ══ WHAT A JOINING PLAYER RUNS, AND IT IS ALL OF IT ═══════════════════════
+   *
+   * `World.update` gates `director.update` off on a client and that gate is
+   * right for every OTHER director in the game: a wave director owns a spawn
+   * queue, and two machines composing their own waves out of the same level is
+   * two games in one room. This director owns no queue. So the question is not
+   * "how much of the station may a guest run" but "which parts of it are
+   * anybody else's", and gone through one call at a time the answer is: none.
+   *
+   *   THE CLOCK is the one shared fact, and it is corrected rather than owned
+   *   — `tickStationClock` runs here so the hour moves every frame instead of
+   *   eighteen times a second, and `World.applySnapshot` snaps it to the
+   *   host's `sh`. It does NOT persist on a guest; see that function.
+   *
+   *   THE RESIDENTS are seeded, not simulated: `occupant(place, i, {hour,
+   *   day})` and `slotIn` are pure, so two machines that agree about the clock
+   *   seat the same people in the same chairs with nothing on the wire. That
+   *   is why `packSnapshot` now skips them — see the note there for the
+   *   measurement (host 37 bodies, guest 72) and for what it costs.
+   *
+   *   THE LIFT IS YOURS. Two players are in two cars on two decks; a lift
+   *   driven from somebody else's press is a floor you did not choose.
+   *
+   *   AND SO IS EVERYTHING ELSE `stepStation` calls: your ward mending
+   *   (`stepMedbay` reads YOUR company), the piece in your hands (`stepHome`),
+   *   your own jump (`_warp`), your own sortie, your own bells, and the cull
+   *   and the arrival prompt, which are both about where your camera is. The
+   *   boards and the notices reroll off the day alone, so with the clock
+   *   agreed they agree too.
+   *
+   * Which leaves this method as one call, and that is the finding stated as
+   * code: there was never anything here to gate.
+   */
+  guest(dt, ctx = null) { this.update(dt, ctx); }
 }
 
 /**
@@ -2126,6 +2186,26 @@ export function stationKey(world) {
     };
     if (world.onQuest(board) !== false) return true;
   }
+  /**
+   * ── #25 LOST & FOUND: THE KEY READS THE WALL ──────────────────────────
+   *
+   * LAST, and below the job board on purpose. `#25` is one of the thirty-two
+   * rooms that fall through to `offersAt`, so a resident standing at the board
+   * with something to ask still gets the panel — a branch above the quest door
+   * would have made this the one room in the gazetteer where a giver could not
+   * be spoken to, which is the "branch that claims a press it did not use"
+   * defect stated four branches up, facing the other way.
+   *
+   * What it replaces is `notify(name, verb)` — the literal words "read the
+   * notices" over a wall that had nothing written on it. `Notices.noticeReading`
+   * reads the same stores `dressNotices` writes onto the slabs, so the line the
+   * key prints and the wall the player is looking at cannot disagree.
+   */
+  if (place.id === 25) {
+    const [head, line] = noticeReading(day);
+    world.notify?.(head, line);
+    return true;
+  }
   world.notify?.(place.name.toUpperCase(), place.verb);
   return true;
 }
@@ -2143,8 +2223,26 @@ function questContext(world) {
    * company from the station's point of view — `StationLife` reads the same
    * one for the leave seats, and a job that named a man the bar has never
    * heard of would be two rolls. */
-  try { men = (companyOf()?.men || []).filter((m) => m && m.id && m.name); } catch { men = []; }
-  const kinds = world?.run?.killedKinds ? Object.keys(world.run.killedKinds) : null;
+  /* `nameOf` AND NOT `m.name`, which no stored man has ever had. `Company`'s
+   * record keeps `designation` and `nickname` and `nameOf` is the one rule for
+   * turning those into what a screen calls him — so this filter dropped EVERY
+   * man on the roll, `ctx.men` was always empty, and the one job shape that
+   * names somebody could never be offered. It used to degrade instead of
+   * disappearing: the roll answered `{ who: null }` and the test read a null
+   * `who` as satisfied, which is a 340-credit job finished before it was
+   * taken. See `SHAPES.name` in Quests.js. */
+  try {
+    men = (companyOf()?.men || [])
+      .filter((m) => m && m.id && (m.designation || m.nickname))
+      .map((m) => ({ id: m.id, name: nameOf(m) }));
+  } catch { men = []; }
+  /* `world.killedKinds` AND NOT `world.run.killedKinds`: the run bag has never
+   * carried one — the tally is the World's own, written in `onEnemyKilled` and
+   * reported by `runStats`. On the station it is empty (nothing dies in the
+   * drum), so a mercy is rolled off `SHAPES`' own default list until a run has
+   * been fought in this world; what this line stops is a reader of a field
+   * nothing writes. */
+  const kinds = world?.killedKinds ? Object.keys(world.killedKinds) : null;
   return { men, kinds: kinds && kinds.length ? kinds : null };
 }
 
@@ -2289,9 +2387,27 @@ function keepFlight(world, fold) {
   return fold;
 }
 
-/** How fast a Starfury goes round the station, m/s. One lap of `Outside`'s
- *  1058 m circuit in about nine seconds, which is a fighter and not a tram. */
-export const ORBIT_SPEED = 120;
+/**
+ * How fast a Starfury goes round the station, m/s.
+ *
+ * IT WAS 120 AND 120 IS NOT FLYABLE. That number was a camera on a rail, and a
+ * rail has infinite lateral authority; the craft that flies this now is
+ * `Starfury.js`, whose four mains make 18.4 m/s² against 14.8 t, and a turn at
+ * 120 m/s under 18.4 m/s² has a radius of 783 m — round a station 180 m
+ * across. The rail was cornering five times harder than the airframe can.
+ *
+ * So this is the CEILING the pilot holds on a straight and not a cruise: what
+ * the craft actually flies is `sqrt(aMax · R)` for the turn the track is
+ * asking for, which is `Pilot.js`'s corner law and is the only reason the loop
+ * closes. Measured over a flown lap: 47 m/s at the flag, 22.0 s round instead
+ * of 8.8, worst clearance from the hull 30.0 m against `Outside.CLEAR`'s 25.
+ *
+ * AN ALIAS AND NOT A SECOND NUMBER. `Pilot.TOP_SPEED` is the authority because
+ * the pilot is what holds it; this is the station's name for the same byte, so
+ * a reader who asks the station how fast a fighter goes round it cannot be
+ * told something the craft would disagree with.
+ */
+export const ORBIT_SPEED = TOP_SPEED;
 
 /**
  * ══ #2 THE TOWER ═════════════════════════════════════════════════════════
@@ -2473,6 +2589,9 @@ function sortieSink(world, st) {
     outside: (on) => {
       world._flying = !!on;
       world._orbitU = on ? 0 : world._orbitU;
+      /* Coming back in puts the craft away. It is rebuilt at the mouth on the
+       * next launch, which is where `Outside`'s circuit starts. */
+      if (!on) world._pilot = null;
       const shown = outsideLevel(world);
       world.engine?.skyDome?.configureOrbit?.({
         level: shown,
@@ -2502,30 +2621,53 @@ function sortieSink(world, st) {
  *
  * The verb §3.2 gives #5 is *"board and launch"* and the brief's bar is
  * *"launch, and come back"* — so a sortie is a round trip rather than a state
- * you have to remember to leave. One lap of `Outside`'s circuit at 120 m/s is
- * 8.8 seconds, the five sights are named as they go past, and then the
- * recovery runs without another press.
+ * you have to remember to leave. One lap of `Outside`'s circuit, the sights
+ * named as they go past, and then the recovery runs without another press.
  *
- * WHAT IS HONESTLY NOT HERE: nobody is steering. `Starfury.js` is a real 6-DOF
- * Newtonian craft, measured by `starfury.mjs`, and it is NOT wired to this —
- * that is step 4 and it is not done. What is here is the loop and the place,
- * with the player on their feet and in control the whole way, which is the
- * thing `Warp.js` argues is better than a cutscene and is certainly better
- * than a flight model that is a placeholder.
+ * ── AND SOMETHING IS STEERING IT NOW ─────────────────────────────────────
+ *
+ * This block used to say *"WHAT IS HONESTLY NOT HERE: nobody is steering"*,
+ * and it was right: `world._orbitU` was advanced by `ORBIT_SPEED * dt` and the
+ * one truly new system §4 asks for — `Starfury.js`, 6-DOF Newtonian, ported
+ * clause for clause and 264 lines of green check over it — was in NO SHIPPED
+ * BUILD. `pack.mjs` walks the module graph from `index.play.html` and nothing
+ * under `src/` imported it, so 96 of the 97 files in `src/game` were in the
+ * manifest and that was the one that was not.
+ *
+ * `Pilot.js` is the seam and its header carries the argument. What changed
+ * here is one line: the parameter is no longer added to, it is READ OFF A
+ * CRAFT — the craft's own position, integrated by `Starfury.step` with no
+ * damping term, projected onto the track. Everything else in this function is
+ * untouched, because everything else was already right: the sights are named
+ * off `nearest`, the recovery starts itself, and the player is on their feet
+ * in control the whole way, which is the thing `Warp.js` argues for.
+ *
+ * The lap is 22.0 s where it was 8.8, and that is the airframe's answer rather
+ * than a design change — see `ORBIT_SPEED` above for the arithmetic.
  */
 function stepSortie(world, st, dt) {
   const s = world._sortie;
   if (s && !s.done) { s.step(dt); return; }
   if (!world._flying) return;
-  const was = world._orbitU ?? 0;
-  const u = was + (ORBIT_SPEED * dt) / CIRCUIT_LENGTH;
+  /* Built on the frame the craft is first outside and not at dress time: a
+   * station nobody launches from never makes one, which is most visits. The
+   * drum's radius is the plan's, so the throw off the rim is the station's own
+   * and not a constant typed in a flight file. */
+  const pilot = world._pilot || (world._pilot = new CircuitPilot({ radius: DRUM.R }));
+  const was = pilot.progress;
+  const u = pilot.step(dt);
   world._orbitU = u;
   /* The sights, named as they pass. `nearest` never answers `hull` — see
    * `Outside.js` — so this is the four things you fly past and not a caption
-   * every frame saying you are near the station. */
+   * every frame saying you are near the station. Named off the CRAFT's own
+   * position now, which is the point: a sight the pilot flies wide of is a
+   * sight you are not told about. */
   const a = orbitSample(was), b = orbitSample(u);
   if (b.near !== a.near) world.notify?.('OUTSIDE', sightLine(b.near));
-  if (u >= 1) {
+  /* `lap` and not `u >= 1`, because `u` is a POSITION on the track and 0.99 →
+   * 0.01 is a metre of travel. See `CircuitPilot.step`. */
+  if (pilot.lap >= 1) {
+    world._pilot = null;
     world._orbitU = 0;
     world._sortie = new Sortie('in', sortieSink(world, st),
       { at: (st.day ?? 0) * 24 + (st.hour ?? 0) });
@@ -2621,8 +2763,48 @@ export function tickStationClock(world, dt) {
   /* The clock: one game hour per two real minutes (§3.4). Everything in
    * `StationLife` reads this and nothing else keeps time. */
   st.hour += dt / 120;
-  while (st.hour >= 24) st.hour -= 24;
+  /**
+   * ── AND MIDNIGHT GOES THROUGH THE FOLD, WHICH IS THE WHOLE DEFECT ──────
+   *
+   * This was `while (st.hour >= 24) st.hour -= 24;` — the wrap done in place,
+   * on the world, and nowhere else. It is the ONLY moment in the running game
+   * that means "a day has passed", and it was being subtracted away on the
+   * frame it happened, so nothing durable ever heard about it. Measured in the
+   * live build: 80 station hours on deck 40, `st.day` 0 → 0, the clothier's
+   * shelf byte-identical. Everything V16 rerolls off the day — shelves,
+   * keepers, faces, the job board, the pit's card, the tote programme, the
+   * casino seats, the leave roll — was frozen on day 0 for ever because of
+   * this line.
+   *
+   * `setStationHour` is handed the UNWRAPPED hour, folds the whole days into
+   * the station's own record and hands back the wrapped remainder, so the
+   * count happens in the one place that persists it and the world's clock is
+   * left reading a wall clock exactly as before. `_savedHour` is moved with it
+   * so the per-hour persist below does not immediately write the same number
+   * again.
+   */
+  /**
+   * ── AND A GUEST'S CLOCK IS NOT A GUEST'S SAVE ──────────────────────────
+   *
+   * Everything below this line either writes the fold or reads it back, and on
+   * a joining player the number being written is not theirs: `applySnapshot`
+   * has just set `st.hour` to the HOST's, because the census, the shelves and
+   * the boards have to agree across the session (see `packSnapshot`'s `sh`).
+   * Persisting it would put the host's evening into the guest's own station —
+   * a player whose last visit ended at 22:00 joining a host at 09:00 would
+   * find their own drum wound thirteen hours back, and a host past midnight
+   * would advance a day the guest never lived. So a guest RUNS the clock, to
+   * dead-reckon between packets, and writes none of it: the wrap rolls the
+   * local day in place and `stationDay` — which reads the guest's own fold —
+   * is not consulted at all.
+   */
+  const guest = world.netMode === 'client';
+  if (st.hour >= 24) {
+    if (guest) { st.hour -= 24; st.day = (st.day | 0) + 1; }
+    else { st.hour = setStationHour(st.hour); st._savedHour = st.hour | 0; }
+  }
   if (world.run) world.run.stationHour = st.hour;
+  if (guest) return;
   /* AND WHICH DAY IT IS, published on the station so `StationLife` can read it.
    * Everything seeded off the day — the shelves, the board, the pit's card, the
    * tote's programme, who is on leave in the cantina — reads this one number,
@@ -2704,6 +2886,9 @@ export function stepStation(world, dt) {
     }
   }
   stepBoards(world, st, dt);
+  /* #25's wall, and ONLY when the day has turned — the gazetteer's line for
+   * that room is "notices change daily". One integer compare a frame. */
+  stepNotices(world, st);
   /* The piece in your hands follows the crosshair. Costs one property read a
    * frame when there is nothing held, which is nearly always. */
   stepHome(world, dt);

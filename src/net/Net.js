@@ -1579,6 +1579,27 @@ export const LOCAL_KEYS = {
    * about you that other machines need travels on the roster.
    */
   companion: 'which animal you bring; it crosses per peer on the roster instead',
+  /**
+   * WHAT YOU OWN, AND IT IS NOT THE HOST'S TO SAY — V16's keepsakes.
+   *
+   * `DEFAULT_SETTINGS.keepsakes` arrived with the clothier's shop and reached
+   * neither list, which `co-op: every setting in the game is the host's or is
+   * yours` is written to catch and did. The classification is not a coin toss:
+   * `Keepsakes.js`'s own header says this array is THE LEDGER — the ids a
+   * vendor sold YOU, on YOUR profile, out of YOUR purse — and that the WEARING
+   * is written into `wardrobe`, `hiltStyle`, the home's record and the kennel,
+   * every one of which is already local here. A shared ledger would mean the
+   * host's list replacing a guest's on `{...settings, ...session}`: a player
+   * joining somebody else's game would come back from it owning the host's
+   * Beskar plate and not their own cape, and `owns()` — what a shelf greys a
+   * row out with — would grey out the wrong rows on the next visit to the shop.
+   *
+   * NOTHING ON THE SHARED WORLD READS IT. It grants no number (`Counter.saneRow`
+   * refuses `grants`/`mods`/`effect` at the door), it changes no body on any
+   * other screen — what is WORN crosses on `LOOK_KEYS` through `wardrobe` and
+   * `hiltStyle`, which is the same split `playerName` and `saberSet` are on.
+   */
+  keepsakes: 'what you bought is yours; what you are WEARING crosses on the look instead',
   species: 'your face', face: 'your face', robeCut: 'your clothes', robeIndex: 'your clothes',
   wardrobe: 'your clothes', skinIndex: 'your skin', hairIndex: 'your hair', build: 'your build',
   meditation: 'how YOUR body sits when you commune; nobody else\'s knees',
@@ -1763,6 +1784,49 @@ export function packAvatar(player) {
 export function packSnapshot(world) {
   const enemies = [];
   for (const e of world.enemies) {
+    /**
+     * ══ THE STATION'S OWN PEOPLE ARE NOT ON THIS WIRE, AND MUST NOT BE ═════
+     *
+     * `world.enemies` is the horde's list everywhere else in the game. On the
+     * station it is not a horde at all: it is the residents `StationLife`
+     * seats out of a census, and the two guards §11 sends when you cut one.
+     * Both machines already build them, because both dress the station on
+     * load — so sending them made a SECOND copy of a man who was already
+     * standing there.
+     *
+     * Measured on two real Worlds joined on deck 40, thirty simulated
+     * seconds: the host held 37 bodies and the guest held 72 — its own 35
+     * residents plus 37 net-driven ghosts of the host's, nine of them
+     * standing within 0.6 m of the local resident they were duplicating and
+     * the closest pair 0.16 m apart. A guest's station had twice the people
+     * in it and half of them were statues, because a `netDriven` body returns
+     * out of `Enemy.update` before any brain runs.
+     *
+     * THE ARGUMENT FOR NOT REPLICATING THEM AT ALL rather than for making the
+     * guest stop dressing its own: a resident is a pure function of the place,
+     * the slot, the hour and the day — `StationLife.occupant` and `slotIn`
+     * take nothing else — so two machines that agree about the clock seat the
+     * SAME people in the SAME chairs for nothing. That is the argument
+     * `Destruction`'s `rb` field already makes about a colonnade: both ends
+     * hold the same building, so what crosses is the event and never the
+     * rubble. Here not even an event has to cross, so the whole 37 rows go —
+     * 2836 bytes a snapshot at 18 Hz, which was 51 KB/s of people both
+     * machines already had.
+     *
+     * It is also the only shape that works for players who are NOT together:
+     * the host's pool is seated around the HOST's camera, so a guest three
+     * decks away would have received a bag of bodies standing in rooms it
+     * cannot see and none at all in the room it is in.
+     *
+     * WHAT IT COSTS, said plainly: a resident you throw is thrown on your own
+     * screen. §11's sandbox is local. The exact fix is the `rb` shape — the
+     * harm as an event, keyed on the slot key `place.id:i` that both machines
+     * already compute — and it is deliberately not taken here, because it is
+     * a new record on this wire and the first thing to fix was a station a
+     * guest could not use at all. `world._station` gates the skip so nothing
+     * outside the station can lose a body to it.
+     */
+    if (world._station && (e.stationResident || e.stationGuard)) continue;
     enemies.push([
       e.id, e.type,
       r2(e.position.x), r2(e.position.y), r2(e.position.z),
@@ -1854,6 +1918,31 @@ export function packSnapshot(world) {
      * is drawn as a bar and two decimal places is a fifth of a pixel on it.
      */
     fr: world.command?.versus ? r2(world.command.front ?? 0) : undefined,
+    /**
+     * ══ WHAT TIME IT IS ON THE STATION — the one thing that HAS to cross ═══
+     *
+     * Now that the residents do not (see the skip at the top of this
+     * function), the clock is the whole of what makes two machines agree
+     * about who is in the room: `headcount`, `occupant`, the shelves, the job
+     * board, the pit's card, the tote programme and the cantina's leave roll
+     * are every one of them seeded off `st.hour` and `st.day`, so two players
+     * standing in the same bar at two different hours are in two different
+     * bars. The station's hour is also NOT derivable — it starts from
+     * `StationSave.stationHour()`, which is each machine's own localStorage
+     * fold, so two players who last visited on different days begin hours
+     * apart and every frame of dead reckoning keeps them there.
+     *
+     * `r3` and not `r2`: the clock moves at one hour per two real minutes, so
+     * two decimal places quantises it to 36 station-seconds and a guest's
+     * hour would visibly stutter between packets. Three is 3.6 station-
+     * seconds, which is finer than the 0.00046 h a guest reckons between two
+     * snapshots at 18 Hz, so the correction is never seen.
+     *
+     * `undefined` off the station, which is every other mode, and an absent
+     * key costs nothing on the wire.
+     */
+    sh: world._station ? r3(world._station.hour ?? 0) : undefined,
+    sd: world._station ? (world._station.day | 0) : undefined,
     sc: Math.round(world.score),
   };
   fires.length = 0;

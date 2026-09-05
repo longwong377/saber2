@@ -92,7 +92,7 @@ import * as Company from './Company.js';
  * reason — a droid and a clone are two companies — and `stepMedbay` settles
  * both because the station does not know which one you came home with. */
 import { ARMY_IDS } from './Command.js';
-import { stationHour } from './StationSave.js';
+import { stationHour, stationDay, passStationHours } from './StationSave.js';
 
 /* ── the numbers ─────────────────────────────────────────────────────── */
 
@@ -247,7 +247,14 @@ export function wardOf(company) {
   const w = company?.ward;
   const tanks = Array.isArray(w?.tanks) ? w.tanks.slice(0, TANKS) : [];
   while (tanks.length < TANKS) tanks.push(null);
-  return { at: Number.isFinite(w?.at) ? w.at : null, tanks };
+  return {
+    at: Number.isFinite(w?.at) ? w.at : null,
+    /* The DAY of that stamp — `Company.blank` states why the hour alone cannot
+     * carry a span. Null is a fold written before it existed, and `settle` is
+     * the one reader that knows what to do with one. */
+    day: Number.isFinite(w?.day) ? (w.day | 0) : null,
+    tanks,
+  };
 }
 
 /** Which tank he is in, or −1. Matched on designation, which is his identity. */
@@ -488,33 +495,53 @@ export function advance(army, hours) {
 /**
  * ══ CATCH UP WITH THE CLOCK ON THE WALL ═══════════════════════════════════
  *
- * `ward.at` is the station hour this roll was last settled at, and the gap
- * between it and now is what the tanks are owed. Measured FORWARD and modulo
- * 24, because `StationSave.hour` is a time of day and wraps — 23:00 to 01:00
- * is two hours and not minus twenty-two.
+ * `ward.at` is the station hour this roll was last settled at, `ward.day` is
+ * the day that stamp was taken on, and the gap between then and now is what
+ * the tanks are owed. `day * 24 + at` is a point on a line that only ever goes
+ * forward, so the span is a subtraction and there is nothing left to see
+ * through.
  *
- * THE WRAP IS THE ONE THING THIS CANNOT SEE THROUGH, and saying so is better
- * than pretending: a station clock that has gone all the way round while
- * nothing read it looks like no time at all. `stepMedbay` is what stops that
- * happening — it settles every ten real seconds, which is a twelfth of a
- * station hour — and this exists for the readers that arrive cold, a menu
- * opened on a fresh page, and gets them an honest answer for the same day.
+ * ── AND THE WRAP USED TO BE THE THING IT COULD NOT SEE THROUGH ───────────
+ *
+ * The span was `((now - ward.at) % 24 + 24) % 24`, and this comment used to
+ * say so and claim `stepMedbay` prevented the damage. It cannot: `stepMedbay`
+ * only runs while you are ON the station, which is exactly when you are not on
+ * a run — and a run is the one thing in the game that moves the clock by an
+ * unbounded amount, through `passStationHours`. Measured on the shipped build:
+ * from hour 8, a 48-minute run is 24 station hours, `passStationHours(24)`
+ * brings the clock back to hour 8, and the wrapped span read 0 h. A tank is
+ * twelve hours; a run of exactly the wrong length mended nobody, and a
+ * 50-minute run credited 1 hour instead of 25.
  *
  * A roll with no `at` yet is STAMPED and healed nothing, which is right: the
  * hours before the ward first looked at the clock are not hours anybody spent
- * in a tank.
+ * in a tank. A roll with an `at` and NO `day` was written before the day was
+ * stamped: it is read once, the old wrapped way — an honest answer for the
+ * same day, and never more than the 24 hours that reading can express — and
+ * comes out of this call with both halves on it.
+ *
+ * @param hourNow the wall clock, 0..24. Defaults to the fold's.
+ * @param dayNow  which day that hour is on. Defaults to the fold's.
  */
-export function settle(army, hourNow = null) {
+export function settle(army, hourNow = null, dayNow = null) {
   const now = Number.isFinite(hourNow) ? hourNow : stationHour();
+  const today = Number.isFinite(dayNow) ? (dayNow | 0) : stationDay();
   const c = Company.load(army);
   const ward = wardOf(c);
   if (ward.at === null) {
     ward.at = now;
+    ward.day = today;
     c.ward = ward;
     Company.save(c);
     return { hours: 0, healed: [], moved: false };
   }
-  const gap = ((now - ward.at) % 24 + 24) % 24;
+  /* NEGATIVE IS CLAMPED AND NOT WRAPPED, which is the difference between a
+   * clock somebody set BACKWARDS — a screen, a check driving 23:00 then 01:00
+   * on the same day — and time passing. Time that did not pass mends nobody;
+   * the stamp below still moves, so the ward does not sit in the past. */
+  const gap = ward.day === null
+    ? ((now - ward.at) % 24 + 24) % 24
+    : Math.max(0, (today - ward.day) * 24 + (now - ward.at));
   const r = advanceIn(c, gap);
   /**
    * WRITTEN WHEN SOMETHING HAPPENED, AND ONCE AN HOUR WHEN NOTHING DID.
@@ -528,10 +555,53 @@ export function settle(army, hourNow = null) {
    * two real minutes — and a company with men in tanks costs one per tick,
    * which is what mending them is.
    */
-  if (!r.moved && Math.floor(now) === Math.floor(ward.at)) return r;
-  c.ward = { ...wardOf(c), at: now };
+  if (!r.moved && ward.day === today && Math.floor(now) === Math.floor(ward.at)) return r;
+  c.ward = { ...wardOf(c), at: now, day: today };
   Company.save(c);
   return r;
+}
+
+/**
+ * ══ A RUN IS THE SOMETHING ELSE, AND THIS IS THE DOOR AN ENDING USES ══════
+ *
+ * Three things in one call because they are one event and the ORDER of them is
+ * the whole correctness argument:
+ *
+ *   1. SETTLE FIRST, on the clock as it stands. Whatever the tanks were owed
+ *      for the time before the run is theirs, priced at the hour it happened.
+ *   2. PASS THE RUN'S HOURS. `passStationHours` is the only writer, it refuses
+ *      a zero, a negative and a NaN, and it counts the midnights.
+ *   3. THEN RE-STAMP EVERY WARD AT THE NEW CLOCK — and this is the half that
+ *      cannot be left out. `bank()` folds the men who came home hurt straight
+ *      after this call, and they were hurt AT THE END of the run, not before
+ *      it. Without the stamp the next settle would hand them the run's own
+ *      hours: a 48-minute run would take a man off the ramp bleeding and have
+ *      him mended before he reached the ward, which is the same defect this
+ *      lane is fixing wearing the other face.
+ *
+ * BOTH ARMIES, because a company is per-army and an ending does not know which
+ * roll came home. Stamping a roll with nobody hurt on it costs one write.
+ *
+ * @returns the station hour the clock came to rest on.
+ */
+export function awayFor(hours) {
+  const h = Number(hours);
+  for (const army of ARMY_IDS) settle(army);
+  const now = passStationHours(h);
+  if (!(h > 0)) return now;
+  const day = stationDay();
+  for (const army of ARMY_IDS) {
+    const c = Company.load(army);
+    const ward = wardOf(c);
+    /* A ward nobody has ever settled stays unstamped: `settle`'s own rule is
+     * that the hours before the ward first looked at the clock are not hours
+     * anybody spent in a tank, and this must not become a second way to start
+     * that clock. */
+    if (ward.at === null) continue;
+    c.ward = { ...ward, at: now, day };
+    Company.save(c);
+  }
+  return now;
 }
 
 /**
@@ -566,7 +636,11 @@ export function stepMedbay(world, dt) {
   w._medbayT = 0;
   const out = [];
   for (const army of ARMY_IDS) {
-    const r = settle(army, st.hour);
+    /* THE DAY BESIDE THE HOUR: `st.hour` is the fractional wall clock and
+     * `stationDay` is the counter `tickStationClock` moves through the same
+     * door when it wraps, so the two cannot disagree about which midnight the
+     * ward is on. */
+    const r = settle(army, st.hour, stationDay());
     if (r.healed.length) out.push({ army, healed: r.healed });
   }
   return out.length ? out : null;

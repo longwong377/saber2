@@ -189,12 +189,45 @@ export async function run({ check, assert }) {
     /* THE FOUR NUMBERS, READ BACK OUT OF THE SCORER RATHER THAN OFF THE
      * TABLE. `scoreOrder` is reached through `callOrder`, which is the only
      * door a surface has, so what is measured is what a player would get. */
+    /**
+     * ══ AND THE FIELD IS A FORTNIGHT, NOT ONE MORNING ══════════════════════
+     *
+     * This measured against `roster` — `handlersOn(9)`, the TEN handlers who
+     * happen to be aboard on day 0 — and the bound was tuned to what those ten
+     * gave. `occupant` seeds a resident on `p{id}s{i}d{day}` now, which is
+     * §C2's whole point (*"the same shop owner doesnt always look the same"*),
+     * so every one of those ten became somebody else and the ratio went 2.50 →
+     * 2.47 against a bound of 2.5. Nothing about the scorer moved.
+     *
+     * A BALANCE NUMBER THAT TURNS ON WHICH TEN STRANGERS ARE ABOARD IS NOT A
+     * MEASUREMENT OF THE SCORER. Measured per day across a fortnight the ratio
+     * runs 2.35 to 2.84 — the handler's hidden `craft` decides how often the
+     * telegraph lies, so a day that deals honest handlers pays a reader more —
+     * and a bound anywhere inside that spread is a coin toss on the calendar.
+     *
+     * So the sample is the fortnight: 160 distinct handlers, everybody the
+     * station puts at a rail in fourteen days, which measures the SCORER and
+     * not the day. It reads 2.65 — §G2 says *"three landed at random"* and the
+     * bound stays at 2.5, because the wheel's cost (`LISTEN` off every call)
+     * is deliberately real and eats the difference. Day 0 alone, the old
+     * sample, is 2.47 of that same scorer.
+     */
+    const field = [];
+    const known = new Set();
+    for (let day = 0; day < 14; day++) {
+      for (const h of handlersOn(ROSTER_HOUR, day)) {
+        if (known.has(h.id)) continue;
+        known.add(h.id);
+        field.push(h);
+      }
+    }
+    assert(field.length > 60, `only ${field.length} handlers in a fortnight — the sample is one day again`);
     const rec = grown();
     const rng = makeRng(77);
     let perfect = 0, random = 0, wrongTimed = 0, n = 0;
     for (let i = 0; i < 400; i++) {
       const mk = () => openBout(offerBout({
-        venue: arena, rec, handler: roster[i % roster.length], hour: 12, seed: 600 + i,
+        venue: arena, rec, handler: field[i % field.length], hour: 12, seed: 600 + i,
       }), {});
       const a = mk(); const readA = beginRound(a);
       const right = PIT_ORDERS.find((o) => o.counters === readA.reads);
@@ -215,7 +248,8 @@ export async function run({ check, assert }) {
     assert(wrongTimed < 0,
       `an order that answers the wrong intent is worth ${wrongTimed.toFixed(3)} even landed on the commit — `
       + 'a well-timed wrong answer must not pay');
-    return `landed on the commit ${perfect.toFixed(3)}, at random ${random.toFixed(3)}, right time wrong order `
+    return `over ${field.length} handlers of a fortnight: landed on the commit ${perfect.toFixed(3)}, `
+      + `at random ${random.toFixed(3)} (×${(perfect / Math.abs(random)).toFixed(2)}), right time wrong order `
       + `${wrongTimed.toFixed(3)} — listening costs ${LISTEN} a call, a wrong answer is ×${WRONG}, `
       + `the window is ±${TOL}s of a ${ORDER_WINDOW}s round, and one unit of it is ${SWING} rating`;
   });
@@ -547,21 +581,45 @@ export async function run({ check, assert }) {
     const carried = night.filter((h) => morning.has(h.id)).length;
     assert(carried > 0, 'not one of the night\'s handlers was anywhere on the station this morning');
 
-    /* AND THE PIT'S CARD IS DRAWN FROM THAT ROSTER, not from the pit's seats. */
-    const card = pitCard(under, { day: 3 });
+    /**
+     * AND THE PIT'S CARD IS DRAWN FROM THAT ROSTER, not from the pit's seats —
+     * ON THE DAY THE CARD IS FOR, which is the half this check used to get
+     * wrong.
+     *
+     * It built `morning` from `handlersOn(9)` — day 0 — and then asked it about
+     * `pitCard(under, { day: 3 })`. That passed only while `occupant` ignored
+     * the day: the seed is `p{id}s{i}d{day}` now, so day 3's Concourse holds
+     * different people from day 0's, exactly as §C2 asks, and the match went to
+     * 0 of 6. The property is and always was a WITHIN-A-DAY one — *"a handler
+     * seen in the Concourse in the morning is the same handler you meet in the
+     * pit that night"* — and a morning three days before the fight was never
+     * the morning it names.
+     */
+    const CARD_DAY = 3;
+    const thatMorning = new Set(handlersOn(9, CARD_DAY).map((h) => h.id));
+    const card = pitCard(under, { day: CARD_DAY });
     assert(card.card, `the Underlift could not make a card: ${card.why}`);
     for (const h of card.handlers) {
-      assert(morning.has(h.id),
-        `${h.who} is fighting tonight and was nowhere on the station this morning`);
+      assert(thatMorning.has(h.id),
+        `${h.who} is fighting tonight and was nowhere on the station on the morning of day ${CARD_DAY}`);
     }
+    /* …AND IT IS A DIFFERENT MORNING FROM DAY 0's, which is the other half of
+     * the same sentence and the clause that fails if the day ever falls out of
+     * `occupant`'s seed again. A station where the shelves reroll and the
+     * people do not says the day is passing and shows you it is not. */
+    const stale = [...thatMorning].filter((id) => morning.has(id)).length;
+    assert(stale < thatMorning.size,
+      `every one of day ${CARD_DAY}'s ${thatMorning.size} handlers was also aboard on day 0 — `
+      + 'the census is not rerolling, and the man across the pit is the same man for ever');
     /* A HANDLER'S ANIMAL IS THE SAME ANIMAL TWICE. */
     const twice = handlerOf([...ids.values()].find((r) => isHandler(r)));
     const again = handlerOf([...ids.values()].find((r) => isHandler(r)));
     assert(twice.animal === again.animal && twice.craft === again.craft,
       'a handler read twice walked in with a different animal');
     return `${handlers} handlers among ${seen} residents (${pct(rate)}, declared ${pct(HANDLER_RARITY)}); `
-      + `${carried} of the night's ${night.length} were on the station this morning; tonight's card is `
-      + `${card.handlers.map((h) => h.animal).join(', ')}`;
+      + `${carried} of the night's ${night.length} were on the station this morning; day ${CARD_DAY}'s card `
+      + `is ${card.handlers.map((h) => h.animal).join(', ')}, all ${card.handlers.length} of them aboard that `
+      + `morning, and ${thatMorning.size - stale} of that day's ${thatMorning.size} handlers were not here on day 0`;
   });
 
   /* ══════════════════════════════════════════════════════════════════════

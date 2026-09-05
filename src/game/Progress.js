@@ -253,6 +253,24 @@ const blank = () => ({
 const RECORDED = new Set(['roguelite', 'waves', 'duel', 'command', 'theline', 'skirmish',
   'campaign', 'versus']);
 
+/**
+ * IS THIS MODE A RUN AT ALL? One authority, and it is this set.
+ *
+ * `recordRun` has always asked it privately. It is exported because a SECOND
+ * thing now has to make the same decision and must not make it differently:
+ * `main.js`'s `record()` settles the job board, and `record()` is reached by
+ * `quitToMenu` from anywhere — including the station, whose `mode` is
+ * `'station'`. A visit to the drum reports 0 kills, 0 limbs and an empty kind
+ * tally, which is indistinguishable from a run that did nothing, so a manner
+ * job — *"leave them in one piece"* — would be finished by walking across the
+ * concourse and pressing Menu. The evidence cannot tell those apart; only the
+ * mode can, and there must be exactly one list of which modes are runs.
+ *
+ * An unnamed mode is a run, exactly as `recordRun` treats one: a caller
+ * holding a bare summary is not making a claim about a lesson.
+ */
+export function isRun(mode) { return !mode || RECORDED.has(mode); }
+
 function read() {
   try {
     if (typeof localStorage === 'undefined') return blank();
@@ -324,7 +342,7 @@ export function recordRun(summary) {
   if (!summary) return read();
   // A mode that cannot be lost is not a run. An UNNAMED mode still records, so
   // a caller holding a bare Run.summary() keeps working.
-  if (summary.mode && !RECORDED.has(summary.mode)) return read();
+  if (!isRun(summary.mode)) return read();
   const p = read();
   const depth = Math.max(0, summary.depth ?? summary.wave ?? 0);
   p.runs++;

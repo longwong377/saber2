@@ -48,6 +48,10 @@ import {
 } from './StationCast.js';
 import { barman } from './Bars.js';
 import { companyOf } from './StationBoards.js';
+/* THE ONE EXEMPTION FROM THE DAILY REROLL — see `occupant`. `Quests.js` holds
+ * the ledger and answers in SEEDS, so this file still decides who stands where
+ * and `StationCast.resident` still decides what a person looks like. */
+import { pinnedAt } from './Quests.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE BUDGET                                                                */
@@ -340,6 +344,41 @@ export function occupant(place, i, opts = {}) {
    */
   const off = barman(place, i, opts);
   if (off) return { ...off, seed };
+  /**
+   * ══ AND THE PEOPLE WHO DO NOT REROLL, WHICH IS THE WHOLE OF LANE C3 ═════
+   *
+   * *"when you complete a certain quest it is recorded and you go back to that
+   * npc who will be there since you compelted the quest."*
+   *
+   * Everyone below this line is drawn on `daily` and is therefore somebody
+   * else tomorrow. A person who is holding a job of yours, or who owes you
+   * money for one you finished, is the exception — and it is the only one in
+   * the file, because it is the only one the player asked for. `Quests.js`'s
+   * own comment has said "`StationLife`'s census asks this before it rerolls a
+   * body" since it was written, and until this branch nothing did: the giver
+   * you took a 300-credit job from was a different species by the next
+   * morning, and the money was owed to a room rather than to a man.
+   *
+   * AFTER the Borz cast and the leave seats, and OFFSET BY THE BORZ SLOTS,
+   * because those two own the low slots at the places they claim: a giver
+   * seated at `i = 0` in the Forge would be standing where the Wookiee smith
+   * stands and would simply never be drawn. What is displaced instead is an
+   * anonymous stranger, which is exactly what a pinned giver is — one of the
+   * census, standing still.
+   *
+   * A SEED AND NOT A BODY. `resident(seed)` is the same function `Notices.js`
+   * calls to print who is offering what on the wall, so the name on the notice
+   * and the person in the room cannot disagree.
+   */
+  const owed = pinnedAt(place.id);
+  if (owed.length) {
+    const k = i - (borz ? borz.length : 0);
+    /* The resident and nothing added to it: a `pinned: true` flag here would be
+     * a field with no reader, and what a caller actually needs to recognise
+     * this person by is the seed, which is on the record already and is the
+     * same number `Quests` and `Notices` name them by. */
+    if (k >= 0 && k < owed.length) return resident(owed[k]);
+  }
   /* EVERYTHING BELOW IS THE CENSUS — anonymous people filling a room — and
    * every one of them is drawn on `daily`. The species bias of a quarter is
    * the room's and does not move; who is standing in it does. */
@@ -986,7 +1025,7 @@ export function undressStationLife(world) {
  * non-empty at its busy hour, and at least eight residents of every species
  * are placed somewhere (§5.3).
  */
-export function census(hour) {
+export function census(hour, day = 0) {
   const byPlace = new Map();
   const bySpecies = new Map(SPECIES_KEYS.map((k) => [k, 0]));
   /* The Borz cast is counted separately: §3.3 asks for both — every humanoid
@@ -998,7 +1037,14 @@ export function census(hour) {
     const n = headcount(p, hour);
     byPlace.set(p.id, n);
     for (let i = 0; i < n; i++) {
-      const r = p.id === 36 ? { species: METHANE[i % 2] } : occupant(p, i);
+      /* THE DAY REACHES `occupant` HERE TOO. It is the third caller of the
+       * three, and it was the third one handing in no day — so a tally taken
+       * on day 40 was a tally of day 0's people. The default keeps every
+       * existing caller reading exactly what it read; what it buys is a check
+       * that can sweep the days and see whether §5.3's eight-of-every-species
+       * still holds when the faces reroll, which is the only way to know that
+       * the reroll has not quietly emptied a room of a species. */
+      const r = p.id === 36 ? { species: METHANE[i % 2] } : occupant(p, i, { day: day | 0 });
       if (r.borz) { byBorz.set(r.borz.id, (byBorz.get(r.borz.id) || 0) + 1); continue; }
       bySpecies.set(r.species, (bySpecies.get(r.species) || 0) + 1);
     }

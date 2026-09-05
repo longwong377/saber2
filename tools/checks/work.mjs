@@ -7,6 +7,45 @@
  * Everyone rerolls; anyone who owes you money does not.
  */
 
+/**
+ * EVERY FIELD ANY JOB CAN JUDGE ON, which is what an ending has to report.
+ *
+ * `needs` is a function of the ROLLED job — a manner asks about limbs, or the
+ * Force, or the roll, and never all three — so the union is taken over jobs
+ * that were actually rolled rather than read off a list beside the shapes. A
+ * hand-written second list here would be HANDOFF §2.3's table beside its twin,
+ * and the first thing to disagree with the shapes it describes.
+ */
+function SHAPES_NEEDS(W, ctx = { men: [{ id: 'm1', name: 'Vurn' }], kinds: ['b1'] }) {
+  const out = new Set();
+  for (const shape of W.SHAPES) {
+    for (let k = 1; k <= 40; k++) {
+      let i = k * 7919;
+      const rng = () => ((i = (i * 1103515245 + 12345) % 2147483648) / 2147483648);
+      const job = shape.roll(rng, ctx);
+      if (job) for (const f of shape.needs(job)) out.add(f);
+    }
+  }
+  return [...out];
+}
+
+/**
+ * THE TWO RUNS EVERY SHAPE IS DRIVEN AGAINST, and both are in the shape
+ * `World.runStats` hands out — the object `recordRun` is written from and the
+ * one `main.js`'s `record()` passes to `settleRun`. A fixture with a field
+ * `runStats` does not report is a check agreeing with a bug, which is what
+ * `bolts: 40` and `recovered: ['x']` were: the player cannot fire a bolt and
+ * nothing in any run has ever recovered anything.
+ */
+const DID_NOTHING = Object.freeze({
+  kills: 0, depth: 0, lost: 3, limbs: 12, forceCasts: 9, saves: 0, home: [],
+  killedKinds: { b1: 5 },
+});
+const DID_EVERYTHING = Object.freeze({
+  kills: 9999, depth: 99, lost: 0, limbs: 0, forceCasts: 0, saves: 9, home: ['m1'],
+  killedKinds: {},
+});
+
 export async function run({ check, assert, near }) {
   const { clocked } = await import('./_shared.mjs');
   check = await clocked(check);
@@ -29,7 +68,7 @@ export async function run({ check, assert, near }) {
     for (let day = 0; day < 40; day++) {
       const offers = W.offersAt(14, day);
       if (!offers.length) empty++;
-      for (const o of offers) seen.add(o.shape + ':' + (o.n ?? o.how ?? o.kind ?? o.what ?? ''));
+      for (const o of offers) seen.add(o.shape + ':' + (o.n ?? o.how ?? o.kind ?? o.who ?? ''));
     }
     assert(empty > 6 && empty < 34,
       `the bar had somebody in it on ${40 - empty} of 40 days — "not always there" is the whole clause`);
@@ -50,7 +89,10 @@ export async function run({ check, assert, near }) {
     assert(W.pinnedGivers().has(job.giver), 'taking a job did not pin the person who gave it');
 
     /* …AND THEY STAY PINNED UNTIL PAID, not until finished. */
-    const done = W.settleRun({ kills: 9999, depth: 99, lost: 0, bolts: 0, forceCasts: 0, recovered: ['x'], home: [], killedKinds: {} });
+    /* A RUN THAT DID EVERYTHING, and it now has to REPORT everything: a field
+     * the summary does not carry leaves the job open rather than finishing it,
+     * which is the rule that stops a shape reading a counter no ending sends. */
+    const done = W.settleRun(DID_EVERYTHING);
     assert(done.length === 1, `${done.length} jobs finished on a run that did everything`);
     assert(W.pinnedGivers().has(job.giver),
       'the giver came unpinned when the job was FINISHED — they are pinned until they PAY, which is '
@@ -80,10 +122,22 @@ export async function run({ check, assert, near }) {
     for (const shape of W.SHAPES) {
       const rng = (() => { let i = 0; return () => ((i = (i * 9301 + 49297) % 233280), i / 233280); })();
       const job = { shape: shape.id, ...shape.roll(rng, ctx) };
-      const nothing = { kills: 0, depth: 0, lost: 3, bolts: 40, forceCasts: 9, recovered: [], home: [], killedKinds: { b1: 5 } };
-      const everything = { kills: 9999, depth: 99, lost: 0, bolts: 0, forceCasts: 0, recovered: ['x'], home: ['m1'], killedKinds: {} };
-      assert(!shape.test(nothing, job), `${shape.id} is finished by a run that did nothing`);
-      assert(shape.test(everything, job), `${shape.id} cannot be finished by a run that did everything`);
+      assert(!shape.test(DID_NOTHING, job), `${shape.id} is finished by a run that did nothing`);
+      assert(shape.test(DID_EVERYTHING, job), `${shape.id} cannot be finished by a run that did everything`);
+      /**
+       * AND EVERY FIELD IT JUDGES ON IS A FIELD `World.runStats` REPORTS.
+       *
+       * The clause this file was missing, and the reason four shapes shipped
+       * unfinishable or already finished: `bolts`, `forceCasts`, `killedKinds`
+       * and `recovered` were read off a summary that has never carried any of
+       * them. A shape may only ask a question the run answers.
+       */
+      assert(typeof shape.needs === 'function' && shape.needs(job).length,
+        `${shape.id} does not say which fields it judges on, so nothing can check that a run reports them`);
+      for (const f of shape.needs(job)) {
+        assert(f in DID_EVERYTHING,
+          `${shape.id} judges on \`${f}\`, which no run in this game reports`);
+      }
       assert(typeof shape.line(job) === 'string' && shape.line(job).length > 12,
         `${shape.id} has no line for the giver to say`);
       assert(job.pay > 0, `${shape.id} pays nothing`);
@@ -133,6 +187,242 @@ export async function run({ check, assert, near }) {
   });
 
   /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('work: a REAL run finishes a job, and the man who owes you is still standing there', async () => {
+    /**
+     * ══ THE DEFECT THIS CHECK IS NAMED AFTER, AND IT IS THE SECOND OF ITS
+     *    KIND IN THIS FILE ═══════════════════════════════════════════════
+     *
+     * Every check above was green while `settleRun` — the ONLY function that
+     * moves a job from `open` to `done` — had no caller anywhere in `src/`.
+     * The suite called it itself, which is a statement about a pure function
+     * and not about the game. Driven end to end on the shipped build: take a
+     * 300-credit job at #7, play a real skirmish, die — `done: []`, the job
+     * still open, "carrying 1, owed 0" at the giver's room for ever. `OPEN_MAX`
+     * is three and there was no abandon, so three of those bricked the board
+     * for the rest of the save.
+     *
+     * So this drives the REAL THING and calls nothing it is testing:
+     *
+     *   A REAL WORLD, in Command mode, to a REAL ENDING — the shipped
+     *     `payWave` → `_areaClear` → `_endCampaign` path, clocked by
+     *     `world.update`, which is what `progress.mjs` drives and for the same
+     *     reason: main.js cannot be imported under Node.
+     *   MAIN.JS'S OWN `record()`, lifted verbatim and compiled, so what settles
+     *     the job is the ending funnel the game runs and not a paraphrase of
+     *     it. The lift refuses to run if the function stops matching.
+     *   THE REAL `settleRun` behind a tap — the tap only READS the summary it
+     *     was handed. If `record()` stops calling it, the tap is never touched
+     *     and the job is still open, which is the assertion below.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const i = src.indexOf('\nfunction record(stats = null) {');
+    assert(i > 0, 'main.js no longer declares `function record(stats = null)`');
+    const end = src.indexOf('\n}\n', i);
+    assert(end > i, 'the body of record() could not be delimited');
+    const body = src.slice(i + 1, end + 2);
+    assert(/settleRun\(/.test(body),
+      'main.js\'s record() does not call settleRun — the one funnel every ending goes through does not '
+      + 'settle the job board, which is a quest that can be taken and can never be finished');
+
+    const W = await import('../../src/game/Quests.js');
+    const H = await import('./_coop.mjs');
+    const Cmd = await import('../../src/game/Command.js');
+    W.clearWork();
+
+    const { world } = await H.bootWorld({
+      level: 'geonosis',
+      settings: { mode: 'command', level: 'geonosis', order: 'jedi' },
+    });
+    try {
+      const d = world.command;
+      assert(d, 'command mode did not build a command director');
+      world.director.start(1);
+      d.spawnQueue.length = Math.min(d.spawnQueue.length, 1);
+      d.areaIndex = Cmd.AREAS.length - 1;
+      d.areaWaves = d.area.waves - 1;
+
+      /* THE JOB IS A REAL OFFER off a real room on a real day, rolled against
+       * the men who are actually on this ground — which is what
+       * `Station.questContext` hands `offersAt` in the game. A `name` job is
+       * the one whose evidence a driven win produces deterministically: the
+       * ending seals the manifest, and the manifest is who walked off. */
+      const men = d.roster.living.slice(0, 8).map((t) => ({ id: t.id, name: t.designation }));
+      assert(men.length > 2, `the ground raised ${men.length} men — there is nobody to name`);
+      const ctx = { men, kinds: ['b1'] };
+      let job = null, where = 0;
+      for (let day = 0; day < 60 && !job; day++) {
+        for (const place of [14, 18, 27, 38, 9]) {
+          const found = W.offersAt(place, day, ctx).find((o) => o.shape === 'name');
+          if (found) { job = found; where = place; break; }
+        }
+      }
+      assert(job, 'no room in the gazetteer offered a job naming one of your men in sixty days');
+      assert(W.takeJob(job).ok, 'the board refused a legitimate job');
+      assert(W.openJobs().length === 1 && !W.owedJobs().length,
+        'taking the job did not put it on the board');
+
+      /* ── THE RUN ─────────────────────────────────────────────────────── */
+      let summary = null;
+      world.onGameOver = (s) => { summary = s; };
+      const dt = 1 / 30;
+      for (let n = 0; n < Math.round(180 / dt) && !summary; n++) world.update(dt, H.idleInput());
+      assert(summary, 'a driven campaign did not reach its own ending in 180 game-seconds');
+      assert(summary.won === true, 'the campaign ended and the summary does not say it was won');
+      assert((world.manifest || []).some((t) => t.id === job.who),
+        'the man the job named did not walk off the ground, so this drive proves nothing');
+
+      /* ── AND THE ENDING, WHICH IS MAIN.JS'S OWN ──────────────────────── */
+      let handed = null;
+      // eslint-disable-next-line no-new-func
+      const make = new Function('scope', 'recordRun', 'sessionOr', 'settings', 'foldCompanion', 'emptyLarder',
+        'payForRun', 'clearTuning', 'holdLessons', 'awayFor', 'HOURS_PER_SECOND', 'settleRun', 'isRun',
+        `const world = scope.world;\n${body}\nreturn record;`);
+      /* THE REAL `isRun` and the real `settleRun`: the mode gate is part of what
+       * is being proved — `quitToMenu` reaches `record()` from the station too,
+       * and a walk across the drum must not finish a manner job. The tap only
+       * READS what the ending handed the board. */
+      const { isRun } = await import('../../src/game/Progress.js');
+      const record = make({ world }, () => {}, () => 'command', { order: 'jedi', species: 'human' },
+        () => {}, () => {}, () => {}, () => {}, () => {}, () => {}, 1 / 120,
+        (run) => { handed = run; return W.settleRun(run); }, isRun);
+      record(summary);
+
+      assert(handed, 'the ending never reached the job board at all');
+      /**
+       * AND THE SUMMARY ANSWERS EVERY QUESTION THE SHAPES ASK. `settleRun`
+       * leaves a job open when the run did not report the field it judges on,
+       * so a shape reading a field no ending sends is a job that can be taken
+       * and never finished — which is what `recovered` was, and `bolts`,
+       * `forceCasts` and `killedKinds` were the same defect passing instead of
+       * failing. `undefined` is the failure; a null is a legal "this mode has
+       * no answer" and is counted separately.
+       */
+      const asked = SHAPES_NEEDS(W);
+      const missing = asked.filter((f) => handed[f] === undefined);
+      assert(!missing.length,
+        `the ending reports nothing for ${missing.join(', ')} — a shape judging on a field no run sends `
+        + 'is a job that can be taken and can never be finished');
+      const nulled = asked.filter((f) => handed[f] === null);
+
+      assert(!W.openJobs().length,
+        `the run did the job and the board is still carrying ${W.openJobs().length}`);
+
+      /**
+       * ── AND A VISIT TO THE STATION IS NOT A RUN ──────────────────────────
+       *
+       * `quitToMenu` calls `record()` from wherever the player is, the drum
+       * included, and a walk across the concourse reports 0 kills, 0 limbs and
+       * an empty kind tally — a run that did nothing, to look at. `Progress.isRun`
+       * is what tells those apart, and without it a manner job ("leave them in
+       * one piece") would be finished by pressing Menu on the station.
+       */
+      assert(W.takeJob(job).ok, 'the finished job could not be taken again for the station drive');
+      const still = W.openJobs().length;
+      const onStation = make({ world }, () => {}, () => 'station', { order: 'jedi', species: 'human' },
+        () => {}, () => {}, () => {}, () => {}, () => {}, () => {}, 1 / 120,
+        (run) => { handed = run; return W.settleRun(run); }, isRun);
+      world._recorded = false;
+      onStation(null);
+      assert(W.openJobs().length === still,
+        'walking out of the STATION settled the job board — a visit to the drum is not a run');
+      const owed = W.owedJobs();
+      assert(owed.length === 1 && owed[0].id === job.id,
+        `${owed.length} finished jobs after a run that finished one`);
+
+      /* …and the job that was re-taken for that drive comes back off the board,
+       * so the ledger below is the one the run left. */
+      W.dropJob(job.id);
+      assert(W.owedJobs().length === 1, 'dropping the re-taken copy took the finished one with it');
+
+      /* ── AND THE GIVER IS STILL THERE, DAYS LATER ────────────────────── */
+      assert(W.pinnedGivers().has(job.giver), 'the giver came unpinned the moment the job was finished');
+      const { PLACE } = await import('../../src/game/StationPlan.js');
+      const { occupant } = await import('../../src/game/StationLife.js');
+      const room = PLACE.get(where);
+      let standing = 0;
+      for (const day of [0, 1, 9, 40]) {
+        for (let slot = 0; slot < 8; slot++) {
+          if (occupant(room, slot, { day })?.seed === job.giver) { standing++; break; }
+        }
+      }
+      assert(standing === 4,
+        `the man who owes you was in ${room.name} on ${standing} of 4 days — the census rerolled him, `
+        + 'which is the whole of "you go back to that npc who will be there"');
+
+      /* ── AND YOU CAN BE PAID, FACE TO FACE ───────────────────────────── */
+      const { payForJob } = await import('../../src/game/Station.js');
+      const paid = payForJob(job.id);
+      assert(paid.ok && paid.paid > 0, `collecting a finished job paid ${paid.paid} — ${paid.why}`);
+      assert(!W.pinnedGivers().has(job.giver), 'the giver is still pinned after paying');
+      assert(!W.owedJobs().length, 'the job is still owed after it was paid');
+
+      /* AND THE LEDGER IS PUT BACK. `Quests.js` caches the fold in memory, so a
+       * job left open here would still be pinning a body in the census for
+       * every suite that boots a station after this one — `clocked` restores
+       * localStorage and cannot reach a module's own cache. */
+      W.clearWork();
+      return `took "${job.line}" at #${where}, drove a real Command run to a real win, and main.js's own `
+        + `record() settled it: open 0, owed 1, paid ${paid.paid}. The ending answers all ${asked.length} `
+        + `fields the shapes judge on (${nulled.length} null on this mode: ${nulled.join(', ') || 'none'}); `
+        + 'the giver was in the room on all 4 days sampled';
+    } finally { world.unload?.(); }
+  });
+
+  check('work: a job you cannot finish can be put down, and one nobody judged is not failed', async () => {
+    /**
+     * TWO ABSENCES, AND THE BOARD BRICKED ON BOTH.
+     *
+     * `OPEN_MAX` is three and there was no way to be rid of one, so three jobs
+     * a player's mode cannot report — a mercy in a room with no droids, a name
+     * off a roll that was wiped — answered every board in the game with "you
+     * are already carrying 3" for the rest of the save. The player's words are
+     * about what happens when you COMPLETE a job and do not forbid dropping
+     * one; a board that can permanently brick is worse than one that forgets.
+     *
+     * AND A RUN THAT COULD NOT ANSWER THE QUESTION HAS NOT FAILED IT. Four of
+     * the six shapes shipped reading fields no ending sends, and a missing
+     * field read as a zero finished two of them for a run that did the
+     * opposite. Open is the honest state: you may take it out again.
+     */
+    const W = await import('../../src/game/Quests.js');
+    W.clearWork();
+    const ctx = { men: [{ id: 'm1', name: 'Vurn' }], kinds: ['b1'] };
+    const jobs = [];
+    for (let day = 0; jobs.length < 3 && day < 200; day++) {
+      for (const o of W.offersAt(14, day, ctx)) if (jobs.length < 3) jobs.push(o);
+    }
+    for (const j of jobs) W.takeJob(j);
+    assert(W.openJobs().length === 3, 'the board is not full, so nothing is being proved about a full one');
+
+    /* A RUN THAT REPORTS NOTHING FINISHES NOTHING — and fails nothing. */
+    const none = W.settleRun({});
+    assert(!none.length, `${none.length} jobs were finished by a run that reported no fields at all`);
+    assert(W.openJobs().length === 3, 'an unjudgeable run took jobs off the board');
+    /* …AND A FIELD THAT IS PRESENT AND NULL IS THE SAME ANSWER. `fallen` is
+     * null in every mode with no army, which is not "you lost nobody". */
+    const nulls = W.settleRun({ kills: null, depth: null, lost: null, home: null, limbs: null,
+      saves: null, forceCasts: null, killedKinds: null });
+    assert(!nulls.length, `${nulls.length} jobs were finished by a run whose every field was null`);
+
+    const drop = W.dropJob(jobs[0].id);
+    assert(drop.ok && drop.carrying === 2, `dropping a job left ${drop.carrying} on the board`);
+    assert(!W.dropJob(jobs[0].id).ok, 'the same job was dropped twice');
+    assert(W.takeJob(jobs[0]).ok, 'a job that was put down could not be taken again');
+    /* AND IT CANNOT THROW AWAY MONEY. `done` is what somebody owes you. */
+    W.clearWork();
+    W.takeJob(jobs[1]);
+    const fin = W.settleRun({ kills: 9999, depth: 99, lost: 0, limbs: 0, forceCasts: 0, saves: 9,
+      home: ['m1'], killedKinds: {} });
+    if (fin.length) {
+      assert(!W.dropJob(jobs[1].id).ok, 'a FINISHED job was dropped — that is a button that deletes credits');
+      assert(W.owedJobs().length === 1, 'the finished job left the ledger');
+    }
+    W.clearWork();
+    return `a full board of 3: an unjudged run finished 0 and failed 0, a null-fielded run finished 0, `
+      + 'one dropped and re-taken, and a finished job refuses to be dropped';
+  });
 
   check('work: the job board is IN THE BUILD, and a room actually opens it', async () => {
     /**

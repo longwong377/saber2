@@ -85,7 +85,7 @@ function liftRecord(src, assert, { scope, recordRun, mode, settings }) {
   const spyRecordRun = (summary) => { calls.push(['file', summary]); return recordRun(summary); };
   // eslint-disable-next-line no-new-func
   const make = new Function('scope', 'recordRun', 'sessionOr', 'settings', 'foldCompanion', 'emptyLarder',
-    'payForRun', 'clearTuning', 'holdLessons',
+    'payForRun', 'clearTuning', 'holdLessons', 'awayFor', 'HOURS_PER_SECOND', 'settleRun', 'isRun',
     `const world = scope.world;\n${body}\nreturn record;`);
   // Rebuilt per call so `const world = scope.world` re-reads the live world,
   // exactly as main.js's own module-level `world` binding does.
@@ -97,7 +97,13 @@ function liftRecord(src, assert, { scope, recordRun, mode, settings }) {
      * the STORE, and `food.mjs` is where a death emptying the larder is
      * asserted. A name the lift does not supply is a ReferenceError that takes
      * the whole check down. */
-    record: (...a) => make(scope, spyRecordRun, () => mode, settings, foldCompanion, () => {}, () => {}, () => {}, () => {})(...a),
+    /* `awayFor`, `HOURS_PER_SECOND` and `settleRun` are the last three free
+     * names in the lifted body — the station clock the ending winds and the
+     * job board it settles. No-ops here for `emptyLarder`'s stated reason:
+     * this file is about the order the fold and the filing happen in.
+     * `medbay.mjs` and `work.mjs` drive the real ones. */
+    record: (...a) => make(scope, spyRecordRun, () => mode, settings, foldCompanion, () => {}, () => {}, () => {}, () => {},
+      () => {}, 1 / 120, () => [], () => true)(...a),
   };
 }
 

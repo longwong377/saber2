@@ -357,17 +357,37 @@ export const blank = (army = ARMY_IDS[0]) => ({
    *
    * `tanks` is one slot per tank in `#44`, each holding the designation of the
    * man behind that glass or nothing; `at` is the station hour the ward was
-   * last brought up to date, so `Medbay.settle` can tell how many hours the
-   * tanks are owed. `Medbay.js` owns every rule about both — how many tanks
-   * there are, how fast a man mends, what counts as hurt at all — and this
-   * file owns only the fact that they persist.
+   * last brought up to date and `day` is the station DAY of that same stamp, so
+   * `Medbay.settle` can tell how many hours the tanks are owed. `Medbay.js`
+   * owns every rule about all three — how many tanks there are, how fast a man
+   * mends, what counts as hurt at all — and this file owns only the fact that
+   * they persist.
+   *
+   * ── WHY THE DAY IS STORED BESIDE THE HOUR ─────────────────────────────
+   *
+   * `at` alone is a TIME OF DAY, and a time of day cannot say how long ago it
+   * was. `settle` measured the span as `((now - at) % 24 + 24) % 24` and said
+   * so in its own comment; a run is folded through `passStationHours`, whose
+   * whole job is to move the clock by an UNBOUNDED number of hours. Measured:
+   * from hour 8, a 48-minute run is 24 station hours, the clock comes back to
+   * hour 8, and the wrapped span reads 0 — a run that mended nobody at all,
+   * while a 50-minute run credited 1 hour instead of 25.
+   *
+   * With the day beside it the stamp is a point on a monotone line —
+   * `day * 24 + at` — and the span is a subtraction with nothing to see
+   * through. `StationSave.day` is the counter that makes that possible and it
+   * only ever goes up.
+   *
+   * NULL IS A FOLD WRITTEN BEFORE THE DAY WAS STAMPED, and `settle` reads one
+   * exactly once, the old wrapped way, rather than treating an unknown day as
+   * day 0 and handing a company three days of bacta nobody spent.
    *
    * ON THE COMPANY AND NOT ON THE MAN, because a tank is a place and a place
    * can hold exactly one person. A `care: 'tank'` flag on each record would
    * let two men claim one tank and one man claim two, and the glass in `#44`
    * is the state the player reads — it may not be able to lie.
    */
-  ward: { at: null, tanks: [] },
+  ward: { at: null, day: null, tanks: [] },
 });
 
 /**
@@ -720,7 +740,16 @@ function saneWard(w, men) {
    * comes back stamped at 00:00 and the first reader at 23:00 hands it
    * twenty-three hours of bacta nobody spent. */
   const at = w?.at === null || w?.at === undefined ? null : Number(w.at);
-  return { at: Number.isFinite(at) ? ((at % 24) + 24) % 24 : null, tanks };
+  /* THE DAY IS THE OTHER HALF OF THE STAMP — see `blank`. Absent stays absent:
+   * a fold written before it existed must read as "unknown", never as day 0,
+   * or the first settle after an upgrade credits every day the station has
+   * ever counted. Clamped forward only, exactly as `StationSave.day` is. */
+  const day = w?.day === null || w?.day === undefined ? null : Number(w.day);
+  return {
+    at: Number.isFinite(at) ? ((at % 24) + 24) % 24 : null,
+    day: Number.isFinite(day) && day >= 0 ? (day | 0) : null,
+    tanks,
+  };
 }
 
 /** Write one army's company back, leaving the other armies' rolls alone. */
@@ -747,6 +776,10 @@ export function save(company) {
      * about a new file is worth. */
     ward: {
       at: Number.isFinite(company.ward?.at) ? company.ward.at : null,
+      /* The day of that stamp, written through the same one door. Without it
+       * on disk the span across a run is a wrapped hour again the moment the
+       * page is reloaded — see `blank`. */
+      day: Number.isFinite(company.ward?.day) ? (company.ward.day | 0) : null,
       tanks: (Array.isArray(company.ward?.tanks) ? company.ward.tanks : [])
         .slice(0, WARD_MAX).map((n) => (typeof n === 'string' ? n : null)),
     },
@@ -1033,6 +1066,7 @@ export function keep(manifest, opts = {}) {
   const alive = new Set(c.men.map((m) => m.designation));
   c.ward = {
     at: Number.isFinite(c.ward?.at) ? c.ward.at : null,
+    day: Number.isFinite(c.ward?.day) ? (c.ward.day | 0) : null,
     tanks: (Array.isArray(c.ward?.tanks) ? c.ward.tanks : [])
       .map((n) => (typeof n === 'string' && alive.has(n) ? n : null)),
   };

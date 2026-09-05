@@ -1125,19 +1125,42 @@ export const SHAPES = {
 
   /** #25 Lost & found: a NOTICE WALL. Barely a room — a deep alcove whose
    * back is entirely paper and holo notes, with a droid's niche beside it. */
-  noticewall(kit, M, p) {
+  noticewall(kit, M, p, ctx) {
     const { w, d, h } = p;
     floor(kit, M, w, d);
     walls(kit, M, w, d, h, { doorW: w - 1 });
     ceiling(kit, M, w, d, h, { ribs: 2, strips: false });
-    /* The wall itself: forty small panels, half of them lit. */
+    /**
+     * The wall itself: forty small panels, half of them lit.
+     *
+     * ── AND THE LIT ONES ARE HANDED BACK, BECAUSE THEY CARRY WORDS ────────
+     *
+     * Measured, this room had SEVEN meshes and ZERO textures in it under a
+     * verb that says "read the notices" — forty blank coloured rectangles.
+     * `Notices.js` writes on them, and it can only do that if it is told where
+     * they are: the positions are in the PLACE'S OWN FRAME along with the slab
+     * size, exactly as `#28`'s `plaques` and `#56`'s column are handed back,
+     * because reading them back off the merged mesh would be a second
+     * statement of where a notice is in a form nothing could check (§2.3).
+     *
+     * ONLY THE LIT ONES. `(i + k) % 3` puts thirteen `M.screen` slabs on the
+     * wall and twenty-seven `M.mark` ones, and that split is what the room
+     * already looked like: a holo-note is lit and a piece of paper is not.
+     * Writing on all forty would be forty canvases and forty draws for a wall
+     * nobody can read all of anyway — thirteen is what the room already said
+     * was legible.
+     */
+    const at = [];
     for (let i = 0; i < 8; i++) {
       for (let k = 0; k < 5; k++) {
         const x = -w / 2 + 0.8 + i * ((w - 1.6) / 7);
         const y = 0.8 + k * 0.5;
-        kit.slab((i + k) % 3 === 0 ? M.screen : M.mark, 0.5, 0.36, 0.05, x, y, d / 2 - 0.25, { collide: false, bevel: 0 });
+        const lit = (i + k) % 3 === 0;
+        kit.slab(lit ? M.screen : M.mark, 0.5, 0.36, 0.05, x, y, d / 2 - 0.25, { collide: false, bevel: 0 });
+        if (lit) at.push({ x, y, z: d / 2 - 0.25 });
       }
     }
+    ctx.notices = { id: p.id, deck: p.deck, x: p.x, z: p.z, y: floorOf(p), yaw: p.yaw, w: 0.5, h: 0.36, t: 0.05, at };
     kit.slab(M.strip, w - 1.4, 0.08, 0.14, 0, 3.5, d / 2 - 0.5, { collide: false, bevel: 0 });
     counter(kit, M, 1.4, 0.7, w / 2 - 1.1, -d / 2 + 1.0, 0, 1.0);
   },
@@ -2308,6 +2331,8 @@ export function buildPlace(world, group, place, M, st) {
     habitat: null,
     /** #56's column, handed back so `StationLife` can write the rolls on it. */
     obelisk: null,
+    /** #25's lit slabs, handed back so `Notices.js` can write on them. */
+    notices: null,
   };
   fn(kit, M, place, ctx, world);
   const y = floorOf(place);
@@ -2338,6 +2363,10 @@ export function buildPlace(world, group, place, M, st) {
    * the place's own node so they are culled, moved and disposed with the room
    * exactly as everything else in it is. Same hand-back `st.obelisk` gets. */
   if (ctx.habitat) st.habitat = { ...ctx.habitat, group };
+  /* #25's lit slabs, for `Notices.dressNotices` — the habitat's hand-back
+   * exactly, and for the identical reason: a notice is a surface to draw on
+   * rather than an object to move, and the group is what culls it. */
+  if (ctx.notices) st.notices = { ...ctx.notices, group };
   if (ctx.trees.length) (st.trees ||= []).push({ place, spec: ctx.trees[0] });
   return { draws: out.meshes.length, triangles: out.triangles, boxes: out.boxes?.length || 0 };
 }

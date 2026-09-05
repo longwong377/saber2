@@ -2186,6 +2186,174 @@ export async function run({ check, assert }) {
       + `${Object.keys(EXCUSED).length} excused (${Object.keys(EXCUSED).join(', ') || '—'}), 0 with no control`;
   });
 
+  /**
+   * ══ A CONTROL ON A PANEL WITH NO TAB IS NOT A CONTROL ═══════════════════
+   *
+   * ── THE BLIND SPOT THIS CLOSES, AND IT IS THIS FILE'S OWN ───────────────
+   *
+   * The clause above answers "can the player move this setting" by reading
+   * `Menu.js` and the markup — is there an element, does something write the
+   * key. Neither question mentions the TAB BAR, and a panel with no tab is not
+   * on the screen: `.panel{display:none}` / `.panel.active{display:flex}` is
+   * the whole of how this front end shows one page at a time, and `_buildTabs`
+   * only ever activates a panel whose `data-tab` was clicked.
+   *
+   * So deleting one `<button class="tab" data-tab="saber">` from the nav takes
+   * THIRTY-SEVEN controls off the front end — thirty-four card and swatch rows
+   * and three sliders: the whole character creator, the thirteen wardrobe rows,
+   * the crystal, the hilt and the blade — and every clause in this file stayed
+   * green, because every element still exists and `Menu.js` still writes every
+   * key. That was measured, not imagined: V16 §A4 asks for the Forge to be the
+   * only door to the saber, and the obvious way to do it is to drop that one
+   * button. Driven with the button carrying `hidden`, this clause names ELEVEN
+   * of the thirty-seven by setting — the ones whose key is written at the
+   * control site, which is the set `wired` can see — and eleven is a red.
+   *
+   * This is the clause that says so. Every control element that lives in
+   * `index.play.html` must be inside a `data-panel` the bar can actually
+   * reach — a `.tab` with that `data-tab`, in the nav, not carrying `hidden`.
+   *
+   * WHAT IT DELIBERATELY DOES NOT COVER. Ids that `Menu.js` builds rather than
+   * the markup (`allyUnit`, `allyArmy`, `sandboxCount`, `sandboxFire`) are not
+   * in the file this reads, so their panel cannot be found by looking; the
+   * clause above already holds those four to existing at all. Narrowing to
+   * "declared in the markup" is what makes this a fact about the document
+   * rather than a guess about a string.
+   *
+   * AND IT IS NOT A BAN ON DOORS. `MODES.hidden` and `Holodeck.programSettings`
+   * are how a thing is reached by a room instead of a card, and the clause
+   * above already honours both as PROGRAMMED. A setting whose only door is a
+   * room passes there and never reaches here, because it has no `opt-` element
+   * in the markup to strand. What this refuses is the half-move: the element
+   * still on the page, still bound, still written, and behind no door at all.
+   */
+  check('controls: no control is stranded on a panel the tab bar cannot reach', async () => {
+    const menu = await readFile(src('ui/Menu.js'), 'utf8');
+    const html = await read('index.play.html');
+
+    /* THE PANELS, AS RANGES OF THE DOCUMENT. A control's panel is the panel
+     * whose section it falls inside, which is the same reading the browser
+     * takes and needs no DOM. */
+    const secs = [...html.matchAll(/<section[^>]*class="panel[^"]*"[^>]*data-panel="([a-z]+)"/g)];
+    assert(secs.length >= 4, `only ${secs.length} panels found in the markup — this check is not reading the file`);
+    const ranges = secs.map((m, i) => ({
+      key: m[1], from: m.index, to: i + 1 < secs.length ? secs[i + 1].index : html.length,
+    }));
+    const panelOf = (id) => {
+      const at = html.indexOf(`id="${id}"`);
+      if (at < 0) return null;                       // built by Menu.js, not by the markup
+      return (ranges.find((r) => at >= r.from && at < r.to) || {}).key || '(outside every panel)';
+    };
+
+    /* THE TABS THE BAR OFFERS. Two sources, because two files write them: the
+     * nav in the markup, and the two `Menu.js` inserts (Company, Databank). A
+     * tab carrying `hidden` is not on the bar, which is exactly the shape a
+     * half-move would take if the button were kept and switched off. */
+    const tabs = new Set();
+    for (const m of html.matchAll(/<button[^>]*class="tab([^"]*)"[^>]*data-tab="([a-z]+)"/g)) {
+      if (/\bhidden\b/.test(m[1])) continue;
+      tabs.add(m[2]);
+    }
+    for (const m of menu.matchAll(/tab\.dataset\.tab = '([a-z]+)'/g)) tabs.add(m[1]);
+    assert(tabs.has('play') && tabs.has('opts'),
+      `the bar reads as ${[...tabs].join(', ')} — Deploy and Options are not on it, so this is not the bar`);
+
+    /* EVERY CONTROL ELEMENT A SETTING IS WRITTEN THROUGH: the sliders and the
+     * checkboxes by their `opt-` id, and the pickers by the list they are
+     * built into. Both come off the control site in `Menu.js`, which is where
+     * the clause above reads them from, so the two cannot disagree about what
+     * a control is. */
+    const wired = new Map();                        // element id -> the setting it moves
+    for (const m of menu.matchAll(/_(?:slider|check)\('(opt-[a-z0-9-]+)',\s*'([A-Za-z0-9_]+)'/g)) {
+      wired.set(m[1], m[2]);
+    }
+    for (const m of menu.matchAll(/_swatchRow\('([a-z0-9-]+)',\s*'([A-Za-z0-9_]+)'/g)) wired.set(m[1], m[2]);
+    for (const m of menu.matchAll(/_cardRow\('([a-z0-9-]+)',\s*'[a-z0-9-]+',\s*'([A-Za-z0-9_]+)'/g)) wired.set(m[1], m[2]);
+    assert(wired.size > 40, `only ${wired.size} controls found at their control sites — the readers are wrong`);
+
+    const stranded = [];
+    const seen = new Map();
+    for (const [id, key] of wired) {
+      const p = panelOf(id);
+      if (p === null) continue;                     // not in this document; the clause above holds it
+      if (!seen.has(p)) seen.set(p, []);
+      seen.get(p).push(key);
+      if (!tabs.has(p)) stranded.push(`${key} (#${id} on panel "${p}")`);
+    }
+    assert(!stranded.length,
+      `${stranded.length} control(s) sit on a panel with no tab on the bar, so the player cannot get to `
+      + `them at all: ${stranded.slice(0, 8).join(', ')}${stranded.length > 8 ? ', …' : ''} — a panel `
+      + 'is display:none until its tab is clicked. If the door is meant to be a ROOM rather than a tab, '
+      + 'the control has to leave the markup and the setting has to be PROGRAMMED or BOUGHT, which the '
+      + 'clause above derives; a button quietly removed from the nav strands the element where it is');
+    return `${[...seen.keys()].length} panels carry controls, every one of them on the bar: `
+      + [...seen].map(([k, v]) => `${k} ${v.length}`).join(', ');
+  });
+
+  /**
+   * ══ THE ROOM IS THE BETTER DOOR ONTO THE SAME PAGE — V16 §A4 ════════════
+   *
+   * *"that's the only place where you can edit your lightsaber."* The clause
+   * above is why the tab is still on the bar: that panel is thirty-seven
+   * controls and only five of them are the saber, so deleting the button
+   * deletes the character creator and the wardrobe with it, and one mode — a
+   * co-op client, which `hangarFirst()` refuses the deck to — could not reach
+   * `#10` to get them back. `src/main.js`'s `KIOSK_AT` carries that argument
+   * at the point of the decision.
+   *
+   * What IS delivered is the half that needs no deletion: the bar drops you at
+   * the top of the page, which is `Order`; a ROOM drops you at what the room
+   * is for. This pins the three doors and refuses an anchor that is not there.
+   *
+   * READ OFF THE FUNCTION'S REAL BODY (`_source.functionBody`), because a
+   * fixed-character window over a function is the shape `determinism.mjs`
+   * forbids by name — it expires in silence the day somebody adds a line.
+   */
+  check('controls: a counter opens the saber page where its own room is, not at the top', async () => {
+    const { functionBody } = await import('./_source.mjs');
+    const main = await read('src/main.js');
+    const html = await read('index.play.html');
+
+    const table = main.match(/const KIOSK_AT = \{[\s\S]*?\n\};/)?.[0];
+    assert(table, 'main.js has no KIOSK_AT — the Forge opens the page at "Order", nine screens above the anvil');
+    const at = Object.fromEntries([...table.matchAll(/(\w+):\s*'([a-z0-9-]+)'/g)].map((m) => [m[1], m[2]]));
+
+    /* THE THREE DOORS ONTO THIS ONE PAGE, and each has to land somewhere its
+     * own room's verb would recognise. `#10` forges, `#46` holds what you
+     * carry, `#27`'s mirror is your face. */
+    const WANT = { hilt: 'the Forge', loadout: 'the Armoury', mirror: "the cabin's mirror" };
+    const secs = [...html.matchAll(/<section[^>]*class="panel[^"]*"[^>]*data-panel="([a-z]+)"/g)];
+    const range = (key) => {
+      const i = secs.findIndex((m) => m[1] === key);
+      return [secs[i].index, i + 1 < secs.length ? secs[i + 1].index : html.length];
+    };
+    const [from, to] = range('saber');
+    for (const [kiosk, who] of Object.entries(WANT)) {
+      const id = at[kiosk];
+      assert(id, `KIOSK_AT has no anchor for '${kiosk}' — ${who} still opens the page at the top`);
+      const el = html.indexOf(`id="${id}"`);
+      assert(el >= 0, `${who} opens on #${id}, which is in no markup — the scroll is a no-op`);
+      assert(el >= from && el < to,
+        `${who} opens on #${id}, which is not on the saber panel — the tab click and the anchor `
+        + 'would be two different pages');
+    }
+    /* The three land on three different sections, or the table is decoration:
+     * one anchor for three rooms is the top of the page with extra steps. */
+    assert(new Set(Object.values(at)).size >= 3,
+      `KIOSK_AT names ${new Set(Object.values(at)).size} distinct anchors for ${Object.keys(at).length} doors`);
+
+    /* AND THE CODE ACTUALLY USES IT, after the tab click — a panel that is
+     * still `display:none` has no scroll position to move to. */
+    const body = functionBody(main, 'function showKioskPanel(');
+    assert(/KIOSK_AT\[panelId\]/.test(body), 'showKioskPanel never reads KIOSK_AT');
+    assert(/scrollIntoView/.test(body), 'showKioskPanel looks the anchor up and does not scroll to it');
+    assert(body.indexOf('tab.click()') < body.indexOf('scrollIntoView'),
+      'showKioskPanel scrolls before it clicks the tab — the panel is display:none until then, so '
+      + 'the element has no layout and the scroll does nothing');
+    return `${Object.keys(at).length} counters open the saber page at their own shelf: `
+      + Object.entries(at).map(([k, v]) => `${k}→#${v}`).join(', ');
+  });
+
   check('controls: the two fidelity sliders multiply the tier and bite mid-run', async () => {
     // A control that exists is not the same claim as a control that does
     // something. Driven through World.prototype.applyQuality — the real reader,

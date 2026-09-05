@@ -293,6 +293,17 @@ export async function run({ check, assert, near }) {
        * subtraction says he has had minus twenty-two — either curing him
        * instantly or freezing him for ever depending on which way the clamp
        * fell. Driven through the shipped `setStationHour`.
+       *
+       * ── AND MIDNIGHT IS CROSSED THE WAY THE GAME CROSSES IT ────────────
+       *
+       * `setStationHour(25)` and not `setStationHour(1)`. Those are two
+       * different events and only one of them is time passing: the station's
+       * own writer, `tickStationClock`, hands this function the UNWRAPPED sum
+       * and it folds the whole days out — which is what counts the midnight.
+       * Handing it `1` is a screen setting the clock BACK to one in the
+       * morning, and the ward is right to mend nobody for it. The span is
+       * `day * 24 + hour` now, so a wrap that nothing counted is no longer a
+       * span this can read at all, which is the point of the repair.
        */
       const roster = freshRoll(1);
       roster.all[0].body = hurtBody(0.35);
@@ -305,7 +316,7 @@ export async function run({ check, assert, near }) {
       assert(first.hours === 0, `the first settle healed ${first.hours} h out of nowhere`);
       near(Medbay.wardOf(Company.load('republic')).at, 23, 1e-9, 'the ward did not stamp the hour');
 
-      setStationHour(1);
+      setStationHour(25);
       const wrapped = Medbay.settle('republic');
       near(wrapped.hours, 2, 1e-9, 'the ward read midnight as a negative span');
       const mid = Company.load('republic').men.find((m) => m.designation === him);
@@ -319,6 +330,8 @@ export async function run({ check, assert, near }) {
       near(raw.republic.men.find((m) => m.designation === him).hp, Medbay.hpOf(mid), 1e-9,
         'the mended health is not what was written to disk');
 
+      /* Four more, and this one is NOT a wrap: 01:00 → 05:00 is forward on the
+       * same day, which `setStationHour` stores as it stands. */
       setStationHour(5);
       const done = Medbay.settle('republic');
       assert(done.healed.includes(him), `four more hours and he is still on ${Medbay.hpOf(mid).toFixed(2)}`);
@@ -580,6 +593,45 @@ export async function run({ check, assert, near }) {
         near(passStationHours(-4), 7, 1e-9, 'a negative duration ran the clock backwards');
         near(passStationHours(NaN), 7, 1e-9, 'a NaN duration moved the clock');
 
+        /**
+         * ══ AND A RUN OF EXACTLY 48 REAL MINUTES IS 24 HOURS AND NOT NONE ══
+         *
+         * The half the clock alone could not carry. `passStationHours` folds an
+         * unbounded run length into a WRAPPED wall clock, and `settle` measured
+         * the span as `((now - ward.at) % 24 + 24) % 24` — so a run that came
+         * out at a whole multiple of a day put the hand back where it started
+         * and the ward read 0 h. Measured before the repair: from hour 8,
+         * `passStationHours(24)` → hour 8, gap 0 h, nobody mended; 25 hours
+         * credited 1 instead of 25. A tank is twelve hours, so the two run
+         * lengths that mend most and the one that mends nothing were 48
+         * minutes apart with nothing on screen to tell them apart.
+         *
+         * The stamp is `day * 24 + hour` now, so this is a subtraction. Driven
+         * through the shipped doors and nothing else: `passStationHours` is
+         * what `record()` calls, `stationDay` is the counter it moves.
+         */
+        const { stationDay } = await import('../../src/game/StationSave.js');
+        setStationHour(8);
+        const wasDay = stationDay();
+        const back = passStationHours(2880 * HOURS_PER_SECOND);   // 48 real minutes
+        near(back, 8, 1e-9, '48 minutes of play did not bring the wall clock back to the same hour');
+        assert(stationDay() === wasDay + 1, 'a whole day of station time did not turn the day over');
+
+        const day = freshRoll(2);
+        day.all.forEach((t) => { t.body = hurtBody(0.3); });
+        Company.keep(day.all, { army: 'republic', deployed: day.all, ground: 'geonosis' });
+        Medbay.checkIn('republic');
+        Medbay.settle('republic');
+        const hurtAt = Company.load('republic').men.map((m) => Medbay.hpOf(m));
+        const round = passStationHours(2880 * HOURS_PER_SECOND);
+        const settled = Medbay.settle('republic');
+        near(settled.hours, 24, 1e-9,
+          `a 48-minute run credited ${settled.hours.toFixed(2)} h — the wrapped clock reads a whole `
+          + 'day round as no time at all, and a run of exactly that length heals nobody');
+        near(round, 8, 1e-9, 'the wall clock did not come back to the hour it left');
+        const mended = Company.load('republic').men.map((m) => Medbay.hpOf(m));
+        assert(mended.every((h, k) => h > hurtAt[k]), 'a whole day in a tank mended nobody');
+
         /* ── AND THE WARD ACTUALLY MENDS ACROSS IT ──────────────────────── */
         const roster = freshRoll(2);
         roster.all.forEach((t) => { t.body = hurtBody(0.4); });
@@ -597,9 +649,10 @@ export async function run({ check, assert, near }) {
         assert(gained.every((g) => g > 0.05),
           `a run's worth of time away mended ${gained.map((g) => g.toFixed(3)).join(', ')} — `
           + 'the ward only moves while you are pacing the drum');
-        return `12 min of play = 6 station hours; the clock wraps and refuses 0/-4/NaN; `
-          + `two men in tanks gained ${gained.map((g) => g.toFixed(2)).join(' and ')} health `
-          + 'over one run spent entirely off the station';
+        return `12 min of play = 6 station hours; the clock wraps and refuses 0/-4/NaN; a 48-minute run `
+          + `is ${settled.hours.toFixed(0)} h of bacta and not 0; two men in tanks gained `
+          + `${gained.map((g) => g.toFixed(2)).join(' and ')} health over one run spent entirely off `
+          + 'the station';
       })();
     });
   });
