@@ -1819,6 +1819,76 @@ const KIOSK_TAB = {
 };
 
 /**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  WHERE ON THE PAGE A ROOM PUTS YOU — V16 §A4, and the limit argued
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * ── WHAT §A4 ASKS FOR ────────────────────────────────────────────────────
+ *
+ * *"maybe you can only adjust stuff with your lightsaber at the armory …
+ * that's the only place where you can edit your lightsaber."* §A4's own answer
+ * is `#10 The Forge` with a Mandalorian behind the counter, and both of those
+ * are built: Bo Vhett stands at the desk (`Vendors.ARMOURER`) and the hilt
+ * bench raises `onKiosk('hilt')` a step back from it (`Station.counterHere`).
+ *
+ * ── AND WHY THE MENU'S TAB IS STILL ON THE BAR, MEASURED ─────────────────
+ *
+ * The obvious way to make the room the ONLY door is to delete one button from
+ * the nav — `<button class="tab" data-tab="saber">`. That was measured before
+ * it was rejected, and it is not a saber tab:
+ *
+ *   THIRTY-SEVEN CONTROLS sit on that panel — thirty-four card and swatch rows
+ *   and three sliders. FIVE of them are the saber (crystal, Force lightning,
+ *   hilt, blade length, core width). The other thirty-two are the CHARACTER
+ *   CREATOR and the wardrobe: order, species, face, build, hair, beard, skin,
+ *   hair colour, robe cut, robe colour, what you carry, what comes with you,
+ *   the meditation pose, and thirteen rows of clothing.
+ *
+ * Nothing asks for those thirty-two to move. §A4 does not mention them, and
+ * V15 §1.3 stages them behind a DIFFERENT door — the mirror in `#27`, whose
+ * own note in `KIOSK_TAB` above says in as many words that *"removing the
+ * menu's is a later, separate change"*. Putting the character creator behind
+ * the armourer's counter would also be wrong on its face: you do not choose
+ * your species at a blacksmith.
+ *
+ * AND ONE MODE GENUINELY CANNOT REACH THE ROOM. `hangarFirst()` sends every
+ * deploy through the flight deck, and `Levels.setLiftFloors` puts all three
+ * station decks on the deck's lift, so every player who presses Ignite can
+ * walk to `#10` — except a CO-OP CLIENT, which `hangarFirst` returns false for
+ * (`net.enabled && net.connected && !net.isHost`) because the host's `start`
+ * packet is the order and the client never walks a deck of their own. A client
+ * whose blade colour crosses the wire out of `Net.LOOK_KEYS` would have to
+ * leave the session to change it. `settings.instantSpawn` is the second such
+ * case. That is the limit V16 §A2 did not have — the Repeating Room's two
+ * modes are themselves only reachable FROM the station, so nothing was stranded
+ * by hiding them — and it is why this is not that.
+ *
+ * SO THE TAB STAYS AND THE ROOM IS MADE THE BETTER DOOR, which is this table.
+ * The bar drops you at the top of the page, which is `Order` — nine screens of
+ * scrolling above the anvil. A room drops you at the thing the room is for.
+ * `#10`'s bench opens on the CRYSTAL, `#46 Armoury` on WHAT YOU CARRY (§A4:
+ * *"#46 Armoury keeps the loadout"*), and `#27`'s mirror on the FACE. Same
+ * page, three different doors, and each one lands where its room's verb says.
+ *
+ * A SECOND TABLE RATHER THAN A FIELD ON `KIOSK_TAB`, and that is not taste:
+ * `tools/checks/home.mjs` reads `KIOSK_TAB`'s source and asserts the mirror's
+ * row is a bare string, so turning the values into objects would take a check
+ * this lane is forbidden to edit red for no gain.
+ *
+ * AND THE BLIND SPOT THAT MADE THE HALF-MOVE LOOK SAFE IS NOW CLOSED.
+ * `tools/checks/controls.mjs` asked "is there an element and does something
+ * write the key", never "is that element on a page the bar can reach" — so
+ * deleting the button left all thirty-seven controls off the screen and the
+ * whole suite green. `controls: no control is stranded on a panel the tab bar
+ * cannot reach` is that question, and it goes red on the button.
+ */
+const KIOSK_AT = {
+  hilt: 'color-list',
+  loadout: 'saberset-list',
+  mirror: 'face-list',
+};
+
+/**
  * ══ THE CARD MUST BE A NO-OP WHEN NO COUNTER IS UP ════════════════════════
  *
  * `Screens.clear()` runs EVERY registered card's hide, on every clear — and
@@ -1845,6 +1915,15 @@ function showKioskPanel(panelId) {
    * block, and a second copy of that list is exactly the hand-maintained twin
    * HANDOFF §2.3 is about. */
   if (tab) tab.click();
+  /* ── AND THE ROOM LANDS YOU AT ITS OWN SHELF (V16 §A4) ────────────────
+   *
+   * AFTER the click and not before: the panel is `display:none` until its tab
+   * is active, and an element with no layout has no scroll position to move
+   * to. `scrollIntoView` walks to the nearest scrolling ancestor, which is the
+   * `.col.scroll` the section is in, so this scrolls the column and not the
+   * page. Guarded because the check harness's DOM double has neither. */
+  const at = KIOSK_AT[panelId];
+  if (at) document.getElementById(at)?.scrollIntoView?.({ block: 'start' });
 }
 
 /**
@@ -2653,10 +2732,26 @@ function toteBell(venueId) {
      * the player has left. */
     if (!tote || tote.venue !== venueId || screens.state !== 'tote') return;
     const now = performance.now();
-    /* REAL SECONDS, clamped the way `frame()` clamps `dt`: a backgrounded tab
-     * hands back a gap of minutes, and a station that jumped a card's worth of
-     * hours because somebody alt-tabbed would have run the race in the dark. */
-    const dt = Math.min(0.1, (now - at) / 1000);
+    /**
+     * REAL SECONDS, CLAMPED — AND THE CLAMP WAS COPIED FROM A LOOP THAT RUNS
+     * FORTY TIMES FASTER.
+     *
+     * `frame()` clamps `dt` to 0.1 s and never binds, because a frame is 16 ms.
+     * This beat is `TOTE_TICK` = 250 ms, so the clamp bound on EVERY SINGLE
+     * BEAT and credited 0.1 s of station time per 0.25 s of real time.
+     * Measured with the panel up for twelve seconds: hour 9.00118 → 9.04035,
+     * which is 4.70 s of station time for 12.00 real — 39.2%. Again over sixty
+     * seconds with a live race: 39.8%. A gate this code's own comment calls
+     * "about two and a half real seconds" took six, and every clock-driven
+     * thing on the station ran at two-fifths speed whenever a board was open.
+     *
+     * The clamp still has a job — a backgrounded tab hands back a gap of
+     * minutes and a station that jumped a card's worth of hours because
+     * somebody alt-tabbed would have run the race in the dark. So it is sized
+     * off THIS loop's own beat rather than off the frame loop's: a few beats'
+     * worth of catch-up is a stall, and more than that is an absence.
+     */
+    const dt = Math.min(TOTE_TICK / 1000 * 4, (now - at) / 1000);
     at = now;
     tickStationClock(world, dt);
     showTote(venueId, { keep: true });
