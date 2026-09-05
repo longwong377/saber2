@@ -2547,6 +2547,11 @@ export function payForJob(jobId) {
    * symmetry is the point: the number is a ledger of how you have treated the
    * place, not a currency with an exchange rate.
    */
+  /* AND IT IS FELT BEFORE YOU LEAVE THE ROOM. This wrote the durable fold and
+   * nothing else while `servedHere` read `StationLife`'s own session copy, so
+   * a player refused at the kiosks could work all evening and still be
+   * refused. There is one number now — see "STANDING — ONE NUMBER" below — and
+   * this line moves the one the door reads. */
   setStanding(standing() + 2);
   return { ...got, paid, capped: paid < got.pay };
 }
@@ -3354,54 +3359,29 @@ export function tickStationClock(world, dt) {
 
 /**
  * ══════════════════════════════════════════════════════════════════════════
- *  STANDING, PERSISTED — and it had NO WRITER AT ALL
+ *  STANDING — ONE NUMBER, AND THIS FILE NO LONGER MIRRORS IT
  * ══════════════════════════════════════════════════════════════════════════
  *
- * `StationSave.setStanding` had zero callers in the tree. `Counter.markupFor`
- * works and is measured — standing 0 pays 38 for the oiled leather, −20 pays
- * 45, −35 is refused with a line — but the number it reads was 0 for every
- * player for ever, so the vendor-remembers-you half of the shop never fired
- * once.
+ * `persistStanding` used to live here: `StationLife`'s `life.standing` was a
+ * SESSION number seeded off the run bag, the fold beside it was the durable
+ * one, and this function carried the DELTA between them onto the disk once a
+ * frame. It was a careful answer to the wrong question. §11 says *"one number
+ * in `Session`"*, and two numbers with a courier between them is two numbers:
  *
- * The fall was already being COMPUTED and thrown away.
- * `StationLife.witness` does `life.standing -= hurt * 2` when you cut a
- * resident, writes it to `world.run.stationStanding`, and `dressStationLife`
- * reads it back off the run — so it survives a station visit inside a run and
- * dies with the run, while the durable fold beside it never moved. Two numbers
- * called standing, one of them the one the shops read.
+ *     VISIT 1                      life.standing -10   fold -10   served no
+ *     VISIT 2 (after a lift ride)  life.standing   0    fold -10   served YES
  *
- * ── SO THE DELTA IS MIRRORED, NOT THE VALUE ───────────────────────────────
+ * — because `main.js` builds a fresh run bag per world and a deck is a world,
+ * so the figure the kiosks read went back to zero on the ride while
+ * `Counter.markupFor`, which defaults to the fold, went on charging for the
+ * brawl. Worse in the other direction: `payForJob` below wrote its +2 to the
+ * fold ONLY, so within a visit the number `servedHere` read could never rise.
  *
- * `life.standing` starts at `world.run?.stationStanding ?? 0` — NOT at the
- * saved fold — so copying it across would reset a player who had earned a −20
- * back to zero on the next visit, which is the fold quietly undoing the
- * consequence. What is written is the CHANGE since this file last looked, so
- * the two numbers can disagree about their origin and still agree about what
- * happened.
- *
- * Written on the frame it changes and not per frame: `witness` only moves the
- * number when a body is hurt for the first time, so this costs one integer
- * compare a frame and a `localStorage` write about once a lifetime.
- *
- * ── AND WHAT MOVES IT THE OTHER WAY IS WORK, WHICH IS IN `payForJob` ─────
- *
- * A ratchet that only ever falls would make `markupFor`'s +40 rung — "a
- * regular, and they knock a bit off" — a dead branch, and this file has just
- * finished deleting one of those. The riser is collecting on a job for a
- * resident: see `payForJob`. It is not shopping, deliberately — standing that
- * went up when you spent would be a loyalty ladder, which is a number that
- * grows by having played and is the thing `Progress.js`'s header refuses.
+ * `dressStationLife` now hangs `life.standing` on `StationSave.standing`
+ * itself as an accessor. There is nothing left to mirror: the fall writes the
+ * fold, the rise writes the fold, and the three readers — the counters, the
+ * pits and the kiosk door — read the fold. See `StationLife`'s import note.
  */
-function persistStanding(world, st) {
-  const life = world?._stationLife;
-  if (!life) return;
-  const now = Math.round(Number(life.standing) || 0);
-  if (st._lifeStanding === undefined) { st._lifeStanding = now; return; }
-  if (now === st._lifeStanding) return;
-  const moved = now - st._lifeStanding;
-  st._lifeStanding = now;
-  setStanding(standing() + moved);
-}
 
 /* ══════════════════════════════════════════════════════════════════════════
  *  THE CROWD IN THE ROOM — V16 §G4
@@ -3640,9 +3620,6 @@ export function stepStation(world, dt) {
    * anything stepped below finds what it owns already standing. */
   drainStationBuild(world, st);
   tickStationClock(world, dt);
-  /* §11's consequence, reaching the disk. One integer compare a frame — see
-   * `persistStanding` for why it is a delta and not a copy. */
-  persistStanding(world, st);
   /* THE WARD HEALS ON THE STATION'S OWN CLOCK. Every ten seconds, and only
    * then — a man mending is a thing that happens while you shop, not a thing
    * that happens when you walk into #44 and look at him. It returns the rolls

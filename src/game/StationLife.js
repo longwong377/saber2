@@ -72,6 +72,28 @@ import { disarmKinetic } from './Impact.js';
  * the ledger and answers in SEEDS, so this file still decides who stands where
  * and `StationCast.resident` still decides what a person looks like. */
 import { pinnedAt } from './Quests.js';
+/**
+ * ══ THE FOLD, BECAUSE STANDING IS ONE NUMBER AND THIS IS IT ═══════════════
+ *
+ * §11: *"your station `standing` drops (ONE NUMBER in `Session`)"*. It was
+ * two. `life.standing` was seeded off `world.run?.stationStanding`, `main.js`
+ * builds a fresh run bag per world, and a deck is a world — so a lift ride put
+ * the number the kiosks read back to zero while `Counter.markupFor`, which
+ * defaults to the DURABLE fold, went on charging you for the brawl. Measured
+ * before this, one cut on deck 40 and a ride to 44:
+ *
+ *     VISIT 1                      life.standing -10   fold -10   served no
+ *     VISIT 2 (after a lift ride)  life.standing   0    fold -10   served YES
+ *
+ * The fold is the truth and `dressStationLife` hangs `life.standing` on it as
+ * an accessor, so the three readers — the counters, the pits and the kiosk
+ * door below — cannot disagree and `payForJob`'s +2 is felt inside the visit
+ * it is earned in.
+ */
+import {
+  standing, setStanding, stationDay, passStationHours,
+  shutKiosks, kiosksShut, brigPending, setBrigPending,
+} from './StationSave.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE BUDGET                                                                */
@@ -138,14 +160,35 @@ export function fullness(place, hour) {
   /* The day's own curve: 1 at the peak, 0.18 twelve hours away. */
   const off = Math.abs(((hour - peak + 36) % 24) - 12);
   let k = 0.18 + 0.82 * (1 - off / 12) ** 1.6;
-  /* Shift change: three floods a day through anything on a route. */
+  /**
+   * ══ SHIFT CHANGE, AND IT WAS FIRING TWELVE HOURS OUT ══════════════════
+   *
+   * `Math.abs(((hour - s + 36) % 24) - 12)` IS the circular distance from the
+   * shift hour: it is 0 at `s` and 12 on the far side of the clock. Both
+   * windows below tested it for being LARGE — `> 11.4` and `> 11.6` — which
+   * selects the opposite of the hour they name. Measured against §3.4:
+   *
+   *     declared   06  14  22        fired   10  02  18
+   *     meals      07  13  19        fired   19  01  07
+   *
+   * So the ring's *"three floods a day"* landed at two in the morning and the
+   * food court's lunch rush landed at one. The corridors were at their thinnest
+   * at exactly the three hours the design says a shift change floods them, and
+   * nothing said so because the only bar on any of it — `station.mjs`'s
+   * walkway clause — samples 13:00 and 03:00, neither of which is a shift and
+   * neither of which is twelve hours from one.
+   *
+   * The window is an hour either side rather than the hour on the nose, because
+   * a shift change is people leaving a place over a while and `st.hour` is a
+   * continuous number that a player walks through.
+   */
   for (const s of [6, 14, 22]) {
     const d = Math.abs(((hour - s + 36) % 24) - 12);
-    if (d > 11.4) k += place.id === 9 || place.band === 'ring' ? 0.55 : 0.18;
+    if (d <= 1) k += place.id === 9 || place.band === 'ring' ? 0.55 : 0.18;
   }
   /* Meals, in the three places §3.2 says they happen in. */
   if (place.id === 15 || place.id === 16 || place.id === 17) {
-    for (const m of [7, 13, 19]) if (Math.abs(((hour - m + 36) % 24) - 12) > 11.6) k += 0.6;
+    for (const m of [7, 13, 19]) if (Math.abs(((hour - m + 36) % 24) - 12) <= 1) k += 0.6;
   }
   return Math.max(0, Math.min(1.6, k));
 }
@@ -194,6 +237,30 @@ export function headcount(place, hour) {
 export function slotIn(place, i, out) {
   const u = h2(place.id * 1000, i * 7 + 1) - 0.5;
   const v = h2(place.id * 1000 + 3, i * 7 + 2) - 0.5;
+  /**
+   * ══ A CORRIDOR IS AN ARC, AND A RECTANGLE LAID OVER ONE MISSES ═════════
+   *
+   * A room is a box and the scatter above is the box's. A stretch of the ring
+   * or the balcony is not a box: it is a band of an annulus, and laying a
+   * straight rectangle over it puts the ends of the rectangle INSIDE the
+   * circle by the sagitta. Measured on the ring stretches as they stood —
+   * 58 m wide at r = 85.5 — the ends of a stretch sat **5.1 m inboard of the
+   * ring**, which is past `roomR` and inside whatever room is at that bearing.
+   * On the balcony it is worse and it is fatal: 26 m of chord at r = 24 is
+   * 3.8 m in, and the balcony has 6 m of floor before the atrium void.
+   *
+   * So a way place may declare `arc` — the radius its band runs at — and its
+   * `w` is then read as ARC LENGTH along that band and its `d` as the radial
+   * spread across it. Nothing else changes: the same two hashes, the same
+   * `0.72`, the same determinism, and a place without `arc` is placed exactly
+   * as it was.
+   */
+  if (place.arc) {
+    const a = place.yaw + (u * place.w * 0.72) / place.arc;
+    const r = place.arc + v * place.d * 0.72;
+    out.set(r * Math.sin(a), floorOf(place), r * Math.cos(a));
+    return out;
+  }
   const lx = u * place.w * 0.72, lz = v * place.d * 0.72;
   const c = Math.cos(place.yaw), s = Math.sin(place.yaw);
   out.set(place.x + lx * c + lz * s, floorOf(place), place.z - lx * s + lz * c);
@@ -260,6 +327,41 @@ const RING_WALK_W = 58;
 const WALK_HEADS = 6;
 
 /**
+ * ══ AND THE BALCONY, WHICH IS THE CORRIDOR THE PLAYER ARRIVES ON ══════════
+ *
+ * §3.1 rule 1 gives every deck a balcony onto the atrium void, `planRoute`
+ * has always treated it as one of the drum's THREE walkable surfaces, and
+ * `wayPlacesOn` declared not one person on it. Every open stretch this file
+ * made was on the ring at r = 85.5 or on a spine.
+ *
+ * MEASURED, and it is the whole of the arrival defect. `STATION_LEVEL.start`
+ * is `[-24, 2]` — r = 24.1, which is the balcony walk itself, three metres
+ * inside the lip. Standing there on deck 40 and running a minute of frames at
+ * every hour of the day:
+ *
+ *     08:00   20 bodies, 0 walkers, 0 of them moved a millimetre
+ *     13:00   31 bodies, 0 walkers, 0 moved
+ *     22:00   21 bodies, 0 walkers, 0 moved
+ *
+ * and the nearest slot on any open stretch the deck declared was **44.6 m**,
+ * which is outside `LIVE_RADIUS` — so it was not that the lobby was unlucky,
+ * it was that no walker could ever be built there however long you stood.
+ * The first thing a player sees when the lift doors open was a still frame.
+ *
+ * Eight stretches of 26 m of arc round 150.8 m of balcony is 0.72 × 26 =
+ * 18.7 m of scatter against an 18.85 m spacing — continuous, by the same
+ * arithmetic `RING_WALKS` is sized by. The bearings are 22.5° + 45°k, which
+ * puts a stretch's CENTRE off each of the four spines rather than on it.
+ *
+ * `d` IS 3 AND NOT 6. The balcony is 8 m of floor between the void at r = 18
+ * and the lip at 26; ±1.08 m about r = 24 keeps every slot on it, and `arc`
+ * above is what makes that a radial spread rather than a chord.
+ */
+const BALC_WALKS = 8;
+const BALC_WALK_W = 26;
+const BALC_WALK_D = 3;
+
+/**
  * A SPINE STRETCH IS NARROW AND LONG, and the width is load-bearing rather
  * than cosmetic. `slotIn`'s scatter is TANGENTIAL in `w`, and a spine walker's
  * first leg is a radial along ITS OWN bearing — so a seat 2 m off the spine's
@@ -292,12 +394,14 @@ export function wayPlacesOn(deck) {
   if (hit) return hit;
   const out = [];
   let id = 9000 + deck * 10;
-  const put = (r, deg, w, d, heads, peak, what) => {
+  /* `arc` is the radius a BAND runs at — see `slotIn`. A fixture is 6 m of
+   * counter and is a box; a stretch of corridor is an arc and says so. */
+  const put = (r, deg, w, d, heads, peak, what, arc = 0) => {
     const a = deg * Math.PI / 180;
     out.push({
       id: id++, deck, band: 'ring', way: what,
       x: r * Math.sin(a), z: r * Math.cos(a), yaw: a, w, d,
-      heads, peak,
+      heads, peak, arc,
     });
   };
   /* THE CROSSINGS, which is where a person waits for somebody. */
@@ -323,7 +427,14 @@ export function wayPlacesOn(deck) {
    * length of every spine, so the deck has people in transit and not only
    * people stopped. See `RING_WALKS` for the three numbers. */
   for (let i = 0; i < RING_WALKS; i++) {
-    put(DRUM.ringR, 15 + i * (360 / RING_WALKS), RING_WALK_W, 6, WALK_HEADS, 14, 'walk');
+    put(DRUM.ringR, 15 + i * (360 / RING_WALKS), RING_WALK_W, 6, WALK_HEADS, 14, 'walk',
+      DRUM.ringR);
+  }
+  /* AND THE BALCONY ROUND THE VOID — the corridor the lift lobby opens onto,
+   * and the one this file left empty. See `BALC_WALKS`. */
+  for (let i = 0; i < BALC_WALKS; i++) {
+    put(BALC_WALK, 22.5 + i * (360 / BALC_WALKS), BALC_WALK_W, BALC_WALK_D, WALK_HEADS, 13,
+      'walk', BALC_WALK);
   }
   /**
    * ── AND THE SPINES, ON THE PART OF THEM THAT IS ACTUALLY CLEAR ────────
@@ -746,6 +857,21 @@ const TRIP = { near: 8, far: 35 };
  * SEEDED ON THE SLOT AND THE TRIP NUMBER. No `Math.random` — the same walker
  * makes the same journeys in the same order on every run of the same day.
  */
+/**
+ * HOW FAR A WALK BETWEEN TWO POLAR POINTS ACTUALLY IS.
+ *
+ * The arc leg is walked at the radius the route turns on, and this read
+ * `RING_WALK` flat for every walker on the deck. On the ring that is the truth;
+ * on the balcony it is three and a half times it — an eight-metre stroll along
+ * the rail priced at twenty-nine — so with `TRIP` capped at thirty-five metres
+ * a balcony walker's own neighbours were all "too far" and every trip fell
+ * through to the nearest-thing fallback. `max` rather than the destination's
+ * own radius because a cross-annulus trip turns on the wider of the two.
+ */
+function tripLen(r0, a0, d) {
+  return Math.abs(wrapPi(d.a - a0)) * Math.max(r0, d.r) + Math.abs(d.r - r0);
+}
+
 function pickDest(deck, hour, body) {
   const list = destsOn(deck);
   if (!list.length) return null;
@@ -757,7 +883,7 @@ function pickDest(deck, hour, body) {
   const reach = reachFrom(deck, r0, a0);
   let total = 0;
   for (const d of list) {
-    const far = Math.abs(wrapPi(d.a - a0)) * RING_WALK + Math.abs(d.r - r0);
+    const far = tripLen(r0, a0, d);
     d.w = (far >= TRIP.near && far <= TRIP.far && d.id !== body.wayTo
       && (reach === 'both' || reach === d.on))
       ? headcount(d.p, hour) + 1 : 0;
@@ -770,7 +896,7 @@ function pickDest(deck, hour, body) {
     let best = null, cost = Infinity;
     for (const d of list) {
       if (d.id === body.wayTo || (reach !== 'both' && reach !== d.on)) continue;
-      const far = Math.abs(wrapPi(d.a - a0)) * RING_WALK + Math.abs(d.r - r0);
+      const far = tripLen(r0, a0, d);
       if (far > 1 && far < cost) { cost = far; best = d; }
     }
     return best;
@@ -1184,9 +1310,14 @@ export function dressStationLife(world, st) {
     company: (() => { try { return companyOf(); } catch { return null; } })(),
     /** The event table's cursor and what is running (§3.4). */
     event: null, eventIn: 20,
-    /** §11's consequence: your standing, and the guards who come. */
-    standing: world.run?.stationStanding ?? 0,
-    alarm: 0, guards: [],
+    /**
+     * §11's consequence: the guards who come and the arrest they make.
+     *
+     * `standing` IS NOT IN THIS LITERAL. It is the station's own fold and it
+     * is hung on this object below — see the import note at the head of the
+     * file for the two numbers that used to be here.
+     */
+    alarm: 0, guards: [], arrest: null, guardNear: Infinity, guardHold: 0,
     /** For the ledger line: how much of a frame this file took. */
     /**
      * TWO NUMBERS AND NOT ONE, because they have two budgets.
@@ -1205,6 +1336,22 @@ export function dressStationLife(world, st) {
     stepMs: 0, spawnMs: 0,
     spawned: 0, despawned: 0,
   };
+  /**
+   * ── AND THE ONE NUMBER IS THE FOLD'S, THROUGH THIS PROPERTY ─────────────
+   *
+   * An accessor and not a copy, because a copy is exactly what was wrong: two
+   * fields called standing, one of them the one the shops read. Everything
+   * that already writes `life.standing` — `witness` below — now writes the
+   * durable number, and everything that reads it, including `payForJob`'s
+   * rise through `StationSave.setStanding`, reads the same one back inside
+   * the same visit. `setStanding` still clamps to [-40, +40] and rounds, so
+   * the accessor adds no rule of its own.
+   */
+  Object.defineProperty(life, 'standing', {
+    get: () => standing(),
+    set: (v) => { setStanding(v); },
+    enumerable: true, configurable: true,
+  });
   world._stationLife = life;
   /**
    * ══ FRIENDLY FIRE IS ON, AND IT IS THE WHOLE SANDBOX ═══════════════════
@@ -1410,11 +1557,43 @@ function reseat(world, st, life, px, pz) {
    * the world comes up — see `primeStationLife` — and every re-seat after it
    * is a trickle of one. */
   const cap = life.priming ? PRIME_SLICE : 1;
+  /**
+   * ══ AND A SHARE OF THE BUDGET IS THE CORRIDOR'S, HELD BACK FROM THE ROOMS ══
+   *
+   * `SEAT_LIFT.walk` moves an open stretch twelve metres up a nearest-first
+   * queue, and twelve metres is nothing against a hall. MEASURED, standing in
+   * #9 The Concourse on deck 40 at 13:00, quality `high`: the room declares
+   * eighty heads over sixty-seven metres, sixty of them are inside the live
+   * radius, and the pool is sixty — so the concourse spent the WHOLE budget on
+   * itself and the deck had **zero walkers at the hour it is busiest**. §3.3
+   * calls that room *"where the game's whole cast is seen at once"* and what
+   * was seen was sixty people standing still in it.
+   *
+   * A lift is an ordering and cannot fix that, because the queue never reaches
+   * the corridor at all. A RESERVE can: a fifth of the pool is counted out for
+   * the open stretches inside the live radius before the rooms are allowed to
+   * spend down to the bottom of the budget. It is not a floor on walkers — a
+   * deck with three walk slots in reach reserves three — and it is given back
+   * the moment a walk slot turns out to be unbuildable, so a quiet corridor
+   * never costs a room a body.
+   */
+  let reserve = 0;
+  {
+    const want2 = Math.round(life.budget * WALK_SHARE);
+    for (const w of want) {
+      if (reserve >= want2) break;
+      if (w.place.way === 'walk' && w.d2 <= LIVE_RADIUS * LIVE_RADIUS) reserve++;
+    }
+  }
   let made = 0;
   for (const w of want) {
     if (n >= life.budget) break;
+    const isWalk = w.place.way === 'walk';
+    /* The rooms stop at the reserve; the stretches spend it. */
+    if (!isWalk && n >= life.budget - reserve) continue;
     keep.add(w.key);
     n++;
+    if (isWalk && reserve > 0) reserve--;
     if (life.live.has(w.key)) continue;
     /**
      * Only inside the live radius does a body actually appear — the wider
@@ -1444,7 +1623,11 @@ function reseat(world, st, life, px, pz) {
      * any budget left. So it is asked first, and `n` means the same thing at
      * every cap.
      */
-    if (w.d2 > LIVE_RADIUS * LIVE_RADIUS) { keep.delete(w.key); n--; continue; }
+    if (w.d2 > LIVE_RADIUS * LIVE_RADIUS) {
+      keep.delete(w.key); n--;
+      if (isWalk) reserve++;
+      continue;
+    }
     if (made >= cap) continue;
     /* `process?.cpuUsage` still THROWS on an undeclared identifier — optional
      * chaining guards a null, not a missing binding — so a browser met
@@ -1492,6 +1675,10 @@ function reseat(world, st, life, px, pz) {
  *  `consider`. Both are smaller than the live radius by a wide margin, so
  *  neither can pull in a body from outside it. */
 const SEAT_LIFT = { walk: 12, handler: 16 };
+
+/** What share of the pool is counted out for the open stretches before the
+ *  rooms may spend the rest of it. See the note in `reseat`. */
+const WALK_SHARE = 0.2;
 
 const _want = [];
 const _keep = new Set();
@@ -1624,6 +1811,15 @@ function spawnResident(world, st, place, i) {
     }
   }
   /**
+   * ── AND EVERYBODY ELSE IS AT SOMETHING ──────────────────────────────────
+   *
+   * Every body in the pool that is not on an open stretch: the people in the
+   * rooms, and the people at the counters, benches, rails and crossings a
+   * walkway declares. See `stepStanding` for what "at something" is and for
+   * the sixty statues that were there before it.
+   */
+  if (!body.wayR) standHere(body, place, _v);
+  /**
    * ══ AND SOME OF THEM HAVE AN ANIMAL WITH THEM (V16 §G1) ═════════════════
    *
    * *"see a couple other people with companions of there own … just milling
@@ -1680,10 +1876,12 @@ function removeBody(world, body) {
  *    wake in the Brig (#47), your station `standing` drops (one number in
  *    `Session`), the kiosks refuse you for a day."
  *
- * It is built on the existing team/`canHarm` machinery and adds no new one:
- * a guard is a `bodyguard` archetype on the OTHER side, which is the only
- * thing on the station that is, and the moment the alarm clears it goes away
- * again. The station has no army and does not gain one.
+ * It is built on the machinery the station already has and adds no new one: a
+ * guard is the resident chassis in the ARC kit — armour and two holstered
+ * sidearms, which is §11's "armed" — driven at you by `stepGuards` exactly as
+ * `stepWalkers` drives everybody else in the drum, and gone again the moment
+ * the alarm clears. The station has no army and does not gain one, and it no
+ * longer answers a shoplifting with a 1050 hp boss droid.
  */
 function witness(world, st, life, dt) {
   /**
@@ -1705,8 +1903,8 @@ function witness(world, st, life, dt) {
    *     t=40s  hurt 31   standing -62   IG BODYGUARD DROID: it has come for you
    *
    * and on decks 44 and 48 the two guards killed the player outright inside
-   * a minute. The hub was punishing you for walking into it, durably, on a
-   * number `persistStanding` mirrors to disk. Two decks never fired at all,
+   * a minute. The hub was punishing you for walking into it, durably, on the
+   * station's own durable fold. Two decks never fired at all,
    * which is the tell: it scaled with population, not with anything anyone
    * did.
    *
@@ -1729,35 +1927,397 @@ function witness(world, st, life, dt) {
     }
   }
   if (hurt) {
-    life.alarm = Math.max(life.alarm, 12);
+    /* A NEW OFFENCE IS A NEW ARREST. `arrest` refuses to fire twice on one
+     * record — the transfer would be asked for on every frame otherwise — so
+     * the record is dropped once you have been put in the cell and served. */
+    if (life.arrest?.woke) life.arrest = null;
+    life.alarm = Math.max(life.alarm, ALARM);
+    /* The DURABLE number — see the accessor in `dressStationLife`. */
     life.standing -= hurt * 2;
-    if (world.run) world.run.stationStanding = life.standing;
     world.notify?.('SECURITY CALLED', 'the nearest patrol is on its way');
   }
   if (life.alarm > 0) {
     life.alarm -= dt;
     /* Two guards, which is the patrol unit `faction.py` states — "a patrol
-     * unit is two, always" — and they come from the security post (#24). */
-    if (life.guards.length === 0 && life.alarm > 6) {
-      const post = PLACE.get(24);
-      for (let g = 0; g < 2; g++) {
-        _v.set(post.x + (g ? 1.4 : -1.4), floorOf(post) + 0.1, post.z);
-        let b = null;
-        try { b = world.spawnEnemy('bodyguard', _v.clone(), { team: 1 }); } catch {}
-        if (b) { b.stationGuard = true; life.guards.push(b); }
-      }
+     * unit is two, always". A pair that has been cut down is replaced while
+     * the alarm runs, which is the same sentence: the NEAREST guards come. */
+    if (life.guards.length === 0 && life.alarm > ALARM - GUARD_REACH) dispatch(world, st, life);
+    stepGuards(world, st, life, dt);
+    if (life.alarm <= 0) standDown(world, life);
+  }
+  /* AND THE CELL, WHICH IS A DIFFERENT WORLD FROM MOST DECKS — see below. */
+  deliverToBrig(world, st, life);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE PATROL — §11's "come", which is a verb of arrival                      */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ THEY WERE DELETED BEFORE THEY COULD REACH YOU ═════════════════════════
+ *
+ * The guards were spawned at the security post (#24) and removed the frame a
+ * hard-coded 12 s alarm expired. Measured, cutting a resident in the Concourse
+ * — the SAME DECK as the post, which is the best case this code had:
+ *
+ *     0s   guards 2  alarm 12.0  nearest 47.4 m
+ *     10s  guards 2  alarm  2.4  nearest 45.0 m
+ *     15s  guards 0  alarm    0   (deleted)
+ *     closest approach over the whole alarm: 43.1 m
+ *
+ * They spawn 47 m off and are given 12 s. At any pace a person walks that is
+ * not slow, it is IMPOSSIBLE — and §5.3's own gate is "attacking a resident
+ * summons a guard within 10 s". Off deck 40 it was worse than impossible: the
+ * post is a deck-40 room, so `floorOf(PLACE.get(24))` is `DECK_Y[40] = 0`
+ * unconditionally, and a player who cut somebody in the Reactor hall (deck 48,
+ * y = 25) got two guards standing 25 m BELOW HIS FEET on another deck, where
+ * they stayed until they were deleted.
+ *
+ * ── SO THE PATROL IS GIVEN A DISTANCE IT CAN CROSS, AND IT CROSSES IT ─────
+ *
+ * `GUARD_FROM` is 22 m and `GUARD_PACE` is 3.6 m/s: 6.1 s from the doorway to
+ * your collar, inside §5.3's ten. They come onto the PLAYER'S deck, from a
+ * piece of that deck's own floor — the door of the room you are in, or the
+ * walkway you are standing on, a fixed distance round it on the side the
+ * nearest junction is; see `patrolFrom`, which is where the geometry is
+ * argued. The alternative was a longer alarm, which is a patrol that is still
+ * not coming, only for longer.
+ *
+ * THEY ARE DRIVEN AND NOT BRAINED, exactly as the residents on the walkways
+ * are driven by `stepWalkers`: `Enemy` has no `brain` field at all (see
+ * `World.pickTarget`'s note), and what the old code was actually relying on
+ * was a duel brain circling at its archetype's `preferred` band — which is
+ * why the two bodies it spawned closed four metres in twelve seconds. A march
+ * on the player at a fixed pace is the behaviour §11 describes, it is
+ * measurable to the metre, and `consequence.mjs` measures it.
+ */
+const ALARM = 20;
+/** How long the dispatch window stays open inside the alarm, in seconds. */
+const GUARD_REACH = 12;
+/** Metres they come in from. */
+const GUARD_FROM = 22;
+/** A duty jog. 22 m at this is 6.1 s — §5.3 allows ten. */
+const GUARD_PACE = 3.6;
+/** Hands on you — and, when a crowd is in the way, boxed in for this long. */
+const GUARD_GRAB = 2.2, GUARD_HOLD = 5, GUARD_HOLD_FOR = 1.5;
+/** How far apart the pair walks. */
+const GUARD_ABREAST = 0.9;
+/**
+ * WHAT A STATION GUARD IS. `res_human` is the resident chassis every body in
+ * the drum is built on, and the ARC kit is the one armour row in `Bodies.js`
+ * that carries TWIN HOLSTERED SIDEARMS on the belt — so §11's "real, armed
+ * bodies" is a body you can walk up to with the weapons visible on it, and
+ * not the 1050 hp IG bodyguard BOSS this used to spawn, whose arrival ran the
+ * boss cinematic ("IT HAS COME FOR YOU") over a shoplifting.
+ */
+const GUARD_KIT = { id: 'arc', helmet: true, plate: 'slate', accent: 'sun', visor: 'char' };
+/** §11's cell, the deck it is on, and how long you are in it. */
+const BRIG = 47, BRIG_DECK = 48, BRIG_HOURS = 6;
+
+/**
+ * The floor a patrol stands on: this deck's, unless the player is well off it
+ * — see `stepGuards`. One rule, so the pair is never put down on a plane the
+ * march then has to correct.
+ */
+function guardY(st, p) {
+  const deckY = DECK_Y[st.deck] ?? 0;
+  return Math.abs((p?.y ?? deckY) - deckY) > 3 ? p.y : deckY;
+}
+
+/** Is this position inside a place's footprint? `Station.placeUnder`'s own two
+ * lines, on one room rather than on all of them. */
+function inRoom(p, x, z) {
+  const dx = x - p.x, dz = z - p.z;
+  const c = Math.cos(-p.yaw), sn = Math.sin(-p.yaw);
+  const lx = dx * c + dz * sn, lz = -dx * sn + dz * c;
+  return Math.abs(lx) <= p.w / 2 && Math.abs(lz) <= p.d / 2;
+}
+
+/** The room a position is standing IN, or null for a corridor. */
+function roomAt(deck, x, z) {
+  for (const p of placesOn(deck)) if (inRoom(p, x, z)) return p;
+  return null;
+}
+
+/**
+ * Where a patrol comes onto this deck from. Writes `out`, returns the metres.
+ *
+ * ── AND A STRAIGHT LINE TO YOU IS NOT A PLACE A BODY CAN STAND ───────────
+ *
+ * The first cut of this took the nearest patrol door — the security post, or
+ * a ring junction — and slid the spawn along the line to the player until it
+ * was inside `GUARD_FROM`. Measured on deck 40, player on the balcony at
+ * r = 24: the post is at bearing 62° on the ATRIUM band, so the line to it
+ * crossed the middle of the deck and the pair was put down at r ≈ 10 —
+ * INSIDE THE ATRIUM VOID, an 18 m hole through three decks. They then walked
+ * outward and stopped dead at r = 17.6 against the lip:
+ *
+ *     t=2s nearest 8.4 m   t=3s 6.5 m   t=16s 6.5 m   (never arrived)
+ *
+ * A spawn point is not a distance, it is a piece of floor. So the origin is
+ * taken from the drum's own geometry instead, and there are exactly two cases
+ * because the drum has exactly two kinds of standing place:
+ *
+ *   IN A ROOM — they come from the corridor OUTSIDE ITS DOOR, and `stepGuards`
+ *     walks them to the door before it walks them to you. Every room on the
+ *     station opens onto a walkway (§3.1's "every place reachable on foot"),
+ *     so that point is floor by construction.
+ *   ON A WALKWAY — they come along the player's OWN annulus: same radius, an
+ *     arc of `GUARD_FROM` away, on the side the nearest junction is. The ring,
+ *     the balcony and the spines are all annuli and a body on one of them can
+ *     always walk along it, which is the property the straight line did not
+ *     have.
+ */
+function patrolFrom(st, px, pz, y, out) {
+  const room = roomAt(st.deck, px, pz);
+  if (room) {
+    /**
+     * AT THE ROOM'S OWN DOOR, and not a step past it. `door` is the
+     * gazetteer's world-space threshold (see `Station.placeUnder`), and a
+     * threshold is floor; two and a half metres BEYOND it is whatever is on
+     * the other side, which on #9 The Concourse — whose door faces inboard at
+     * r = 19.4 — is the atrium void, and the pair stood on the lip at r = 17.6
+     * for the whole alarm.
+     *
+     * A room is a rectangle and the player is inside it, so the segment from
+     * the door to the player is inside it too: a long room (the Concourse is
+     * 35 m deep) starts the march part-way along that segment rather than
+     * giving the patrol more ground than §5.3's ten seconds can cover.
+     */
+    let ox = room.door[0], oz = room.door[1];
+    const dx = px - ox, dz = pz - oz;
+    const d = Math.hypot(dx, dz) || 1;
+    if (d > GUARD_FROM) { const k = (d - GUARD_FROM) / d; ox += dx * k; oz += dz * k; }
+    out.set(ox, y + 0.1, oz);
+    return Math.min(d, GUARD_FROM);
+  }
+  const r = Math.hypot(px, pz);
+  if (r < 1) { out.set(px + GUARD_FROM, y + 0.1, pz); return GUARD_FROM; }
+  const a = Math.atan2(px, pz);
+  /* WHICH SIDE THEY COME FROM: the nearest junction's, so a patrol arrives
+   * from a crossing rather than out of the wall behind you. */
+  let side = 1, best = Infinity;
+  for (const j of junctionsOn(st.deck)) {
+    let d = (j.at * Math.PI / 180) - a;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    if (Math.abs(d) < best) { best = Math.abs(d); side = d < 0 ? -1 : 1; }
+  }
+  const swept = Math.min(GUARD_FROM / r, Math.PI / 3) * side;
+  out.set(r * Math.sin(a + swept), y + 0.1, r * Math.cos(a + swept));
+  return Math.min(GUARD_FROM, Math.abs(swept) * r);
+}
+
+/** Two guards, put down on the player's own deck. */
+function dispatch(world, st, life) {
+  const p = world.player?.position;
+  if (!p || !world.spawnEnemy) return;
+  const at = patrolFrom(st, p.x, p.z, guardY(st, p), _v2);
+  for (let g = 0; g < 2; g++) {
+    /* Abreast across the line they are walking in on. */
+    const s2 = g ? GUARD_ABREAST : -GUARD_ABREAST;
+    const dx = p.x - _v2.x, dz = p.z - _v2.z;
+    const d = Math.hypot(dx, dz) || 1;
+    _v.set(_v2.x - (dz / d) * s2, _v2.y, _v2.z + (dx / d) * s2);
+    let b = null;
+    try {
+      b = world.spawnEnemy('res_human', _v.clone(), {
+        team: world.player?.team ?? 0, armour: GUARD_KIT,
+      });
+    } catch {}
+    if (!b) continue;
+    b.stationGuard = true;
+    /* THE SAME TWO MARKS EVERY BODY IN THE DRUM CARRIES. `stationResident` is
+     * what `World.pickTarget` reads to refuse a target — a guard that opened
+     * fire would be a firefight, and §11's sentence is an ARREST — and
+     * `noAmbientHarm` is what stops a crowd billing the player for the pair
+     * shouldering through it. `stationName` is deliberately NOT set: the
+     * witness loop above blames the player for hurt RESIDENTS, and a patrol
+     * that counted as one would call itself. */
+    b.stationResident = true;
+    b.noAmbientHarm = true;
+    life.guards.push(b);
+  }
+  life.guardNear = at;
+}
+
+/** One frame of the march, and the frame it ends in an arrest. */
+function stepGuards(world, st, life, dt) {
+  const p = world.player?.position;
+  if (!p || !life.guards.length) return;
+  /**
+   * THE FLOOR THEY WALK ON IS THIS DECK'S — the whole of the second half of
+   * the old defect, which took `floorOf(PLACE.get(24))` and therefore deck
+   * 40's zero on every deck. `guardY` follows the PLAYER when the player is
+   * well off the deck plane (a catwalk in the Reactor hall): a patrol that
+   * walks the floor while you are twenty metres over it is the same "they
+   * never arrive" wearing a different hat.
+   */
+  const y = guardY(st, p);
+  const room = roomAt(st.deck, p.x, p.z);
+  let near = Infinity;
+  for (let i = 0; i < life.guards.length; i++) {
+    const g = life.guards[i];
+    if (!g?.position) continue;
+    if (g.dead || g.alive === false) continue;
+    const s2 = i ? GUARD_ABREAST : -GUARD_ABREAST;
+    const dx = p.x - g.position.x, dz = p.z - g.position.z;
+    const d = Math.hypot(dx, dz) || 1;
+    /* The point a stride to one side of you, so the pair arrives as a pair
+     * rather than as two bodies inside one another. */
+    let tx = p.x - (dz / d) * s2, tz = p.z + (dx / d) * s2;
+    /* THE DOOR FIRST, IF YOU ARE IN A ROOM. A guard walking at the player
+     * through the wall of a shop is stopped by the wall — measured, at the
+     * atrium's lip, 6.5 m short for the whole alarm — so the march has two
+     * legs whenever the player is inside a footprint and the guard is not. */
+    if (room && !inRoom(room, g.position.x, g.position.z)
+        && Math.hypot(g.position.x - room.door[0], g.position.z - room.door[1]) > 1.2) {
+      tx = room.door[0]; tz = room.door[1];
     }
-    if (life.alarm <= 0) {
-      for (const g of life.guards) removeBody(world, g);
-      life.guards.length = 0;
+    const mx = tx - g.position.x, mz = tz - g.position.z;
+    const md = Math.hypot(mx, mz);
+    if (md > 1e-4) {
+      /**
+       * THE VELOCITY IS THE MARCH, and the engine walks them.
+       *
+       * `Enemy.update` ends in `position.addScaledVector(this.velocity, dt)`
+       * and then resolves the step against the world — so a hand-written
+       * position step AND a velocity for the gait is the same metre walked
+       * twice: measured, the pair closed 18.9 m in 2.8 s against a declared
+       * 3.6 m/s. Handing over the velocity alone is one metre per metre, it
+       * animates (the gait reads the same field), and it is the engine's own
+       * collision that decides what happens when a body meets a wall rather
+       * than an assignment that ignores one.
+       */
+      const want = Math.min(GUARD_PACE, md / Math.max(dt, 1e-3));
+      if (g.velocity) g.velocity.set((mx / md) * want, g.velocity.y, (mz / md) * want);
+      g.facing = Math.atan2(mx, mz);
     }
+    /* AND THEY WALK ON THE PLAYER'S DECK. This is the line the old code could
+     * not have: it took the post's floor, which is deck 40's, always — 25 m
+     * under the feet of anyone on the working deck. */
+    if (Math.abs(g.position.y - (y + 0.1)) > 0.4) g.position.y = y + 0.1;
+    g.body?.setTransform?.(g.position, null);
+    near = Math.min(near, Math.hypot(p.x - g.position.x, p.z - g.position.z));
+  }
+  life.guardNear = near;
+  /**
+   * ── HANDS ON YOU, OR CORNERED ────────────────────────────────────────
+   *
+   * Two metres is arm's length and it is not always reachable: bodies have
+   * capsules, a busy room has thirty of them, and measured in the Reactor
+   * hall the pair closed to 3.4 m through the shift and could get no nearer.
+   * A consequence that a crowd can cancel is not a consequence, so being
+   * BOXED IN — both of them inside `GUARD_HOLD` for a second and a half — is
+   * the same arrest. It cannot fire at range: 5 m is close enough that the
+   * player can see who has them.
+   */
+  life.guardHold = near <= GUARD_HOLD ? (life.guardHold || 0) + dt : 0;
+  if (near <= GUARD_GRAB || life.guardHold >= GUARD_HOLD_FOR) arrest(world, st, life);
+}
+
+/** The patrol stands down and goes away again. */
+function standDown(world, life) {
+  for (const g of life.guards) removeBody(world, g);
+  life.guards.length = 0;
+  life.guardNear = Infinity;
+  life.guardHold = 0;
+}
+
+/**
+ * ══ "YOU WAKE IN THE BRIG (#47)" ══════════════════════════════════════════
+ *
+ * It was not implemented at all: `grep -rni brig src/` answered with the plan
+ * row that builds the room and a comment quoting §11. The guards arriving had
+ * no consequence, so the sentence stopped at a body walking up to you.
+ *
+ * WHAT AN ARREST IS, in order: the patrol lets go of the deck, six station
+ * hours pass in the cell (`passStationHours`, the same door a run comes home
+ * through, so the clock and the day both move), the counters shut for the day
+ * after the one you were taken on, and you are put in #47.
+ *
+ * ── AND THE CELL IS ON ANOTHER DECK, WHICH IS ANOTHER WORLD ───────────────
+ *
+ * The Brig is on deck 48 and `main.js` builds one world per deck, so an arrest
+ * made on the Concourse cannot simply move the player: the room is not in the
+ * scene. The transfer therefore goes through `world.onDeckLift` — the SHIPPED
+ * door, the one the lift's own button column calls, which tears the world down
+ * and builds deck 48 — and `StationSave.brig` carries the arrest across it,
+ * because the run bag does not survive a deck change (that is the same fact
+ * that made standing two numbers). `deliverToBrig` is the far side.
+ */
+function arrest(world, st, life) {
+  if (life.arrest) return;
+  life.arrest = { deck: st.deck, hour: st.hour, at: st.deck === BRIG_DECK ? 'here' : 'transfer' };
+  life.alarm = 0;
+  standDown(world, life);
+  /* A GUEST'S CLOCK IS NOT A GUEST'S SAVE — `tickStationClock` argues this at
+   * length for the same fold. A joined player's hour is the host's. */
+  if (world.netMode !== 'client') {
+    st.hour = passStationHours(BRIG_HOURS);
+    st._savedHour = st.hour | 0;
+    st.day = stationDay(st.hour);
+    /* AFTER the hours, so sleeping through a midnight does not serve the ban
+     * out: the shutter comes up on the day after the one you woke on. */
+    shutKiosks(1);
+    setBrigPending(true);
+  }
+  world.notify?.('ARRESTED', 'the patrol has you — you wake in the Brig');
+  if (st.deck !== BRIG_DECK) {
+    try {
+      world.onDeckLift?.({ n: BRIG_DECK, label: 'BRIG', level: 'station', deck: BRIG_DECK, shaft: 'atrium' });
+    } catch {}
   }
 }
 
-/** Do the kiosks serve you? §11: not for a day, once you are known for it. */
+/** Put the player on the bench in #47. True if they were moved. */
+function putInCell(world, st) {
+  const cell = PLACE.get(BRIG);
+  const p = world.player;
+  if (!cell || !p?.position) return false;
+  /* A slot in the cell ring, off `slotIn` — the same deterministic scatter
+   * every body in every room on the station is placed by. */
+  slotIn(cell, 3, _v);
+  _v.y = floorOf(cell) + 0.1;
+  p.position.copy(_v);
+  p.actor?.setPosition?.(_v);
+  if (p.velocity) p.velocity.set(0, 0, 0);
+  p.fallSpeed = 0;
+  p._sweepFromY = _v.y;
+  /* Facing the guard desk in the middle of the ring, which is what you wake
+   * looking at. */
+  if (p.camera) p.camera.yaw = Math.atan2(cell.x - _v.x, cell.z - _v.z);
+  return true;
+}
+
+/** The far side of the transfer, and of an arrest made on deck 48 itself. */
+function deliverToBrig(world, st, life) {
+  if (st.deck !== BRIG_DECK || !brigPending()) return;
+  /* NOT UNTIL THE DECK IS BUILT. `dressStation` leaves the heavy half of the
+   * build on `st.pending` and `drainStationBuild` spends it over the frames
+   * after the world is live — putting the player down in a room that has no
+   * floor yet is a fall through the drum. */
+  if (st.pending?.length) return;
+  if (!putInCell(world, st)) return;
+  setBrigPending(false);
+  life.arrest = life.arrest || { deck: st.deck, hour: st.hour, at: 'woke' };
+  life.arrest.woke = true;
+  world.notify?.('THE BRIG', 'you wake in the cell block — the counters are shut');
+}
+
+/**
+ * Do the kiosks serve you? §11: *"the kiosks refuse you for a day"*, and both
+ * halves of that are now real. The standing gate is the old one — a number
+ * this station can actually reach, which `reachable.mjs` drives — and the DAY
+ * is `StationSave.shut`, set by the arrest and read against the stored
+ * midnight counter. Before this, "for a day" meant "until you collect three
+ * jobs", which is not a duration.
+ */
 export function servedHere(world) {
   const life = world?._stationLife;
-  return !life || life.standing > -6;
+  if (!life) return true;
+  if (!(life.standing > -6)) return false;
+  return !kiosksShut();
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -2010,6 +2570,160 @@ function stepHandlers(world, life) {
   return false;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE PEOPLE WHO ARE NOT GOING ANYWHERE                                     */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ A ROOM FULL OF PEOPLE MUST NOT BE A ROOM FULL OF STATUES ══════════════
+ *
+ * Every resident on this station used to have a target and walk at the player
+ * at 2.7 m/s, because `friendlyFire` is on for §11's *"cut or throw one"* and
+ * `canHarm` is symmetric. `World.pickTarget` now refuses a `stationResident`
+ * outright, which is right — residents chasing you is not life — but it left
+ * the other half of the sentence unwritten: the only thing in this file with a
+ * budget of motion was `stepWalkers`, and a resident who is not a walker
+ * became COMPLETELY MOTIONLESS.
+ *
+ * MEASURED on deck 40, quality `high`, pool primed, sixty simulated seconds,
+ * standing in #9 The Concourse — §3.3's *"where the game's whole cast is seen
+ * at once, and that is the point of the station"*:
+ *
+ *     08:00   60 bodies,  4 walkers,  4 moved,  195 m of ground
+ *     13:00   60 bodies,  0 walkers,  0 moved,    0 m      ← sixty statues
+ *     22:00   44 bodies,  2 walkers,  2 moved,   92 m
+ *
+ * ── AND THE ANSWER IS NOT TO SET THEM WALKING ────────────────────────────
+ *
+ * The people in a room are not in transit; they are AT something — a counter,
+ * a bench, a rail, a stall, a table. A fix that gave them routes would empty
+ * every room in the gazetteer into the corridor, which is the defect the
+ * walkway clause's last assertion already exists to catch.
+ *
+ * So what they get is the other kind of life, the one a body standing in a
+ * place actually has: it turns, it shifts its weight, it takes a step along
+ * the counter to the thing it is working at, and it comes back. Two poses,
+ * held a few seconds each and rolled off the same `(place, slot)` seed as
+ * everything else in this file, so a person you look away from and back is
+ * doing the same thing they were.
+ *
+ * ── WHAT IT IS DELIBERATELY NOT ──────────────────────────────────────────
+ *
+ * SITTING is the obvious third pose and it is NOT here. `Rig.poseMeditation`
+ * is a real solver for a body on the floor and would do it, but it writes
+ * BONES and the pelvis in world coordinates, and `Enemy._pose` has two
+ * different conventions for where a resident's hips live depending on which
+ * branch posed it. Driving it from this file would be a guess that only a
+ * screenshot could check, and rAF does not fire in this tree's headless
+ * browser. `Props.seatCrowd` is the baked crowd's and puts down figures, not
+ * bodies. The honest thing is to move what can be measured and to say so.
+ *
+ * ── THE COST ─────────────────────────────────────────────────────────────
+ *
+ * One countdown, one lerp and one `atan2` per live body per frame, over a pool
+ * bounded at sixty. It is the same shape and the same order as `stepWalkers`,
+ * which is already inside the 2.5 ms bound with the whole file at 0.16 ms.
+ */
+const STAND = {
+  /** How far from their own slot a body will drift. A step, not a walk. */
+  reach: 1.15,
+  /** Metres a second of a shuffle — under half of `WALK_PACE`. */
+  pace: 0.6,
+  /** How fast the shoulders come round to a new bearing. */
+  turn: 2.2,
+  /** How long one pose is held. */
+  hold: { min: 1.8, span: 4.4 },
+};
+
+/**
+ * Give a body standing in a slot its post: where its feet belong, which way
+ * the room faces, and the first thing it is doing.
+ */
+function standHere(body, place, at) {
+  body.standX = at.x; body.standZ = at.z;
+  body.standCx = at.x; body.standCz = at.z;
+  body.standTx = at.x; body.standTz = at.z;
+  body.standYaw = place.yaw || 0;
+  body.standFace = body.facing ?? body.standYaw;
+  /* §3.3's Vorlon is *"one encounter suit, one place (#37), NEVER WALKS"*, and
+   * `fixed` is the gazetteer's own word for a place whose occupancy is a fact
+   * rather than a rhythm. A body in one turns and breathes and does not take
+   * a step, which is what the row says about him. */
+  body.standStill = !!place.fixed;
+  body.standN = 0;
+  body.standIn = 0;
+}
+
+/**
+ * The next thing this body is doing, seeded on its slot and on how many poses
+ * it has already held — never on the clock and never on `Math.random`, so two
+ * machines watching the same room see the same person do the same thing.
+ */
+function posture(body) {
+  const a = (body.stationPlace | 0) * 97 + (body.stationSlot | 0) * 7 + 11;
+  const n = body.standN = (body.standN | 0) + 1;
+  const roll = h2(a, n * 5 + 1);
+  body.standIn = STAND.hold.min + h2(a, n * 5 + 2) * STAND.hold.span;
+  body.standPace = 0.7 + h2(a, n * 5 + 3) * 0.6;
+  if (roll < 0.44 || body.standStill) {
+    /* TURN — the commonest thing anybody standing in a room does, and the one
+     * that costs no ground at all. About the ROOM's axis, so a hall of people
+     * reads as a hall of people attending to it rather than as a scatter. */
+    body.standTx = body.standCx; body.standTz = body.standCz;
+    body.standFace = body.standYaw + (h2(a, n * 5 + 4) - 0.5) * 2.6;
+    return;
+  }
+  /* SHIFT THE WEIGHT, or step along to what is being worked at — the short
+   * one four times as often as the long one. Always measured off the SLOT and
+   * not off where the body has got to, so nobody wanders out of their room. */
+  const t = h2(a, n * 5 + 5) * Math.PI * 2;
+  const far = roll > 0.86 ? 1 : 0.3;
+  const rad = STAND.reach * far * (0.35 + 0.65 * h2(a, n * 5 + 6));
+  body.standTx = body.standX + Math.sin(t) * rad;
+  body.standTz = body.standZ + Math.cos(t) * rad;
+  const dx = body.standTx - body.standCx, dz = body.standTz - body.standCz;
+  body.standFace = (dx * dx + dz * dz) > 1e-6 ? Math.atan2(dx, dz) : body.standFace;
+}
+
+/**
+ * ONE FRAME OF EVERYBODY WHO IS STAYING WHERE THEY ARE.
+ *
+ * `standCx/standCz` is the authority on where the body is, exactly as
+ * `wayR/wayAngle` is for a walker, and `position` is written from it every
+ * frame rather than added to — so nothing `Enemy._move` does with the velocity
+ * this hands the animator can accumulate into a drift out of the room.
+ */
+function stepStanding(world, life, dt) {
+  for (const body of life.live.values()) {
+    /* A walker has `stepWalkers`; a body the player has hurt is a ragdoll, a
+     * corpse or a witness and is not shuffling at a counter. */
+    if (!body || body.wayR || body.standX === undefined) continue;
+    if (body.__stationTouched || body.alive === false || body.dead) continue;
+    const p = body.position;
+    if (!p) continue;
+    body.standIn -= dt;
+    if (body.standIn <= 0) posture(body);
+    let mx = 0, mz = 0;
+    const dx = body.standTx - body.standCx, dz = body.standTz - body.standCz;
+    const d = Math.hypot(dx, dz);
+    if (d > 0.01) {
+      const step = Math.min(d, STAND.pace * (body.standPace || 1) * dt);
+      mx = dx / d * step; mz = dz / d * step;
+      body.standCx += mx; body.standCz += mz;
+    }
+    p.x = body.standCx; p.z = body.standCz;
+    body.body?.setTransform?.(p, null);
+    /* THE GAIT READS THE VELOCITY, so a step is a step and a pause is the
+     * rig's own idle sway rather than a slide. */
+    if (body.velocity && dt > 0) body.velocity.set(mx / dt, 0, mz / dt);
+    /* Facing: along the step while there is one, on the pose's bearing when
+     * there is not. `Enemy._pose` leaves a resident's `facing` alone — its
+     * `want` is the body's own — so this is the one writer. */
+    const want = (mx * mx + mz * mz) > 1e-9 ? Math.atan2(mx, mz) : body.standFace;
+    body.facing += wrapPi(want - body.facing) * Math.min(1, dt * STAND.turn);
+  }
+}
+
 function stepWalkers(world, life, dt) {
   const deck = life.deck;
   const hour = world._station?.hour ?? 13;
@@ -2019,6 +2733,31 @@ function stepWalkers(world, life, dt) {
     if (body.wayDwell > 0) {
       body.wayDwell -= dt;
       if (body.velocity) body.velocity.set(0, 0, 0);
+      /**
+       * ── AND IT IS HELD THERE, NOT MERELY LEFT THERE ───────────────────
+       *
+       * This branch wrote the velocity and nothing else, so for the two to
+       * seven seconds a walker stands at the door it arrived at, `position`
+       * was whatever the contact solver last did to it — and a corridor with
+       * people in it pushes. It never showed while four walkers were alive on
+       * a deck; MEASURED with the corridor properly populated, deck 40 at
+       * 13:00 with thirty-seven of them: a dwelling body **1.9 m off the
+       * ring**, and `setOut` then planned its next route from the polar state
+       * it still thought it was in — so the walk opened with a two-metre
+       * sidestep onto its own first leg, eight times in seventy seconds.
+       * `station.mjs`'s "off the leg the route says they are on" clause reads
+       * exactly that, and this is what it was reading.
+       *
+       * `wayR`/`wayAngle` is the authority for a walker exactly as
+       * `standCx`/`standCz` is for everybody else, so it is written out on
+       * every frame — the ones where the body is standing included.
+       */
+      const sx = body.wayR * Math.sin(body.wayAngle);
+      const sz = body.wayR * Math.cos(body.wayAngle);
+      if (body.position) {
+        body.position.x = sx; body.position.z = sz;
+        body.body?.setTransform?.(body.position, null);
+      }
       if (body.wayDwell <= 0) setOut(deck, hour, body);
       continue;
     }
@@ -2113,6 +2852,7 @@ export function stepStationLife(world, dt) {
   }
   witness(world, st, life, dt);
   const built = stepHandlers(world, life);
+  stepStanding(world, life, dt);
   stepWalkers(world, life, dt);
   stepTram(world, st, life, dt);
   stepEvents(world, st, life, dt);

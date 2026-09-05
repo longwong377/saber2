@@ -71,7 +71,18 @@ function diskFetch() {
 async function station(deck) {
   const { bootWorld } = await import('./_coop.mjs');
   const { prepareStation } = await import('../../src/game/Station.js');
+  const { clearStation } = await import('../../src/game/StationSave.js');
   diskFetch();
+  /**
+   * A CLEAN FOLD PER WORLD, because standing is now ONE number and that number
+   * is durable. The gate runs every suite in one process and `makeStore` keeps
+   * the fold in memory under node, so a clause that cuts somebody would hand
+   * the next clause a station that already remembers it — and the first clause
+   * here asserts that an idle player's standing is exactly 0. Clearing is the
+   * honest isolation: it is the same door `clearStation`'s own note reserves
+   * for a check.
+   */
+  clearStation();
   await prepareStation();
   const { world } = await bootWorld({
     level: 'station',
@@ -109,27 +120,188 @@ export async function run({ check, assert }) {
       + `standing ${life.standing}, ${life.guards.length} guards, player ${world.player.hp.toFixed(0)} hp`;
   });
 
-  check('consequence: cut one and the patrol still comes', async () => {
+  check('consequence: the patrol crosses the ground and takes you', async () => {
+    /**
+     * ══ THE CLAUSE THIS FILE USED TO ASSERT WAS THE SPAWN ═════════════════
+     *
+     * It read `life.guards.length === 2` three seconds after the cut, and that
+     * is TWO BODIES EXISTING. §11 says they COME. Measured against the code
+     * that passed it, cutting a resident in the Concourse — the same deck as
+     * the security post, its best case:
+     *
+     *     0s  guards 2  alarm 12.0  nearest 47.4 m
+     *     10s guards 2  alarm  2.4  nearest 45.0 m
+     *     15s guards 0  alarm   0    (deleted)
+     *     closest approach over the whole alarm: 43.1 m
+     *
+     * A 12 s alarm and a 47 m spawn: the arrival was not slow, it was
+     * arithmetically impossible, and off deck 40 it was worse — the post is a
+     * deck-40 room, so both bodies were put on `DECK_Y[40] = 0` whatever deck
+     * the player was on, 25 m under the feet of anyone in the Reactor hall.
+     *
+     * So this asserts the VERB. A closing distance, measured every frame,
+     * against §5.3's own gate — *"attacking a resident summons a guard within
+     * 10 s"* — and the vertical separation, which is the deck bug's own
+     * signature and cannot be seen in a horizontal number.
+     */
     const { idleInput } = await import('./_coop.mjs');
+    const { servedHere } = await import('../../src/game/StationLife.js');
     const world = await station(40);
     const input = idleInput();
     for (let f = 0; f < 60 * 6; f++) world.update(1 / 60, input);
     const victim = world.enemies.find((e) => e.stationName);
     assert(victim, 'no resident on deck 40 to cut');
-    const before = world._stationLife.standing;
-    /* Through the shipped damage door with the player as the source — the same
-     * call a blade lands. Nothing here is hand-set: `hurtByPlayer` and the
-     * standing fall are both the production path's own work. */
+    const life = world._stationLife;
+    const before = life.standing;
+    /* THE SHIPPED DOOR FOR A DECK CHANGE, recorded rather than taken: the
+     * Brig is on deck 48 and `main.js` rebuilds the world to get there. */
+    let asked = null;
+    world.onDeckLift = (row) => { asked = row; };
     victim.damage(25, victim.position.clone(), world.player, 'saber');
     assert(victim.hurtByPlayer === true, 'a cut by the player did not mark the resident');
+
+    let spawned = 0, first = null, closest = Infinity, worstY = 0, took = null;
+    for (let f = 0; f < 60 * 15 && took === null; f++) {
+      world.update(1 / 60, input);
+      spawned = Math.max(spawned, life.guards.length);
+      const p = world.player.position;
+      for (const g of life.guards) {
+        const d = Math.hypot(p.x - g.position.x, p.z - g.position.z);
+        if (first === null) first = d;
+        closest = Math.min(closest, d);
+        worstY = Math.max(worstY, Math.abs(g.position.y - p.y));
+      }
+      if (life.arrest) took = (f + 1) / 60;
+    }
+    assert(spawned === 2, `${spawned} guards came — faction.py says a patrol unit is two, always`);
+    assert(worstY < 1.5, `a guard stood ${worstY.toFixed(1)} m above or below the player — it is on another deck`);
+    assert(first > 8, `the patrol was put down ${first.toFixed(1)} m away, which is on top of the player`);
+    assert(closest <= 3.5, `the patrol's closest approach was ${closest.toFixed(1)} m — it never reached you`);
+    assert(first - closest > 6,
+      `the patrol closed ${(first - closest).toFixed(1)} m of ${first.toFixed(1)} — it did not come, it stood there`);
+    assert(took !== null && took <= 10,
+      `nobody had hands on the player ${took === null ? 'at all' : `until ${took.toFixed(1)} s`} — §5.3 allows ten seconds`);
+    assert(life.standing < before, `standing did not fall after a cut (${before} -> ${life.standing})`);
+    assert(servedHere(world) === false, 'the kiosks still serve a player the patrol has just arrested');
+    assert(asked && asked.deck === 48 && asked.level === 'station',
+      `the arrest asked the lift for ${asked ? JSON.stringify(asked) : 'nothing'} — the Brig is #47 on deck 48`);
+    return `cut ${victim.stationName}: 2 guards in from ${first.toFixed(1)} m, closest ${closest.toFixed(1)} m, `
+      + `hands on at ${took.toFixed(1)} s (§5.3 allows 10), dy ${worstY.toFixed(2)} m, `
+      + `standing ${before} -> ${life.standing}, transfer to deck ${asked.deck} asked`;
+  });
+
+  check('consequence: you wake in the Brig, and the kiosks are shut for a day', async () => {
+    /**
+     * §11's second and third clauses, neither of which existed: `grep -rni
+     * brig src/` answered with the plan row that BUILDS #47 and a comment
+     * quoting the sentence. Nothing arrested you, nothing moved you, and "for
+     * a day" was `standing > -6` — not a duration at all, so two collected
+     * jobs put the shutter straight back up.
+     *
+     * Deck 48 is the Brig's own deck, so the whole of an arrest happens in
+     * one world here and the check can stand in the cell and measure it. The
+     * transfer from another deck is the clause above: it asserts the lift is
+     * asked, which is the only half of it that exists before the world is
+     * rebuilt.
+     */
+    const { idleInput } = await import('./_coop.mjs');
+    const { servedHere } = await import('../../src/game/StationLife.js');
+    const SS = await import('../../src/game/StationSave.js');
+    const { PLACE, floorOf } = await import('../../src/game/StationPlan.js');
+    const world = await station(48);
+    const input = idleInput();
+    for (let f = 0; f < 60 * 6; f++) world.update(1 / 60, input);
+    const victim = world.enemies.find((e) => e.stationName);
+    assert(victim, 'no resident on deck 48 to cut');
+    const hour0 = SS.stationHour();
+    victim.damage(25, victim.position.clone(), world.player, 'saber');
+    const life = world._stationLife;
+    for (let f = 0; f < 60 * 15 && !life.arrest?.woke; f++) world.update(1 / 60, input);
+    assert(life.arrest?.woke === true, 'the patrol reached the player on the Brig\'s own deck and nothing happened');
+
+    /* IN THE ROOM, on its own floor — the footprint test `Station.placeUnder`
+     * uses, so "in the Brig" means what the gazetteer means by it. */
+    const cell = PLACE.get(47);
+    const p = world.player.position;
+    const dx = p.x - cell.x, dz = p.z - cell.z;
+    const c = Math.cos(-cell.yaw), sn = Math.sin(-cell.yaw);
+    const lx = dx * c + dz * sn, lz = -dx * sn + dz * c;
+    assert(Math.abs(lx) <= cell.w / 2 && Math.abs(lz) <= cell.d / 2,
+      `the player woke ${Math.hypot(dx, dz).toFixed(1)} m from #47's middle, outside a ${cell.w}x${cell.d} m room`);
+    assert(Math.abs(p.y - floorOf(cell)) < 1.5,
+      `the player woke ${(p.y - floorOf(cell)).toFixed(1)} m off the Brig's own floor`);
+    assert(SS.brigPending() === false, 'the arrest is still pending after the player was put in the cell');
+
+    /* THE HOURS IN THE CELL, and the day the counters open again. */
+    const slept = ((SS.stationHour() - hour0) + 24) % 24;
+    assert(slept > 1, `no time passed in the cell (${hour0.toFixed(1)} -> ${SS.stationHour().toFixed(1)})`);
+    assert(servedHere(world) === false, 'the kiosks serve a player who is in the cell');
+    assert(SS.kiosksShut() === true, 'the fold does not think the counters are shut');
+    /* AND IT IS A DAY AND NOT FOR EVER. The standing fall alone is -2, which
+     * is inside the -6 gate, so what is refusing service here is the day. */
+    SS.passStationHours(24);
+    assert(SS.kiosksShut() === false, 'the shutter is still down a day later');
+    assert(servedHere(world) === true,
+      `the counters refuse a player at standing ${life.standing} a day after the arrest`);
+    return `arrested on deck 48: woke inside #47 (${Math.hypot(dx, dz).toFixed(1)} m from its middle), `
+      + `${slept.toFixed(1)} station hours in the cell, kiosks shut until day ${SS.loadStation().shut} `
+      + `and serving again the day after`;
+  });
+
+  check('consequence: standing is one number, and it moves both ways inside a visit', async () => {
+    /**
+     * §11: *"your station `standing` drops (ONE NUMBER in `Session`)"*. It was
+     * two. `life.standing` was seeded from `world.run?.stationStanding`,
+     * `main.js` builds a fresh run bag per world and a deck is a world:
+     *
+     *     VISIT 1                      life.standing -10   fold -10   served no
+     *     VISIT 2 (after a lift ride)  life.standing   0    fold -10   served YES
+     *
+     * so the refusal lasted one visit while `Counter.markupFor` — which
+     * defaults to the FOLD — went on pricing the brawl. And the rise was
+     * broken the other way: `payForJob` wrote +2 to the fold only, so within
+     * a visit the number the kiosk door read could never go up.
+     *
+     * The three readers are asserted TOGETHER because agreement is the whole
+     * property: the counters, the pits and the kiosk door.
+     */
+    const { idleInput } = await import('./_coop.mjs');
+    const SL = await import('../../src/game/StationLife.js');
+    const SS = await import('../../src/game/StationSave.js');
+    const { markupFor } = await import('../../src/game/Counter.js');
+    const world = await station(40);
+    const input = idleInput();
     for (let f = 0; f < 60 * 3; f++) world.update(1 / 60, input);
     const life = world._stationLife;
-    assert(life.standing < before, `standing did not fall after a cut (${before} -> ${life.standing})`);
-    assert(life.alarm > 0, 'no alarm was raised by a cut');
-    assert(life.guards.length === 2,
-      `${life.guards.length} guards came — faction.py says a patrol unit is two, always`);
-    return `cut ${victim.stationName} for 25 — standing ${before} -> ${life.standing}, `
-      + `alarm ${life.alarm.toFixed(1)}, ${life.guards.length} guards`;
+
+    /* THE FALL, through the shipped path. */
+    const victim = world.enemies.find((e) => e.stationName);
+    assert(victim, 'no resident on deck 40 to cut');
+    victim.damage(25, victim.position.clone(), world.player, 'saber');
+    world.update(1 / 60, input);
+    assert(life.standing === SS.standing(),
+      `two numbers again: life ${life.standing}, fold ${SS.standing()}`);
+    assert(life.standing < 0, `the cut did not reach the durable fold (${life.standing})`);
+    const priced = markupFor().mul;
+    assert(priced > 1, `the counters price at ${priced.toFixed(3)} for a player who has just cut somebody`);
+
+    /* THE RISE, through `payForJob`'s own door — `setStanding` — and it must
+     * be felt by the kiosk door in this same visit. */
+    const low = life.standing;
+    SS.setStanding(SS.standing() + 6);
+    assert(life.standing === low + 6,
+      `work moved the fold to ${SS.standing()} and the station's own number stayed at ${life.standing}`);
+    assert(markupFor().mul < priced, 'the counters did not notice the standing coming back up');
+
+    /* AND NOTHING SEEDS IT OFF THE RUN BAG ANY MORE, which is the mechanism
+     * the ride used to throw it away. */
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../../src/game/StationLife.js', import.meta.url), 'utf8');
+    const live = src.replace(/\/\*[\s\S]*?\*\//g, '');
+    assert(!/stationStanding/.test(live),
+      'StationLife still reads or writes run.stationStanding — that is the second number');
+    return `one number: cut -> ${low} (fold ${SS.standing()}, markup x${priced.toFixed(3)}), `
+      + `+6 of work -> ${life.standing} and the counters see it at once`;
   });
 
   check('consequence: a jostle buys nothing and a heavy striker still lands', async () => {
@@ -212,20 +384,46 @@ export async function run({ check, assert }) {
     const hunting = res.filter((e) => e.target === world.player);
     assert(hunting.length === 0,
       `${hunting.length} of ${res.length} residents have the player as their target`);
-    /* And they are not merely target-less — they are not MOVING. A body that
-     * picked nobody but still walks would pass the clause above. */
+    /* And they are not merely target-less — they must not be COMING. A body
+     * that picked nobody but still walks at you would pass the clause above. */
     const at = res.map((e) => e.position.clone());
+    const was = res.map((e) => e.position.distanceTo(world.player.position));
     for (let f = 0; f < 60 * 3; f++) world.update(1 / 60, input);
     let worst = 0;
+    const closed = [];
     res.forEach((e, i) => {
       if (!world.enemies.includes(e)) return;
       worst = Math.max(worst, e.position.distanceTo(at[i]));
+      closed.push(was[i] - e.position.distanceTo(world.player.position));
     });
-    /* A walkway walker is propelled by `stepWalkers`, not by a brain, and its
-     * own suite bounds that. This is only asking that nobody CHARGES: three
-     * seconds of a chase covered eight metres. */
-    assert(worst < 3, `a resident covered ${worst.toFixed(2)} m in 3 s with nobody to chase`);
+    closed.sort((a, b) => a - b);
+    const median = closed.length ? closed[closed.length >> 1] : 0;
+    const nearest = closed.length ? closed[closed.length - 1] : 0;
+    /**
+     * ── IT IS THE CLOSING AND NOT THE TRAVEL, AND THAT IS THE PROPERTY ───
+     *
+     * This asserted `travel < 3 m in 3 s`, which is 1 m/s — UNDER a walking
+     * pace. `WALK_PACE` times a walker's own 0.86–1.14 is about 1.53 m/s, so
+     * a corridor walker doing exactly what §2.5 asks of it covers 4.6 m in
+     * three seconds and failed a check about hunting. Measured on deck 40
+     * with nobody chasing anybody: the six busiest bodies moved 4.29–4.61 m
+     * and their closing on the player ran +4.46 to −4.31 — people walking
+     * past, half of them toward and half away, which is a crowd.
+     *
+     * The defect this clause exists to catch measured differently and that is
+     * the whole point: all 28 bodies carried the player as `target` and closed
+     * a MEDIAN 4.86 m in five seconds, on 292 of 300 frames. A crowd going
+     * about its business has a median closing of about zero however fast its
+     * feet move, so the median is what is asserted, with a cap on the single
+     * worst body — a real charge at 2.7 m/s closes eight metres in three
+     * seconds and cannot hide inside either number.
+     */
+    assert(Math.abs(median) < 1.5,
+      `the crowd closed a median ${median.toFixed(2)} m on the player in 3 s — it is coming for you`);
+    assert(nearest < 6,
+      `a resident closed ${nearest.toFixed(2)} m on the player in 3 s with nobody to chase`);
     return `${res.length} residents, 0 hunting, worst travel ${worst.toFixed(2)} m in 3 s, `
+      + `median closing ${median.toFixed(2)} m (worst ${nearest.toFixed(2)}), `
       + 'friendly fire still on so §11 can happen';
   });
 }

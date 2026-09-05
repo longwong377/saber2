@@ -809,13 +809,23 @@ export async function run({ check, assert, near }) {
      * half of the shop never fired once.
      *
      * The fall was already being computed and thrown away:
-     * `StationLife.witness` does `life.standing -= hurt * 2` into a
+     * `StationLife.witness` did `life.standing -= hurt * 2` into a
      * SESSION-scoped object, and the durable fold beside it never moved.
+     *
+     * ── AND THE MIRROR BETWEEN THEM IS GONE, WHICH IS THE SECOND HALF ────
+     *
+     * `Station.persistStanding` used to carry the delta from the session copy
+     * onto the fold once a frame. It was a careful courier between two numbers
+     * that §11 says is one — and it only ran one way in practice, because
+     * `payForJob` wrote the fold directly, so within a visit the number the
+     * kiosk door read could never rise. `dressStationLife` hangs
+     * `life.standing` on `StationSave.standing` as an accessor now: there is
+     * nothing to mirror, and this clause asserts the courier stays dead.
      */
     const { readFile } = await import('node:fs/promises');
     const src = async (f) => readFile(new URL(`../../src/game/${f}`, import.meta.url), 'utf8');
     const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
-    const files = ['Station.js', 'StationSave.js', 'Home.js', 'Counter.js', 'Menu.js'];
+    const files = ['Station.js', 'StationSave.js', 'StationLife.js', 'Home.js', 'Counter.js', 'Menu.js'];
     let callers = 0;
     for (const f of files) {
       let code = '';
@@ -830,13 +840,18 @@ export async function run({ check, assert, near }) {
       + 'defect this tree keeps finding under a different name');
 
     /* BOTH DIRECTIONS, AND BOTH ARE ABOUT RESIDENTS. Down when you cut one
-     * (`persistStanding` mirrors StationLife's own fall onto the fold); up
-     * when you collect on one's job (`payForJob`). Not shopping: standing that
-     * rose when you spent would be a loyalty ladder, which is a number that
-     * grows by having played. */
+     * (`StationLife.witness`, straight onto the fold through the accessor);
+     * up when you collect on one's job (`payForJob`). Not shopping: standing
+     * that rose when you spent would be a loyalty ladder, which is a number
+     * that grows by having played. */
     const stn = strip(await src('Station.js'));
-    assert(/function persistStanding/.test(stn) && /_lifeStanding/.test(stn),
-      'nothing carries StationLife\'s fall onto the durable fold');
+    const lif = strip(await src('StationLife.js'));
+    assert(!/persistStanding|_lifeStanding/.test(stn),
+      'the delta courier between two standings is back — §11 says one number');
+    assert(!/stationStanding/.test(lif),
+      'StationLife seeds standing off the run bag again, and a deck change is a new run bag');
+    assert(/defineProperty\(life, 'standing'/.test(lif),
+      'life.standing is not hung on the durable fold — it is a second number again');
     assert(/setStanding\(standing\(\) \+ 2\)/.test(stn),
       'nothing raises standing — markupFor\'s +40 rung is a dead branch');
     assert(!/setStanding[^;]*spend|spend[^;]*setStanding/.test(stn),

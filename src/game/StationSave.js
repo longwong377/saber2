@@ -114,8 +114,33 @@ function blank() {
      * fold written by an older build cannot un-happen a day the player lived.
      */
     day: 0,
-    /** §11's consequence. Falls when you hurt a resident; the kiosks read it. */
+    /** §11's consequence. Falls when you hurt a resident; the kiosks read it.
+     *
+     * IT IS THE ONLY STANDING THERE IS. `StationLife`'s `life.standing` used
+     * to be a second number seeded off the run bag, so a lift ride reset the
+     * figure the kiosks read while the figure the counters priced against
+     * remembered the brawl. `dressStationLife` hangs `life.standing` on THIS
+     * field as an accessor now: one number, three readers — the counters
+     * (`Counter.markupFor`), the pits (`Pits.venueOpen`) and the kiosk door
+     * (`StationLife.servedHere`). */
     standing: 0,
+    /**
+     * §11's *"the kiosks refuse you for a day"*, and it is a DAY.
+     *
+     * The station day the counters open again — `day` is the counter above,
+     * so the refusal outlives the visit it was earned in and ends when the
+     * clock says it does rather than when the world is rebuilt. Before this
+     * the whole of "for a day" was `standing > -6`, which is not a duration
+     * at all: two jobs collected and the shutter went straight back up.
+     */
+    shut: 0,
+    /**
+     * ARRESTED, AND NOT YET DELIVERED. §11: *"you wake in the Brig (#47)"* —
+     * the Brig is on deck 48 and a deck is a WORLD, so an arrest made on the
+     * Concourse has to survive the ride. It is set when the patrol takes you
+     * and cleared by `StationLife` the moment it has put you in the cell.
+     */
+    brig: false,
     /** Which places you have walked into, for §14's "the first visit". */
     seen: [],
     /**
@@ -296,6 +321,30 @@ export function setStanding(n) {
   s.standing = Math.max(-40, Math.min(40, Math.round(Number(n) || 0)));
   return write(s).standing;
 }
+
+/**
+ * ── AND THE DAY THE COUNTERS OPEN AGAIN ───────────────────────────────────
+ *
+ * §11's third clause is a DURATION and it now has one. `shutKiosks()` is
+ * called by the arrest and by nothing else; `kiosksShut()` is read by
+ * `StationLife.servedHere`, which is the one door `main.js` asks before it
+ * raises a kiosk panel. There is no `kioskShutDay()` getter: the day itself
+ * has no reader in `src/` — a screen wants "shut" or "open", not an index —
+ * and `reachable.mjs` refuses an exported function nothing calls. A day here is `stationDay()`'s day — the stored
+ * midnight counter — so sleeping the cell hours off does not serve out the
+ * ban: the shutter comes up on the day AFTER the one you were taken on.
+ */
+export function shutKiosks(days = 1) {
+  const s = read();
+  const n = Math.max(1, Math.round(Number(days) || 1));
+  s.shut = Math.max(s.shut | 0, (s.day | 0) + n);
+  return write(s).shut;
+}
+export function kiosksShut() { const s = read(); return (s.day | 0) < (s.shut | 0); }
+
+/** Taken by the patrol and not yet put in the cell — see `StationSave.brig`. */
+export function brigPending() { return read().brig === true; }
+export function setBrigPending(v) { const s = read(); s.brig = !!v; return write(s).brig; }
 
 /** Have you been here before? §14's guide walks a fresh player once, and once. */
 export function hasSeen(id) { return read().seen.includes(id); }
