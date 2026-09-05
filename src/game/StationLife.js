@@ -64,6 +64,10 @@ import { companyOf } from './StationBoards.js';
  * across; `station.mjs` imports both orders.
  */
 import { handlerOf, handlersOn } from './Pits.js';
+/* One call, on one body — see `stepHandlers`. `Impact.js` imports Combat,
+ * MathUtil and Audio and nothing that reaches back here, so this one is a
+ * plain edge rather than a cycle. */
+import { disarmKinetic } from './Impact.js';
 /* THE ONE EXEMPTION FROM THE DAILY REROLL — see `occupant`. `Quests.js` holds
  * the ledger and answers in SEEDS, so this file still decides who stands where
  * and `StationCast.resident` still decides what a person looks like. */
@@ -1905,6 +1909,33 @@ function stepHandlers(world, life) {
      * heel in that crowd is in exactly the position the rule was written for.
      * Without it a dog walked through a market is worn down by the market. */
     pet.noAmbientHarm = true;
+    /**
+     * ══ AND IT DOES NOT BILL THE CONCOURSE FOR WALKING INTO IT ════════════
+     *
+     * `noAmbientHarm` above is the VICTIM's half of the station's rule —
+     * `Impact.kineticContact`'s own note, "the station is not a battlefield".
+     * This is the STRIKER's half, and the animal is the only body on the drum
+     * that needs it: `Enemy` arms every body with `KINETIC_BODY`, whose
+     * `jostle` floor of 1.5 refuses anything under a real blow, and a resident
+     * at `WALK_PACE` prices at 0.11 — while a massiff at heel was MEASURED at
+     * 5.07 m/s keeping up with its handler, which is twenty-five times the
+     * energy and clears the floor. A dog trotting after somebody through a
+     * market is not a charge.
+     *
+     * IT ALSO ROUTES ROUND A LIVE CRASH, and that is worth writing down rather
+     * than quietly enjoying. `Impact.kineticContact` reads
+     * `victim.noAmbientHarm` THREE LINES ABOVE its own `if (!victim)` guard —
+     * `Impact.js:349` — so any armed body that clears the jostle floor against
+     * ARCHITECTURE (victim null: a wall, the ground) throws
+     * `TypeError: Cannot read properties of null`. Measured on deck 40 at
+     * high quality: the world died on frame 98 the moment the first animal was
+     * fielded. The fix is one line in that file — the `noAmbientHarm` test
+     * belongs BELOW the null guard, not above it — and it is not this lane's
+     * to make. It reaches further than this file: the player is armed with the
+     * same tune and sprints at 7.45 m/s, so a sprint into a wall is the same
+     * throw on every level in the game.
+     */
+    disarmKinetic(pet.body);
     pet.stationName = H.animal;
     /* An animal at heel is a resident too. */
     pet.noAmbientHarm = true;

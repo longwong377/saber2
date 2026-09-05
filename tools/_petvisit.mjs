@@ -4,6 +4,7 @@
  *
  *   node --import ./tools/register.mjs tools/_petvisit.mjs
  */
+import './dom-shim.mjs';
 import { readFile } from 'node:fs/promises';
 
 function diskFetch() {
@@ -34,6 +35,21 @@ async function main() {
   await prepareStation();
   S.clearStation();
 
+  const s = await bootSession({
+    n: 2, level: 'station',
+    settings: { mode: 'station', level: 'station', allies: 0 },
+    onWorld: (w) => { w._stationFloor = 44; },
+  });
+  for (const nd of s.nodes) {
+    nd.notes = [];
+    nd.net.on('home', (from, msg) => nd.notes.push(Coop.noteApartment(nd.world, from, msg)));
+  }
+  const pump = (t) => { try { s.pump(t); } catch (e) { P(`(pump: ${e.message})`); } };
+  pump(0.5);
+
+  const host = s.host, guest = s.clients[0];
+  const hostId = host.net.peer.id;
+
   /* THE HOST'S ANIMAL, seated deterministically: a tooka kit that has done
    * eight runs and been looked after six times, which is SEASONED (stage 2) —
    * so "the right growth stage" is a claim with a wrong answer available. */
@@ -45,26 +61,13 @@ async function main() {
     + `(${CK.GROWTH_STAGES[CK.stageOf(rec)].label}) scale=${CK.bodyScaleOf(rec.kind, rec).toFixed(3)} `
     + `suit=${H.padSuit(rec.kind)}`);
 
-  const s = await bootSession({
-    n: 2, level: 'station',
-    settings: { mode: 'station', level: 'station', allies: 0 },
-    onWorld: (w) => { w._stationFloor = 44; },
-  });
-  for (const nd of s.nodes) {
-    nd.notes = [];
-    nd.net.on('home', (from, msg) => nd.notes.push(Coop.noteApartment(nd.world, from, msg)));
-  }
-  s.pump(0.5);
-
-  const host = s.host, guest = s.clients[0];
-  const hostId = host.net.peer.id;
 
   /* THE HOST CHOOSES A FIXTURE at the habitat — the shipped verb, which
    * re-dresses their own room on the same call. */
   const t0 = Date.now();
   H.setPad('basket', host.world);
   P(`setPad('basket') on the host: ${Date.now() - t0} ms (fixture + one seating)`);
-  s.pump(0.6);
+  pump(0.6);
 
   /* THE PACKET, as it actually crossed. */
   const msg = Coop.packHome(host.world._home.state, 1, H.homePetIdent?.() ?? null);
