@@ -18,7 +18,7 @@
  * Every check here FAILS on the code as it shipped.
  */
 
-import { Screens, LIVE, OVERLAY_STATES } from '../../src/ui/Screens.js';
+import { Screens, LIVE, OVERLAY_STATES, LID_STATES, QUIET, CALM } from '../../src/ui/Screens.js';
 
 /* ── the bench ───────────────────────────────────────────────────────── */
 
@@ -242,4 +242,230 @@ export async function run({ check, assert }) {
     }
     return `no bare state assignments; every overlay goes up through take() — ${seams.join(', ')}`;
   });
+
+  check('screens: a lid stops the world, a board does not, and one rule says which', () => {
+    /**
+     * THE DEFECT THIS IS THE UNIT HALF OF. `take` stopped the world for EVERY
+     * overlay it raised, and every station board goes up through `take` — so
+     * the room a player walked up to and opened a card in was a photograph for
+     * as long as they looked at it. See Screens.js's LID_STATES.
+     *
+     * Two halves, both required. The named lids stop the world wherever they
+     * are raised; everything else is a board, and a board only gets its way
+     * where `io.calm` says nothing in the world can hit the player.
+     */
+    const out = [];
+    for (const st of LID_STATES.filter((n) => n !== 'paused')) {
+      const b = bench();
+      b.s.io.calm = () => true;            // the friendliest world there is
+      enter(b, 'playing');
+      b.s.take(st, () => {});
+      assert(b.world.paused,
+        `'${st}' is a lid and the world is still running underneath it`);
+      /* 'dead' is the one lid the frame loop still walks into, and it always
+       * has: the death card wants the HUD and the guard rose updated behind it,
+       * and `World.update`'s own first line refuses a paused world. So what is
+       * asserted there is the pause, which is what actually stops the world. */
+      if (st !== 'dead') {
+        assert(b.s.hands('LIVE') === null,
+          `'${st}' is a lid and the frame loop was told to step the world anyway`);
+      }
+      out.push(`${st} lid`);
+    }
+    /* AND A BOARD. 'tote' is a state Screens has never heard of, which is the
+     * point: the rule is not a list of rooms. */
+    const b = bench();
+    b.s.io.calm = () => true;
+    enter(b, 'playing');
+    b.s.take('tote', () => {});
+    assert(!b.world.paused, 'the tote board stopped the world — the room behind it is a photograph');
+    assert(b.s.hands('LIVE') === QUIET,
+      'the frame loop was handed the live input behind a board — a held key walks the player away from it');
+    assert(!b.input.enabled, 'a board is up and the blade is still taking input');
+    assert(b.s.overlay?.state === 'tote', 'a board is not remembered — a pause over it cannot put it back');
+    /* AND A PAUSE OVER A BOARD STILL STOPS THE WORLD, and resuming onto the
+     * board starts it again. Rule 2 over the new half of the rule, driven on
+     * 'kiosk' because it is the one board already in `LIVE` and `pause()` is
+     * gated on that list — Escape over a board whose state is not in `LIVE`
+     * answers 'nothing' today, which is a gap this repair does not open and
+     * does not close: every one of those panes has a button of its own, and
+     * `closeTote`/`closePit`/`closeKiosk` are it. */
+    const k = bench();
+    k.s.io.calm = () => true;
+    enter(k, 'playing');
+    k.s.take('kiosk', () => {});
+    assert(!k.world.paused, 'the counter stopped the world — the room behind it is a photograph');
+    assert(k.s.escape() === 'paused' && k.world.paused, 'Escape over a board did not pause the world');
+    k.s.resume();
+    assert(k.s.state === 'kiosk' && !k.world.paused,
+      `resuming onto the board left state '${k.s.state}' paused=${k.world.paused}`);
+
+    /* AND NOWHERE ANYTHING CAN HIT YOU. The same board, in a world `calm`
+     * refuses: the old behaviour, exactly, which is what a battlefield and
+     * every bench in this file get. */
+    const c = bench();
+    enter(c, 'playing');
+    c.s.take('tote', () => {});
+    assert(c.world.paused && c.s.hands('LIVE') === null,
+      'a board left the world running in a world nothing vouched for — a caller that wires no `calm` must get the old behaviour');
+
+    /* The shipped predicate itself, on the shape it exists to tell apart. */
+    assert(!CALM({ partyTeam: 0, enemies: [] }), 'CALM vouched for a world that is not a station');
+    assert(CALM({ _station: {}, partyTeam: 0, enemies: [{ team: 0 }, { team: 0, dead: true }] }),
+      'CALM refused a station whose only bodies are its own residents');
+    assert(!CALM({ _station: {}, partyTeam: 0, enemies: [{ team: 0 }, { team: 2 }] }),
+      'CALM vouched for a station with something hostile standing in it');
+    return `${out.join(', ')}; a board runs the world, keeps input off, and is still escapable — and only where CALM says so`;
+  });
+
+  check('screens: the room keeps reacting while its own board is open', async () => {
+    /**
+     * ══ THE MEASURED HALF, AND IT IS THE ONLY ONE THAT COULD HAVE CAUGHT IT ══
+     *
+     * *"you should be able to watch the entire battle, has a crowd"* (V16 §G4).
+     * The crowd was built, checked and audible ONLY WHEN NOBODY WAS LOOKING AT
+     * IT: `Screens.take` stopped the world, `frame()` stepped it in two states,
+     * and the board a player opens to watch a race is the one thing that made
+     * the room stop answering the race. Measured before the repair, standing in
+     * #19 at a live meet: 60 s with the world running gave 6 roars and a swell
+     * through 319 distinct values; 90 s with the board open gave ZERO roars and
+     * a swell frozen at 0.
+     *
+     * NOTHING SHORT OF A REAL WORLD CATCHES THIS. `st.crowd` is written by
+     * `stepCrowd`, four calls deep inside `world.update`; a check that called
+     * the model, or asserted a flag on `Screens`, is green over the whole of
+     * the defect. So this boots the station, stands in the room, raises the
+     * board through the REAL `Screens.take` with main.js's own `calm`, and runs
+     * main.js's own frame-loop gate — `screens.hands(input)` — and then asks the
+     * world what the room did. `requestAnimationFrame` does not fire headless,
+     * which is why this is `world.update` and not a browser.
+     *
+     * BOTH COLUMNS ARE MEASURED. The shipped gate is driven first over the same
+     * board and the same hour and required to be SILENT, so a regression that
+     * quietly puts the lid back cannot pass by making both numbers small.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const St = await import('../../src/game/Station.js');
+    const P = await import('../../src/game/StationPlan.js');
+    const Save = await import('../../src/game/StationSave.js');
+    const Tote = await import('../../src/game/Tote.js');
+
+    const hadFetch = globalThis.fetch;
+    const root = new URL('../../', import.meta.url);
+    globalThis.__stationFetch = true;
+    globalThis.fetch = async (url) => {
+      const buf = await readFile(new URL(String(url), root));
+      return { ok: true, arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) };
+    };
+    try {
+      await St.prepareStation();
+      const v = Tote.venueById('holo-theatre');
+      /* WHICH DAY IS NOT THIS CHECK'S TO DECIDE — `tickStationClock` writes
+       * `st.day` out of the durable fold every frame, and the fold is
+       * process-wide. So the day is taken from it and wound forward through its
+       * own shipped door until the venue has a card on. */
+      const dayWas = Save.stationDay();
+      let day = dayWas, races = [];
+      while (!races.length && day < dayWas + 60) { races = Tote.racesOn(v.id, day); if (!races.length) day++; }
+      assert(races.length, `${v.id} has no card in the sixty days after ${dayWas}`);
+      if (day > dayWas) Save.passStationHours(24 * (day - dayWas));
+      const race = races[0];
+
+      const { world } = await bootWorld({
+        level: 'station',
+        settings: { mode: 'station', level: 'station', allies: 0 },
+        onWorld: (w) => { w._stationFloor = 40; },
+      });
+      const st = world._station;
+      const place = P.PLACES.find((x) => x.id === v.place);
+      world.player.position.set(place.x, st.deckY + 1.6, place.z);
+      world.player.camera?.obj?.position?.set(place.x, st.deckY + 1.6, place.z);
+
+      const live = idleInput();
+      const input = { enabled: true, exitLock() {}, requestLock() {} };
+      const screens = new Screens({
+        world: () => world, input, menu: fakeMenu(), pauseStats: () => [], calm: CALM,
+      });
+      screens.state = 'playing';
+      screens.card('tote', () => {});
+
+      /** main.js's frame loop: the gate, and nothing else in it. */
+      const frame = () => { const h = screens.hands(live); if (h) world.update(1 / 60, h); };
+      /** …and the gate exactly as it shipped, for the other column. */
+      const shipped = () => {
+        if (screens.state === 'playing' || screens.state === 'dead') world.update(1 / 60, live);
+      };
+
+      /** What the room did over `frames` of whichever gate. */
+      const watch = (frames, step) => {
+        const roars0 = st.crowd?.roars | 0;
+        const swells = new Set(); const moments = new Set();
+        let peak = 0, held = 0;
+        for (let i = 0; i < frames; i++) {
+          step();
+          const c = st.crowd; if (!c) continue;
+          swells.add(Math.round(c.swell * 1000));
+          if (c.swell > peak) peak = c.swell;
+          if (c.moment) moments.add(c.moment);
+          held = Math.max(held, c.in | 0);
+        }
+        return { roars: (st.crowd?.roars | 0) - roars0, swells: swells.size, peak, moments, held };
+      };
+
+      /* Park just before the meet and let the loop wind the clock from there —
+       * the hour is never written by hand after this line. */
+      st.hour = race.hour - 0.01;
+      for (let i = 0; i < 30; i++) frame();
+
+      /* ── 1. THE ROOM WITH NOBODY AT A BOARD. The reading the repair has to
+       * reach, taken on the same world and the same meet. */
+      const open = watch(2400, frame);
+
+      /* ── 2. THE BOARD GOES UP, exactly as `openTote` raises it. */
+      screens.take('tote', () => {});
+      assert(screens.state === 'tote' && !world.paused,
+        `the board is up and world.paused is ${world.paused} — the room behind it is a photograph`);
+      const p0 = world.player.position.clone();
+
+      /* ── 3. THE SHIPPED GATE OVER THE SAME BOARD, and it must say nothing. */
+      const wasPaused = world.paused, wasHour = st.hour;
+      world.paused = true;
+      const before = watch(2400, shipped);
+      world.paused = wasPaused; st.hour = wasHour;
+      /* `peak` is not the tell here — `swell` keeps whatever value it was left
+       * at, and a frozen room reports that number for ever. The tell is that it
+       * NEVER MOVES: one distinct value over 2400 frames, and no new roar. */
+      assert(before.roars === 0 && before.swells === 1,
+        `the gate as it shipped answered ${before.roars} roars and ${before.swells} swell values `
+        + 'behind a board — this check is not measuring the defect');
+
+      /* ── 4. AND THE GATE AS IT IS NOW. */
+      const behind = watch(2400, frame);
+      assert(behind.roars >= 2,
+        `2400 frames with the board open and the room roared ${behind.roars} times — `
+        + `with the same board shut it roared ${open.roars}. The crowd reacts only when nobody is watching it.`);
+      assert(behind.peak > 0.1,
+        `the room's loudest moment behind its own board was ${behind.peak.toFixed(3)}`);
+      assert(behind.swells >= 8,
+        `the swell took ${behind.swells} distinct values behind the board — a flag, not a room`);
+      assert(behind.moments.size >= 2,
+        `the room reacted to one kind of thing only behind the board: ${[...behind.moments].join(', ')}`);
+      /* AND THE PLAYER'S OWN BODY DID NOT MOVE, which is the half of
+       * `world.paused` that was worth keeping: `input.enabled = false` does not
+       * stop `Input` recording keys, so the world is stepped with `QUIET`. */
+      assert(world.player.position.distanceTo(p0) < 1e-6,
+        `the player walked ${world.player.position.distanceTo(p0).toFixed(3)} m while reading a board`);
+      assert(!input.enabled, 'the board is up and the blade is taking input again');
+
+      return `#${v.place} on day ${st.day} at ${race.hour.toFixed(2)}: 2400 frames behind the board gave `
+        + `${behind.roars} roars (${[...behind.moments].join('/')}), peak swell ${behind.peak.toFixed(3)} over `
+        + `${behind.swells} values, ${behind.held} in the room — against ${before.roars} roars over ${before.swells} value `
+        + `on the gate as it shipped and ${open.roars}/${open.peak.toFixed(3)} with the board shut; `
+        + 'the player never moved';
+    } finally {
+      globalThis.fetch = hadFetch;
+    }
+  });
 }
+

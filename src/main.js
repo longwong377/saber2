@@ -6552,8 +6552,9 @@ function frame(now) {
    * `screens.hands(input)` is that decision, in Screens.js, once, for every
    * overlay in the game: the live input while you are playing, `QUIET` while
    * you are reading a board in a room that cannot hit you, and null — step
-   * nothing — behind a lid and at the menu. `calm` below is what makes a board
-   * safe, and it is the station and nothing else.
+   * nothing — behind a lid and at the menu. What makes a board safe is `calm`,
+   * wired to `Screens.CALM` where this file builds the state machine: the
+   * station, with nothing hostile standing in it, and nowhere else.
    */
   const hands = world ? screens.hands(input) : null;
   if (world && hands) {

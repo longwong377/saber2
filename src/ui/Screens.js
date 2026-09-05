@@ -80,6 +80,85 @@ export const LIVE = ['playing', 'paused', 'draft', 'dead', 'meditation', 'muster
 export const OVERLAY_STATES = ['draft', 'dead', 'muster', 'deploy'];
 
 /**
+ * ══ A LID OVER THE GAME, OR A THING IN THE ROOM ═══════════════════════════
+ *
+ * THE DEFECT. `take` stopped the world for EVERY overlay, and `frame()` steps
+ * the world only while the state is 'playing' or 'dead'. Every station board
+ * goes up through `take`. So `stepStation` — and with it `stepCrowd`, the
+ * whole of V16 §G4's *"you should be able to watch the entire battle, has a
+ * crowd"* — did not run at all while the player was looking at the board it
+ * reacts to. Measured standing in #19 at a real race hour: with the world
+ * running, 60 s produced 5 fresh roars, a swell through 26 distinct values and
+ * a peak of 0.386; with the board open for 90 s, ZERO roars, swell frozen at
+ * 0, the room's headcount stuck. The crowd was built, checked, and audible
+ * only when you were not looking at it.
+ *
+ * THE DISTINCTION, AND IT IS ONE RULE IN ONE PLACE. An overlay is either
+ *
+ *   a LID  — it takes the game away. The pause card, the draft, the death
+ *            card, the muster, the deploy card, the Holocron. All six are
+ *            raised MID-RUN, on a battlefield, and behind every one of them
+ *            is a wave that would walk up and hit a player who cannot answer.
+ *            These stop the world and always will.
+ *
+ *   a BOARD — a thing in the room you walked up to and are reading. A tote,
+ *            a pit card, a casino table, a counter, a job board, a medbay
+ *            desk. You are on your feet in the room, and the room is the
+ *            point. These do not stop the world.
+ *
+ * AND A BOARD ONLY GETS ITS WAY WHERE NOTHING CAN HIT YOU. `io.calm(world)`
+ * is the second half of the rule and the reason this is safe: the objection
+ * the old code was written on — *"a player reading a board could be walked
+ * into and hit with no key that answers"* — is TRUE on a battlefield and false
+ * on the station, which has no wave director and no enemies in it. A caller
+ * that does not supply `calm` gets the old behaviour exactly: every overlay is
+ * a lid. Nothing new can run the world behind itself by forgetting a list.
+ *
+ * WHAT `take` STILL DOES BEHIND A BOARD, because none of it was the bug:
+ * input is disabled, the pointer is released, the overlay is remembered,
+ * Escape still pauses over it. The world is stepped with `QUIET` below, so the
+ * world runs and the PLAYER'S OWN BODY does not — which is the honest reading
+ * of "input.enabled = false" that `Input` itself does not enforce.
+ */
+export const LID_STATES = ['paused', 'draft', 'dead', 'muster', 'deploy', 'meditation'];
+
+/**
+ * NOBODY'S HANDS ON THE CONTROLS.
+ *
+ * `input.enabled = false` does not stop `Input` recording keys — it gates
+ * `preventDefault` and the lock request and nothing else — so handing the live
+ * input to a world stepping behind a board would walk the player away from the
+ * counter on a held W and swing the blade on a click meant for a button. This
+ * is the input a room gets while somebody reads a board in it: the exact
+ * surface `World.update` asks for (`act`, `actHit`, `actDown`, `moveAxis`,
+ * `mouse`, `accel`, `end`), all of it answering "nothing is being pressed".
+ */
+/**
+ * THE ONE WORLD A BOARD MAY BE READ IN FRONT OF.
+ *
+ * The station and nothing else, and the test is "is anything in here on the
+ * other side" rather than "are there bodies": #19 alone stands 37 of them, all
+ * residents, all on `partyTeam`, and a headcount would have called the concert
+ * hall a battlefield. `partyTeam` is the world's own number for "my side" —
+ * `WaveDirector.blocksWaveEnd` and the HUD's hostile count read it — so a deck
+ * battle (`stepDeckBattle`) puts the lid straight back on every board on the
+ * station, which is the exact objection the old always-pause was written on.
+ *
+ * It is exported so a check can drive the shipped rule instead of a copy of
+ * it, and it is passed in as `io.calm` rather than reached for here so a bench
+ * with a plain object for a world still gets the old behaviour.
+ */
+export const CALM = (w) => !!w?._station
+  && !(w.enemies || []).some((e) => e && !e.dead && e.team !== w.partyTeam);
+
+export const QUIET = {
+  act: () => false, actHit: () => false, actDown: () => false,
+  moveAxis: (o) => { if (o) { o.x = 0; o.y = 0; return o; } return { x: 0, y: 0 }; },
+  mouse: { dx: 0, dy: 0, wheel: 0, x: 0, y: 0, left: false, right: false },
+  delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, end() {},
+};
+
+/**
  * HOW LONG A SEAM MAY BE SILENT BEFORE IT SAYS ANYTHING AT ALL, in seconds.
  *
  * The lift's own ride is 3.4 s of shaft and the rebuild happens behind it, so
@@ -335,10 +414,43 @@ export class Screens {
     const w = this.io.world();
     this.overlay = { state: name, show };
     this.state = name;
-    if (w) w.paused = true;
+    /* A LID STOPS THE WORLD; A BOARD DOES NOT — see LID_STATES. This is the
+     * only line that decides it, for every overlay in the game. */
+    if (w) w.paused = this.lid(name);
     this.io.input.enabled = false;
     this.io.input.exitLock?.();
     show();
+  }
+
+  /**
+   * IS WHAT IS ON THE SCREEN A LID OVER THE GAME?
+   *
+   * The whole of the rule, in one place, asked by `take`, by `resume` and by
+   * the frame loop through `hands()`. Named states are lids wherever they are
+   * raised. Everything else raised through `take` is a board, and a board only
+   * lets the world run where `io.calm` says nothing in it can hit the player —
+   * so a caller that wires no `calm` gets the old behaviour, every overlay a
+   * lid, which is what every check bench and every non-station mode is.
+   */
+  lid(name = this.state) {
+    if (LID_STATES.includes(name)) return true;
+    return !this.io.calm?.(this.io.world());
+  }
+
+  /**
+   * WHOSE HANDS ARE ON THE CONTROLS THIS FRAME — the live input, `QUIET`, or
+   * null for "do not step the world at all".
+   *
+   * This is the frame loop's whole decision and it lives here because it is
+   * the same decision `take` makes: the loop used to ask `state === 'playing'
+   * || state === 'dead'`, which is a second copy of the state machine written
+   * as a string comparison, and it is what froze every room behind its own
+   * board. 'menu' and 'boot' still step nothing, which is what they did.
+   */
+  hands(live) {
+    if (this.state === 'playing' || this.state === 'dead') return live;
+    if (!this.overlay || this.lid()) return null;
+    return QUIET;
   }
 
   /**
@@ -491,7 +603,9 @@ export class Screens {
     if (this.overlay) {
       this.state = this.overlay.state;
       const w = this.io.world();
-      if (w) w.paused = true;
+      /* Put it back the way `take` raised it: a board the player was reading
+       * when they hit Escape goes back to a room that is still moving. */
+      if (w) w.paused = this.lid();
       this.io.input.enabled = false;
       this.overlay.show();
       return true;
