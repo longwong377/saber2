@@ -28,7 +28,7 @@ import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GR
  * game/ at all, so this edge cannot close a cycle — and the alternative was a
  * second copy of the shoulder line, which is the twin §2.3 keeps deleting. */
 import { GUARD } from './SaberController.js';
-import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, PVP_LIMITS, sideTeam, teamOf, TEAM } from './Player.js';
+import { assignSides, defaultBoonMods, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, PVP_LIMITS, sideTeam, teamOf, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, gripClaim, gripRelease, heldMass,
          IMPULSE_AS_HP, paysOut } from './Enemy.js';
@@ -1593,6 +1593,10 @@ export class World {
     if (this.rules?.pvp && this.rules.health > 0) { p.maxHp = this.rules.health; p.hp = p.maxHp; }
     const rec = applyOrder(p, this.settings.order);
     if (rec) for (const id of rec.grants) this.takenBoons.add(id);
+    /* AND THEN WHAT YOU ATE AND WHAT YOU BOUGHT. See `applyProvisions`: after
+     * the order for `applyOrder`'s own reason — the order STARTS the numbers
+     * and everything else multiplies whatever it left. */
+    this.applyProvisions(p);
 
     /**
      * AND THEN THE HOLOCRON, if the player has asked for it to be open.
@@ -2015,6 +2019,65 @@ export class World {
    * each. The two things it does that a restore DOES want — the taken-set and
    * the ground's might — are done here once.
    */
+  /**
+   * ══ WHAT YOU ATE AND WHAT YOU BOUGHT — V16 Lane B5, and it had no reader ══
+   *
+   * The player: *"certain types of food even give you certain buffs that last
+   * for a limited amount of time"*, and *"you can also buy powerups similar to
+   * the stuff you can get in the holocrons but they are temporary and do not
+   * persist when you die."*
+   *
+   * Both were built and neither reached a fighter. `Food.modsOf` — the one
+   * function that says what a meal is doing to you — had ZERO CALLERS in
+   * `src/`; the slot it reads lived in a module-local in `main.js` that only
+   * the larder's own page ever looked at. The Quartermaster's provisions were
+   * worse: `{flowGain: 1.25}`, `{ward: 0.86}` and `{stratagem: 1}` were
+   * charged for and then dropped on the floor. Measured before this method:
+   * buy Clear broth, watch the five cook lines land, eat it in the larder
+   * ("Clear broth — 2 h of it"), deploy — `players[0].boonMods.staminaRegen`
+   * 1.000, which is the baseline and not 1.000 × 1.08.
+   *
+   * ── IT IS A RUN INPUT, AND THAT IS WHY IT IS ON `run` ────────────────────
+   *
+   * `this.run` is the run-scoped bag the constructor's own note describes:
+   * handed in at build, never persisted, and — unlike `settings` — not a key
+   * `Settings.js` has to default and `controls.mjs` has to see a reader for.
+   * `main.js` fills it at the one moment a run starts. A provision that lived
+   * on `settings` would be written to disk by `saveSettings`, which is exactly
+   * the "gone when the run ends" guarantee turned into a promise somebody has
+   * to keep.
+   *
+   * ── AND THE ARITHMETIC IS `Player.defaultBoonMods`'s, NOT A SECOND COPY ──
+   *
+   * A key whose identity is 1 is a multiplier and one whose identity is 0 is a
+   * count — `ward` multiplies, `healOnKill` adds — and the ONE place that
+   * states which is which is the defaults table. Reading it here rather than
+   * keeping a list means a provision that moves a key nobody thought about
+   * still lands the right way round, and a provision naming a key the table
+   * does not declare is DROPPED rather than writing `undefined * 1.25`, which
+   * is NaN and is a blade that cuts nothing at all.
+   *
+   * `stratagem` is such a key and it is deliberately not one of a body's
+   * numbers: it is free calls on the comm, read by `Stratagems`' constructor
+   * off this same table. See the note there.
+   */
+  applyProvisions(p) {
+    const mods = this.run?.provisions;
+    const bm = p?.boonMods;
+    if (!mods || !bm) return null;
+    if (!World._modKind) World._modKind = defaultBoonMods();
+    const D = World._modKind;
+    const moved = {};
+    for (const [k, v] of Object.entries(mods)) {
+      const n = Number(v);
+      if (!Number.isFinite(n)) continue;
+      if (typeof D[k] !== 'number' || typeof bm[k] !== 'number') continue;
+      bm[k] = D[k] === 1 ? bm[k] * n : bm[k] + n;
+      moved[k] = n;
+    }
+    return moved;
+  }
+
   applyCarry(carry) {
     if (!carry) return null;
     this.communion = new Communion({ seed: this.runSeed | 0, ...(carry.communion || {}) });

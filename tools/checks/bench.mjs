@@ -158,6 +158,140 @@ export async function run({ check, assert, near }) {
       + `buys ${((1 - best.cooldown) * 100).toFixed(0)}% off a cooldown and dies with the run`;
   });
 
+  check('bench: a fitted shell and a solution multiply out into four numbers', async () => {
+    /**
+     * ══ THE HALF THAT HAD NO READER ══════════════════════════════════════
+     *
+     * `benchFor` said which variants were OPEN and nothing anywhere said which
+     * one was FITTED, so twelve sidegrades sat behind a count nothing
+     * incremented and reached no run even if it had. `callMods` is the one
+     * door a call asks: the fitted shell times the firing solution, as the
+     * four numbers a support call is made of.
+     *
+     * Identity is the whole contract for a player who has never walked into
+     * either room — the table's own numbers, unmoved.
+     */
+    const B = await import('../../src/game/Bench.js');
+    B.clearBench();
+    const id = 'strike';
+    const stock = B.callMods(id);
+    assert(JSON.stringify(stock) === JSON.stringify({ radius: 1, lead: 1, cooldown: 1, cost: 1 }),
+      `a bench nobody has touched moves a call by ${JSON.stringify(stock)} — the table's own `
+      + 'numbers are the only base there is');
+
+    /* A SHELL YOU HAVE NOT OPENED CANNOT BE FITTED, and the door refuses it
+     * rather than the panel — a hand-edited save is a hostile input. */
+    const shut = B.benchFor(id).find((v) => !v.open);
+    assert(shut, `every ${id} variant is open on a fresh bench — this clause measures nothing`);
+    assert(B.pick(id, shut.id) === null, `${shut.id} was fitted with ${B.callsOf(id)} calls behind it`);
+    assert(B.pickedFor(id) === null, 'a refused pick was fitted anyway');
+    assert(B.pick(id, 'not-a-variant') === null, 'a variant that does not exist was fitted');
+
+    /* AN OPEN ONE IS FITTED, AND IT MOVES THE FOUR NUMBERS BY ITS OWN MODS. */
+    const open = B.benchFor(id).find((v) => v.open);
+    assert(B.pick(id, open.id) === open.id, `${open.id} is open and would not fit`);
+    const fitted = B.callMods(id);
+    for (const [k, v] of Object.entries(open.mods)) {
+      assert(fitted[k] === v, `${open.id} says ${k} ${v} and the call gets ${fitted[k]}`);
+    }
+    for (const k of ['radius', 'lead', 'cooldown', 'cost']) {
+      assert(Number.isFinite(fitted[k]), `${k} came out ${fitted[k]}`);
+    }
+
+    /* AND THE SOLUTION MULTIPLIES INTO THE SAME TWO AXES IT HAS ALWAYS OWNED,
+     * rather than replacing the shell's. Two systems on one number is where a
+     * pair of readers stops agreeing. */
+    B.setTuning(id, 1);
+    const both = B.callMods(id);
+    const t = B.tuningFrom(1);
+    assert(Math.abs(both.cooldown - (open.mods.cooldown ?? 1) * t.cooldown) < 1e-9,
+      `the shell and the solution do not compose on cooldown: ${both.cooldown}`);
+    assert(Math.abs(both.cost - (open.mods.cost ?? 1) * t.cost) < 1e-9,
+      `the shell and the solution do not compose on cost: ${both.cost}`);
+
+    /* …AND BOTH DIE WITH THE RUN. A sidegrade chosen once and kept is a
+     * loadout, which is the cross-run power the doctrine refuses. */
+    B.clearTuning();
+    assert(B.pickedFor(id) === null, 'the fitted shell survived the run');
+    assert(JSON.stringify(B.callMods(id)) === JSON.stringify(stock),
+      `the next run starts on ${JSON.stringify(B.callMods(id))} rather than on the table`);
+    return `stock is the identity; ${open.id} fits and moves ${Object.keys(open.mods).join('/')}; `
+      + `shell x solution composes on cooldown (${both.cooldown.toFixed(3)}) and cost `
+      + `(${both.cost.toFixed(3)}); both gone with the run`;
+  });
+
+  check('bench: the mark drifts, it is the same problem for everybody, and it costs an hour', async () => {
+    /**
+     * *"come up with a minigame here."* A mark that is shown and does not move
+     * is a number you copy into a box and every player scores 1.000, so the
+     * three dials swing about their hour's centre at their own rates and a
+     * solution is a moment as much as a setting.
+     *
+     * Three properties, and the first is the one the tree's own bar names.
+     */
+    const B = await import('../../src/game/Bench.js');
+    const { readFile } = await import('node:fs/promises');
+    const code = (await readFile(new URL('../../src/game/Bench.js', import.meta.url), 'utf8'))
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    assert(!/Math\.random/.test(code),
+      'Bench.js draws the mark off Math.random — two players on the same station hour would be '
+      + 'handed different problems and no score would mean anything');
+
+    /* IT IS INSIDE THE DIALS' RANGE and never at an end stop you could hold. */
+    let lo = 1, hi = 0, moved = 0, same = 0;
+    for (let hour = 0; hour < 48; hour++) {
+      const a = B.wantFor('strike', hour);
+      const b = B.wantFor('strike', hour + 1);
+      for (const d of B.DIALS) {
+        lo = Math.min(lo, a[d]); hi = Math.max(hi, a[d]);
+        if (Math.abs(a[d] - b[d]) > 0.02) moved++; else same++;
+      }
+    }
+    assert(lo > 0.05 && hi < 0.95, `the mark reaches ${lo.toFixed(2)}..${hi.toFixed(2)} — a dial at an end `
+      + 'stop is an answer you can hold and forget');
+    assert(moved > same * 3, `${same} of ${moved + same} dials stood still overnight — a fixed solution is `
+      + 'a password, not a skill');
+
+    /* IT DRIFTS WITHIN THE HOUR, and the three do not move together. */
+    const path = { spread: [], delay: [], bearing: [] };
+    for (let i = 0; i <= 60; i++) {
+      const m = B.markAt('barrage', 9, i * 0.25);
+      for (const d of B.DIALS) path[d].push(m[d]);
+    }
+    for (const d of B.DIALS) {
+      const span = Math.max(...path[d]) - Math.min(...path[d]);
+      assert(span > B.DRIFT, `${d} moved ${span.toFixed(3)} over fifteen seconds — that is a still mark`);
+    }
+    /* Not in lockstep: a solution you can set once and hold for ever is one
+     * dial wearing three faces. */
+    const together = path.spread.filter((v, i) =>
+      Math.abs(v - path.delay[i]) < 0.02 && Math.abs(v - path.bearing[i]) < 0.02).length;
+    assert(together < 8, `the three dials sat on the same number ${together} times in 61 samples`);
+
+    /* AND IT IS THE SAME PROBLEM FOR EVERYBODY, TWICE. Pure, so a check and a
+     * panel and a second player all read one answer. */
+    assert(JSON.stringify(B.markAt('strike', 5, 2.5)) === JSON.stringify(B.markAt('strike', 5, 2.5)),
+      'the mark answered differently to the same question');
+    assert(JSON.stringify(B.markAt('strike', 5, 2.5)) !== JSON.stringify(B.markAt('strike', 6, 2.5)),
+      'the mark is the same at 05:00 and at 06:00');
+
+    /* ONE SOLUTION AN HOUR. Without this the panel is a SEND button you press
+     * until it says 1.000, and every player arrives at the ceiling. */
+    B.clearBench();
+    assert(B.canSolve('strike', 9), 'a call that has never been solved refuses a solution');
+    B.setTuning('strike', 0.4, 9);
+    assert(!B.canSolve('strike', 9), 'the same hour took a second solution — the room is a re-roll');
+    assert(!B.canSolve('strike', 9.9), 'the same hour took a second solution on a fraction of it');
+    assert(B.canSolve('strike', 10), 'the next hour still refuses');
+    assert(B.canSolve('barrage', 9), 'solving one call spent the hour for another');
+    /* …and the gate goes with the run: it is there to stop a re-take, not to
+     * ration by wall clock. */
+    B.clearTuning();
+    assert(B.canSolve('strike', 9), 'the hour-gate survived the run it was set in');
+    return `mark spans ${lo.toFixed(2)}..${hi.toFixed(2)}, moves overnight on ${moved} of ${moved + same} `
+      + `dials, drifts ±${B.DRIFT} within the hour, and one call takes one solution an hour`;
+  });
+
   check('bench: it holds a count, not a currency, and the store clamps a hostile save', async () => {
     const B = await import('../../src/game/Bench.js');
     const { readFile } = await import('node:fs/promises');

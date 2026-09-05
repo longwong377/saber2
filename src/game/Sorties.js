@@ -455,6 +455,30 @@ export class SortieDirector {
       this.live.shift()?.remove();
     }
     const s = new Sortie(this.world, profile, site, bearing, cadence);
+    /**
+     * ══ `slow` — A LONGER RUN-IN, AND THE ONLY HONEST WAY TO MOVE A LEAD ══
+     *
+     * V16 §A3's variants trade one axis for another and two of them trade
+     * `lead`: the Quick Call arrives a third sooner, the Creeping Barrage
+     * later. `Stratagems` cannot simply multiply `leadOf(s)` and leave the
+     * craft alone — the note four lines down is about exactly that failure,
+     * measured, "the payload and the craft on two clocks". So the caller hands
+     * the FACTOR here instead and the run is flown at that rate: `arrive` is
+     * when the thing is here and `life` is how long the path takes, and
+     * scaling both is a slower approach along the same line rather than a
+     * different one. A pass lerps by `t / life`, so the pair stays consistent
+     * by construction; a lance and a loiter author `arrive` and take their
+     * `life` from `hold` on the next line, which the caller has already
+     * computed off the same scaled lead.
+     *
+     * 1 is the identity and is what every call that has no variant fitted
+     * passes, so nothing in the shipped table moves by a millisecond.
+     */
+    const slow = Number(opts.slow);
+    if (Number.isFinite(slow) && slow > 0 && slow !== 1) {
+      s.arrive *= slow;
+      if (s.P.kind === 'pass') s.life *= slow;
+    }
     /* `hold` IS THE LANCE'S LIFE AND NOTHING ELSE. A pass computes its own from
      * the path and the speed, and `_updatePass` lerps along that path by
      * `t / life` — so writing a caller's number over it does not shorten the

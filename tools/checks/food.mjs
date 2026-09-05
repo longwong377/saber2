@@ -162,6 +162,94 @@ export async function run({ check, assert }) {
 
   /* ══════════════════════════════════════════════════════════════════════ */
 
+  check('food: a meal reaches the fighter, and so does a stim', async () => {
+    /**
+     * ══ THE ONE THE WHOLE LANE WAS FOR, AND IT HAD NO READER ═════════════
+     *
+     * *"certain types of food even give you certain buffs that last for a
+     * limited amount of time."* Every clause above this one measures that a
+     * meal is BOUNDED — it expires, it writes nothing durable, it moves no
+     * permanent number. None of them measured that it does anything at all,
+     * and it did not: `Food.modsOf` — the one function that says what a meal
+     * is doing to you — had ZERO CALLERS in `src/`, and the slot it reads
+     * lived in a module-local in `main.js` that only the larder's own page
+     * looked at. Measured before this clause, through the whole shipped path:
+     * buy Clear broth, watch the five cook lines land, eat it in the larder,
+     * deploy a skirmish, read `world.players[0].boonMods` — `staminaRegen`
+     * 1.000, the baseline, not 1.000 x 1.08. The "temporary powerups that do
+     * not survive death" contract was vacuously true because nothing started.
+     *
+     * The Quartermaster's provisions were the same hole: `{flowGain: 1.25}`,
+     * `{ward: 0.86}` and `{stratagem: 1}` were priced, sold, charged for and
+     * dropped.
+     *
+     * ONE WORLD, TWO BODIES. The provisions ride on `world.run`, so the same
+     * world can spawn a fed fighter and then a plain one with nothing else
+     * different about them — a second `bootWorld` would differ by a level
+     * build as well and could not attribute what moved.
+     */
+    const F = await import('../../src/game/Food.js');
+    const { everyRow } = await import('../../src/game/Vendors.js');
+    const { bootWorld } = await import('./_coop.mjs');
+
+    /* THE MEAL, through the same two functions the larder calls. */
+    const at = F.clockOf(3, 20);
+    const broth = F.dishById('f-broth');
+    const ate = F.eat(broth, { kind: 'flesh', clock: at });
+    assert(ate.ok, `Clear broth would not go down: ${ate.why}`);
+    const meal = F.modsOf(ate.slot, at);
+    assert(meal.staminaRegen > 1, `Clear broth carries ${JSON.stringify(meal)}`);
+
+    /* AND A STIM AND A COMM CHARGE, off the shelf they are actually sold on. */
+    const stim = everyRow().find((r) => r.id === 'stim-focus');
+    const charge = everyRow().find((r) => r.id === 'charge-second');
+    assert(stim && charge, 'the Quartermaster no longer stocks the two rows this measures');
+    const provisions = { ...meal };
+    for (const [k, v] of Object.entries({ ...stim.effect, ...charge.effect })) provisions[k] = v;
+
+    const { world } = await bootWorld({ run: { provisions } });
+    try {
+      const fed = world.players[0];
+      /* The same world, with the bag taken away: everything else about the two
+       * bodies is identical by construction. */
+      world.run.provisions = null;
+      const plain = world.spawnPlayer({ name: 'Unfed', isLocal: false });
+
+      assert(Math.abs(fed.boonMods.staminaRegen - plain.boonMods.staminaRegen * meal.staminaRegen) < 1e-9,
+        `a bowl of Clear broth left staminaRegen at ${fed.boonMods.staminaRegen} against an unfed `
+        + `${plain.boonMods.staminaRegen} — the meal reached nothing`);
+      assert(Math.abs(fed.boonMods.flowGain - plain.boonMods.flowGain * stim.effect.flowGain) < 1e-9,
+        `70 credits of Focus stim left flowGain at ${fed.boonMods.flowGain}`);
+      /* THE COMM CHARGE IS NOT A BODY'S NUMBER and is deliberately dropped by
+       * the boonMods path — it is calls, and `Stratagems` is what holds them. */
+      assert(!('stratagem' in fed.boonMods),
+        'a comm charge was written onto boonMods, where nothing reads it');
+      assert(fed.stratagems.charges === charge.effect.stratagem,
+        `the Second charge bought ${fed.stratagems.charges} free calls and says ${charge.effect.stratagem}`);
+      assert(plain.stratagems.charges === 0, 'an unfed fighter starts with free calls');
+
+      /* AND NOTHING ELSE MOVED. A provision that quietly touched a key nobody
+       * bought is the shape this whole file is written against. */
+      const touched = Object.keys(provisions).filter((k) => k !== 'stratagem');
+      let drifted = [];
+      for (const k of Object.keys(plain.boonMods)) {
+        if (typeof plain.boonMods[k] !== 'number' || touched.includes(k)) continue;
+        if (fed.boonMods[k] !== plain.boonMods[k]) drifted.push(k);
+      }
+      assert(!drifted.length, `eating and buying moved ${drifted.join(', ')}, which nothing paid for`);
+
+      /* AND AN EXPIRED MEAL IS NOT A MEAL. `modsOf` past the hour is empty, so
+       * a run deployed after the broth has worn off carries nothing from it —
+       * nobody has to remember to expire anything. */
+      assert(Object.keys(F.modsOf(ate.slot, at + broth.effect.hours)).length === 0,
+        'the slot still carries mods past its own hours');
+      return `broth x${meal.staminaRegen} reached staminaRegen `
+        + `(${plain.boonMods.staminaRegen} → ${fed.boonMods.staminaRegen.toFixed(3)}), `
+        + `Focus stim reached flowGain (${plain.boonMods.flowGain} → ${fed.boonMods.flowGain.toFixed(3)}), `
+        + `the Second charge reached ${fed.stratagems.charges} free calls, and ${drifted.length} other keys moved`;
+    } finally { world.dispose?.(); }
+  });
+
   check('food: no dish moves a permanent number', async () => {
     /**
      * The doctrine forbids a third category — permanent power — and the way

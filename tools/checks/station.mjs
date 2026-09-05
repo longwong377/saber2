@@ -1587,6 +1587,61 @@ export async function run({ check, assert, THREE }) {
     } finally { world.dispose?.(); }
   });
 
+  check('station: #51 charges a droid, and hands a man his own verb back', async () => {
+    /**
+     * ══ V16 Lane B5's *"instead of"*, and it had no door ══════════════════
+     *
+     * *"droids charge instead of eating."* `Food.eat`'s refusal to a droid
+     * names this room in as many words — *"there is a rack of posts at the
+     * droid pool"* — and #51 dispatched to nothing at all, so `Food.CHARGES`
+     * and `Food.offeredTo` had zero callers outside their own file and a
+     * separatist roll could buy food, watch it cooked, carry it home, be
+     * refused at the cupboard and be sent to an empty room. Measured before
+     * this branch: the key at #51 answered with the gazetteer verb and no
+     * hook was raised.
+     *
+     * AND THE BRANCH DOES NOT CLAIM A PRESS IT DID NOT USE, which is the
+     * lesson of #20's pit door two branches along: `main.js` hands the press
+     * back for anybody with a stomach, and #51's own verb still prints.
+     */
+    const { PLACE } = await import('../../src/game/StationPlan.js');
+    const St = await import('../../src/game/Station.js');
+    const a = await station(48);
+    try {
+      const { world } = a;
+      const st = world._station;
+      const p51 = PLACE.get(51);
+      assert(p51 && p51.deck === 48, '#51 is not on deck 48 any more');
+      let said = null, charged = 0;
+      world.notify = (h, l) => { said = `${h} :: ${l}`; };
+
+      /* ── A DROID: the room takes the press. ─────────────────────────── */
+      world.onCharge = (id) => { charged = id; return true; };
+      world.player.position.set(p51.x, st.deckY + 1.6, p51.z);
+      said = null;
+      assert(St.stationKey(world), '#51 did not answer the key at all');
+      assert(charged === 51, `the key at #51 raised ${charged || 'nothing'} — the rack has no door`);
+      assert(said === null, 'the room both charged and printed its verb — one press, one answer');
+
+      /* ── A MAN: the hook refuses and the verb comes back. ───────────── */
+      charged = 0; said = null;
+      world.onCharge = (id) => { charged = id; return false; };
+      assert(St.stationKey(world), '#51 stopped answering the key when the rack refused');
+      assert(charged === 51, 'the room was not even asked');
+      assert(said && said.startsWith('DROID POOL'),
+        `a man at #51 got "${said}" instead of the room's own verb — a branch that claims a press `
+        + 'it did not use is the defect #20 was fixed for');
+      assert(said.includes(p51.verb), `the verb printed was "${said}" and the gazetteer says "${p51.verb}"`);
+
+      /* ── AND WITH NO PANEL WIRED AT ALL, nothing changes. ───────────── */
+      delete world.onCharge;
+      said = null;
+      assert(St.stationKey(world), '#51 went dead with no handler installed');
+      assert(said && said.includes(p51.verb), `#51 with no handler said "${said}"`);
+      return `#51 raised the rack for a droid; refused, it fell through to "${p51.verb}"`;
+    } finally { a.world.dispose?.(); }
+  });
+
   check('station: #56 reads the rolls, and the station is named at #13 and at the plan table', async () => {
     const { PLACE } = await import('../../src/game/StationPlan.js');
     const St = await import('../../src/game/Station.js');

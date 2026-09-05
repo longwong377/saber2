@@ -222,7 +222,13 @@ export const QUARTERMASTER = {
     P('stim-focus', 'Focus stim', 'common', 70, { flowGain: 1.25 }, 'Everything earns a quarter more Flow, this run.'),
     P('stim-wind', 'Second wind', 'common', 80, { staminaRegen: 1.35 }, 'Stamina comes back faster, this run.'),
     P('stim-plate', 'Field plating', 'fine', 210, { ward: 0.86 }, 'A blow gets less of you through, this run.'),
-    P('charge-strat', 'Stratagem charge', 'fine', 240, { stratagem: 1 }, 'One more call, this run.'),
+    /* NOT "stratagem", and the player said so: *"they should not be called
+     * strategems in game obviously as that's a helldiver's thing."* They are
+     * SUPPORT CALLS on THE COMM, and `stratagems.mjs` scans every
+     * player-facing string in the tree for the word. The key stays `stratagem`
+     * because it is an identifier and identifiers are exempt — what a player
+     * reads is what the rule is about. */
+    P('charge-comm', 'Comm charge', 'fine', 240, { stratagem: 1 }, 'One more call, this run.'),
     P('stim-steady', 'Steadying draught', 'common', 75, { deflectDamage: 1.15 }, 'A return carries more, this run.'),
     P('stim-quick', 'Quickthread', 'fine', 195, { moveSpeed: 1.12 }, 'You move faster, this run.'),
     P('stim-mend', 'Field mend', 'fine', 220, { healOnKill: 4 }, 'Every kill gives a little back, this run.'),

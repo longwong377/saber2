@@ -578,6 +578,28 @@ uniform vec3  uRingAxis;     /* unit; the ring plane's normal */
 
 uniform float uStars;        /* starfield gain */
 uniform float uStarSpin;     /* the ship's attitude — this is the parallax */
+/**
+ * -- THE JUMP, V16 SS A1 -- and these two were WRITTEN TO AND DID NOT EXIST --
+ *
+ * Station.orderJump's stars(k, swing) sink has always ended:
+ *
+ *     if (u.uWarp) u.uWarp.value = k;
+ *     if (u.uOrbitSpin) u.uOrbitSpin.value = swing;
+ *
+ * against a uniform table that declared neither, so both guards were false on
+ * every frame of every jump and the whole star half of the sequence was a
+ * silent no-op. Measured in the shipped build, walking a player onto #41,
+ * picking a theatre and pressing Escape: the deck went amber, the planet
+ * swapped, the PA spoke -- and uWarp peaked at 0.00 and uOrbitSpin at 0.00.
+ * That is the same defect tools/checks/hangar.mjs exists for, one file along:
+ * a call into an optional chain that eats it.
+ *
+ *   uOrbitSpin  how far the sky has swung while the station comes onto its
+ *               bearing, in radians, about the deck's own up axis.
+ *   uWarp       0 is a starfield and 1 is star-lines. See starField.
+ */
+uniform float uWarp;
+uniform float uOrbitSpin;
 uniform float uFleet;        /* fleet gain */
 uniform vec3  uFleetDir;     /* unit; the bearing of the action */
 uniform vec3  uBoltCol;      /* our turbolasers */
@@ -726,8 +748,7 @@ float starAt(vec3 v, float scale, float thr, float rad, out float tone) {
  * fixed and the world slides across it, which is the only cue in the frame
  * that says the thing you are standing on is moving.
  */
-vec3 starField(vec3 dir) {
-  vec3 v = spinAbout(dir, ARM_AXIS, uStarSpin);
+vec3 starDots(vec3 v) {
   float t1, t2;
   float a = starAt(v, 340.0, 0.918, 0.30, t1);
   float b = starAt(v, 97.0, 0.945, 0.21, t2);
@@ -736,7 +757,57 @@ vec3 starField(vec3 dir) {
   /* Three hues, not a spectrum: a cool white, a plain white and an amber. */
   vec3 ca = mix(vec3(0.74, 0.83, 1.0), vec3(1.0, 0.85, 0.63), saberCelQuant(t1, 2.0));
   vec3 cb = mix(vec3(0.74, 0.83, 1.0), vec3(1.0, 0.85, 0.63), saberCelQuant(t2, 2.0));
-  vec3 col = ca * a * 0.85 + cb * b * 2.1;
+  return ca * a * 0.85 + cb * b * 2.1;
+}
+
+/**
+ * -- THE STAR-LINES, AND THEY ARE THE SAME FIELD SMEARED -----------------
+ *
+ * A second starfield drawn in streaks would be two fields that have to agree
+ * about where every star is; this is the ONE field, sampled WARP_TAPS times
+ * along the great circle through the pixel and the direction of travel, which
+ * is exactly what a radial smear is. At uWarp = 0 the loop is skipped and the
+ * cost is the field as it has always been.
+ *
+ * THE ARC IS SCALED BY THE SINE OF THE ANGLE OFF THE TRAVEL AXIS --
+ * length(cross(v, WARP_DIR)) -- because that is what perspective does: a star
+ * dead ahead of you does not move on your retina and one abeam of you crosses
+ * it fastest. A constant arc gives an even smear that reads as motion blur on
+ * a camera rather than as a ship going somewhere.
+ *
+ * The taps are weighted to a triangle so the middle of a streak is brighter
+ * than its ends, and the whole thing is gained UP with uWarp: at full lines
+ * the field is about twice as bright, which is the beat the sequence puts the
+ * sky reconfigure inside (see Warp.js -- the one frame a hitch is invisible).
+ */
+const int   WARP_TAPS = 7;
+const vec3  WARP_DIR  = vec3(0.0, 0.10, -0.995);   /* where the station is pointed */
+const float WARP_ARC  = 0.34;                       /* radians of smear at full lines */
+
+vec3 starField(vec3 dir) {
+  /* THE BEARING TURN, before the parallax: the station swings and the whole
+   * sky swings with it. uOrbitSpin is 0 for every frame that is not a jump,
+   * and spinAbout by 0 is the identity, so nothing standing still moves. */
+  vec3 d = uOrbitSpin == 0.0 ? dir : spinAbout(dir, vec3(0.0, 1.0, 0.0), uOrbitSpin);
+  vec3 v = spinAbout(d, ARM_AXIS, uStarSpin);
+  vec3 col;
+  if (uWarp < 0.004) {
+    col = starDots(v);
+  } else {
+    vec3 ax = cross(v, WARP_DIR);
+    float sinA = length(ax);
+    ax = sinA > 1e-4 ? ax / sinA : vec3(0.0, 1.0, 0.0);
+    float arc = WARP_ARC * uWarp * sinA;
+    vec3 acc = vec3(0.0);
+    float wsum = 0.0;
+    for (int i = 0; i < WARP_TAPS; i++) {
+      float t = float(i) / float(WARP_TAPS - 1) - 0.5;   /* -0.5 … 0.5 */
+      float w = 1.0 - abs(t) * 1.2;
+      acc += starDots(spinAbout(v, ax, t * arc)) * w;
+      wsum += w;
+    }
+    col = acc / wsum * (1.0 + uWarp);
+  }
 
   /* The arm: unresolved stars along one great circle, banded to three plates
    * so it reads as drawn rather than as a photograph.
@@ -2066,6 +2137,10 @@ export class SkyDome {
         uAtmoCol:      { value: new THREE.Color(1, 1, 1) },
         uStars:        { value: 1 },
         uStarSpin:     { value: 0 },
+        /* The jump — see the two declarations in the fragment source. Both are
+         * identity here, so a dome that never jumps is the dome that shipped. */
+        uWarp:         { value: 0 },
+        uOrbitSpin:    { value: 0 },
         uFleet:        { value: 1 },
         uFleetDir:     { value: new THREE.Vector3(0.20, 0.16, -0.97).normalize() },
         uBoltCol:      { value: new THREE.Color(0x35b0ff) },

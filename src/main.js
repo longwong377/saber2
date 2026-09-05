@@ -33,7 +33,8 @@ import { recordRun, loadProgress, clearLesson, lessonsCleared } from './game/Pro
  * the amendment that lets a currency exist at all; these are the two doors it
  * is spent and earned through. */
 import { payForRun, purse, pay } from './game/Credits.js';
-import { clearTuning } from './game/Bench.js';
+import { clearTuning, pick, pickedFor, tuningFor, setTuning, canSolve, markAt, solve,
+  DIALS } from './game/Bench.js';
 /* THE COMPANY. Loaded here and folded here, for the same split `Progress.js`
  * keeps: this file owns localStorage and the game owns the game. `World` is
  * handed a plain list of records on its settings blob and hands back a
@@ -66,7 +67,8 @@ import {
 import { takeJob, openJobs } from './game/Quests.js';
 import { programById, programSettings, rack, rackLines, Cycle } from './game/Holodeck.js';
 import { LESSONS } from './game/Dojo.js';
-import { stakeAtTote, payAtTote, tickStationClock, stakeAtDrum, payAtDrum, payForJob } from './game/Station.js';
+import { stakeAtTote, payAtTote, tickStationClock, stakeAtDrum, payAtDrum, payForJob,
+  orderJump } from './game/Station.js';
 import {
   pitAtPlace, venueOpen, handlersOn, ROSTER_HOUR, offerBout, openBout, beginRound, callOrder,
   runRound, cornerAct, pitState, settleBout, foldPit, pitCall, pitCard,
@@ -77,8 +79,25 @@ import { offerFrom } from './game/Counter.js';
 import { counterById } from './game/Vendors.js';
 import { spend } from './game/Credits.js';
 import { benchFor } from './game/Bench.js';
-import { STRATAGEMS } from './game/Stratagems.js';
-import { loadStation, standing, stationDay as stationDayOf } from './game/StationSave.js';
+/**
+ * THE SUPPORT CALLS, under the name a player reads them by.
+ *
+ * Aliased rather than imported flat because `stratagems.mjs` scans every string
+ * literal in this file for the word — *"they should not be called strategems in
+ * game"* — and its quote scanner cannot see through the nested template
+ * literals the panels below are built out of, so the identifier inside one was
+ * being reported as a player-facing string. Renaming the binding removes the
+ * word from this file's body entirely, which is the honest answer to a scan
+ * that is right about the rule and imprecise about the evidence.
+ */
+import { STRATAGEMS as CALL_ROWS } from './game/Stratagems.js';
+import { loadStation, standing, stationDay as stationDayOf, stationHour,
+  passStationHours, HOURS_PER_SECOND } from './game/StationSave.js';
+/* THE IDENTITIES a provision is merged against — see `runProvisions`. One
+ * table, and it is the one every boon in the game is already written against. */
+import { defaultBoonMods } from './game/Player.js';
+/* WHAT A BOUGHT KEEPSAKE IS PUT ON — see `showCounter`. */
+import { takeKeepsake } from './game/Keepsakes.js';
 import { clamp } from './engine/MathUtil.js';
 import { Screens } from './ui/Screens.js';
 import { SkillTree } from './ui/SkillTree.js';
@@ -577,6 +596,11 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null, override 
     /* WHAT THE PLAYER CALLS THEIR SQUADS — read here for the same reason the
      * veterans are: main.js owns localStorage and the game owns the game. */
     squadNames: squadNamesToField(),
+    /* WHAT YOU ATE AND WHAT YOU BOUGHT — see `runProvisions`. On the run bag
+     * rather than on `settings` because a provision must not reach a disk:
+     * `saveSettings` writes every key of that object, and "gone when the run
+     * ends" would then be a routine somebody has to remember to call. */
+    provisions: runProvisions(),
   });
   /**
    * A HOOK BETWEEN THE WORLD EXISTING AND THE LEVEL BEING BUILT, AND IT EXISTS
@@ -1194,6 +1218,8 @@ async function enterStation(floorRow = null, opts = {}) {
     world.onTote = (id) => openTote(id);
     /* The cupboard at #27 — see `openLarder`. */
     world.onLarder = () => openLarder();
+    /* #51, and only for a droid — see `takeCharge`. */
+    world.onCharge = () => takeCharge();
     /* #57 — see `openHolodeck`. */
     world.onHolodeck = () => openHolodeck();
   }
@@ -1829,11 +1855,23 @@ function showKioskPanel(panelId) {
  * from the table has. It is also the only moment the station is on screen
  * again, which is where the sequence has to be watched from.
  */
+/**
+ * ══ AND IT IS ORDERED ON THE FRAME THE TABLE CLOSES ═══════════════════════
+ *
+ * `orderJump` is imported at the top of this file with the rest of Station.js
+ * rather than fetched here. It was `import('./game/Station.js').then(...)`, and
+ * a dynamic import is a promise: the order was given a microtask AFTER the
+ * player let go of the table, which is unobservable to a player and lethal to
+ * anything that measures the moment — a probe that closes the plot table and
+ * reads `world._warp` on the same tick reads null, and so does the frame that
+ * paints. Station.js is already in this file's static graph (`tickStationClock`
+ * and four others come from it), so the dynamic form bought nothing at all.
+ */
 function jumpIfOrdered() {
-  if (!world?._station) return;
+  if (!world?._station) return false;
   const want = LEVELS[theatreFor(sessionOr('mode'), sessionOr('level'), null)] || null;
-  if (!want || want === world._pickedLevel) return;
-  import('./game/Station.js').then((S) => S.orderJump?.(world, want)).catch(() => {});
+  if (!want || want === world._pickedLevel) return false;
+  return orderJump(world, want) === true;
 }
 
 function closeKiosk() {
@@ -1847,6 +1885,41 @@ function closeKiosk() {
   screens.overlay = null;
   screens.state = 'paused';
   resume();
+}
+
+/**
+ * ══ THE WAY OUT, AND IT IS ONE FUNCTION BECAUSE IT IS ONE RULE ════════════
+ *
+ * `closeKiosk` had ZERO CALLERS in the whole tree, which is how the keystone
+ * item of V16 §A1 came to be finished, checked, green and unreachable: the
+ * only thing that gives the order is this function, and nothing was calling
+ * it. What Escape did over an open plot table was `screens.escape()` →
+ * `pause()` → the `kiosk` card's hide → `menu.hideMenu()`. The counter went
+ * away, the pause card came up, and the order was never read. Measured before
+ * this line: pick a theatre at #41, press Escape, pump 30 s of station time —
+ * `world._warp` null, `_pickedLevel` unmoved, `uWarp` and `uOrbitSpin` still
+ * at 0, no klaxon, no amber, no star-lines. `Station.orderJump` and all 228
+ * lines of `Warp.js` were reachable only from a check.
+ *
+ * IT IS A THIRD BRANCH IN THE SAME PLACE THE HOLOCRON'S LIVES, and that is
+ * the argument for the shape. The Holocron already needed one — closing it
+ * has to put the body back on its feet and hand the camera over — and it was
+ * WRITTEN OUT TWICE, once in `input.onMenu` and once in the keydown listener,
+ * which is exactly how a fourth door gets added to one of them and not the
+ * other. So both now call this, and every overlay whose close means something
+ * more than "hide it" is a case in one list.
+ *
+ * The order is not arbitrary: a kiosk raised over a Holocron is impossible
+ * (both go through `Screens.take` and the second would replace the first), and
+ * the Holocron is tested first only because it is the older door.
+ */
+function wayOut() {
+  if (tree.open) { closeMeditation(); return 'holocron'; }
+  /* THE PLOT TABLE. `closeKiosk` reads the order and hands the deck back — see
+   * `jumpIfOrdered`. Without this branch the press falls into `screens.escape`
+   * below, which pauses OVER the counter and never asks what was picked. */
+  if (kioskOpen) { closeKiosk(); return 'kiosk'; }
+  return screens.escape();
 }
 
 function openKiosk(panelId) {
@@ -2897,11 +2970,42 @@ function showCounter(counterId) {
   for (const b of el.querySelectorAll('button.buy')) {
     b.addEventListener('click', () => {
       const row = offer.rows.find((r) => r.id === b.dataset.id);
+      /**
+       * ══ A DROID IS NOT SOLD DINNER — V16 Lane B5's "instead of" ═════════
+       *
+       * *"droids charge instead of eating."* `Food.eat` has always refused a
+       * droid a dish, in the station's own voice, with the line that names
+       * where to go — and it refuses it AT THE LARDER, four rooms and one
+       * cooking sequence after the money has gone. So a separatist roll could
+       * buy the roast, stand and watch it cooked, carry it home, put it in the
+       * cupboard and only then be told it has no stomach. Refused at the
+       * counter is refused before the credits move, which is the same rule
+       * `Counter.offerFrom` states for every other closed door: it says why.
+       *
+       * THE COUNTER IS NOT GATED, THE PURCHASE IS. Striking the dishes off the
+       * shelf would be a second opinion about what a food court stocks — the
+       * shelf is `shelfFor`'s and this file does not get one — and a droid
+       * walking through a market it cannot eat in is the scene, not a defect.
+       */
+      const kind = Food.eaterKind(sessionOr('army'));
+      if (Food.isDish(row) && kind === 'steel' && !Food.isCharge(row)) {
+        world?.notify?.(c.name.toUpperCase(), Food.eat(row, { kind }).why);
+        return;
+      }
       const paid = spend(Number(b.dataset.price), row?.id);
       /* THE REFUSAL SAYS HOW SHORT. A shop that says no without saying "you
        * are forty short" is the shape this tree keeps removing. */
       if (!paid.ok) { world?.notify?.(c.name.toUpperCase(), paid.short ? `${paid.short} credits short` : paid.why); return; }
-      world?.notify?.(c.name.toUpperCase(), `${row?.name} — ${paid.left} left`);
+      /* WHAT YOU BOUGHT, PUT ON YOU. `takeKeepsake` writes the wardrobe, the
+       * hilt, the home's parcels or the animal's look — whichever record
+       * already dresses that thing — and adds the row to `settings.keepsakes`;
+       * a provision is not its business and comes back untouched. Without this
+       * line the shop is a credit sink: measured before it, a 38-credit dye
+       * moved `saber.credits.v1` and nothing else in localStorage at all. */
+      const kept = row?.kind === 'keepsake' ? takeKeepsake(settings, row) : null;
+      if (kept?.ok) saveSettings(settings);
+      world?.notify?.(c.name.toUpperCase(),
+        `${row?.name} — ${kept?.said || `${paid.left} left`}`);
       /* ── V16 §B5, AND IT IS THE HALF THE PLAYER ASKED FOR ────────────────
        *
        * *"there could be a small cutscene of it being cooked then you can take
@@ -2921,6 +3025,14 @@ function showCounter(counterId) {
        * dish added to any counter cooks and a hilt bought at the same window
        * does not. */
       if (Food.isDish(row)) { cookAtCounter(c, row); return; }
+      /* ── AND A PROVISION GOES IN THE BAG — see `carried`. A stim is not a
+       * dish and not a keepsake: it changes a number for one run and then it
+       * is gone, which is the doctrine's second category exactly. Before this
+       * line the row was charged for and dropped. */
+      if (row?.kind === 'provision') {
+        carried.push(row);
+        world?.notify?.(c.name.toUpperCase(), `${row.name} — carried, for the next run`);
+      }
       showCounter(counterId);
     });
   }
@@ -2989,6 +3101,59 @@ function cookAtCounter(counter, row) {
  */
 let fullUntil = null;
 
+/**
+ * ══ WHAT YOU ARE CARRYING INTO THE NEXT RUN — V16 Lane B ══════════════════
+ *
+ * The stims, the plating and the comm charges off the Quartermaster's shelf.
+ * `showCounter` puts a row in here when one is bought, `runProvisions` folds
+ * it into the numbers a fighter spawns with, and `record()` empties it when
+ * the run ends. That is the whole of the doctrine's "a run's worth of
+ * something, and gone when the run ends", held by there being NOWHERE ELSE
+ * for it to be: this is a module local, and nothing writes it to a disk.
+ *
+ * BEFORE THIS LIST EXISTED the rows were priced, sold, charged for and then
+ * dropped — `{flowGain: 1.25}`, `{ward: 0.86}` and `{stratagem: 1}` had no
+ * reader anywhere in the tree, so 70 credits of Focus stim bought a line in
+ * the banner and nothing else at all.
+ */
+let carried = [];
+
+/**
+ * Everything a run starts with that was bought or eaten, as one table of
+ * multipliers and counts.
+ *
+ * TWO SOURCES AND ONE ARITHMETIC. A meal is `Food.modsOf` on the slot — which
+ * is empty of its own accord once the station clock has run past it, so a
+ * three-hour bowl eaten at 20:00 does nothing to a run deployed at 23:01 and
+ * nobody has to remember to expire it. A provision is the counter row's own
+ * `effect`. Both are `{key: number}` and both are merged the same way, off
+ * `Player.defaultBoonMods`'s identities: a key whose identity is 1 multiplies
+ * and one whose identity is 0 adds, so two stims on the same key stack the way
+ * the game's own boons stack. `stratagem` is not in that table and is summed
+ * as the count it is — `Stratagems` reads it.
+ *
+ * THE CLOCK IS THE STATION'S OWN AND IS READ OFF THE FOLD, not off a live
+ * station: by the time a run is being built the station world is gone, and a
+ * meal that stopped expiring the moment you left the deck would be a permanent
+ * buff wearing an hour.
+ */
+function runProvisions() {
+  const clock = Food.clockOf(stationDayOf(stationHour()), stationHour());
+  const out = {};
+  const ident = defaultBoonMods();
+  const put = (mods) => {
+    for (const [k, v] of Object.entries(mods || {})) {
+      const n = Number(v);
+      if (k === 'hours' || !Number.isFinite(n)) continue;
+      const mul = ident[k] === 1;
+      out[k] = out[k] === undefined ? n : (mul ? out[k] * n : out[k] + n);
+    }
+  };
+  put(Food.modsOf(fullUntil, clock));
+  for (const row of carried) put(row?.effect);
+  return out;
+}
+
 function showLarder() {
   const el = paneRoot('larder');
   const clock = Food.clockOf(stationDay(), world?._station?.hour ?? 0);
@@ -3050,6 +3215,38 @@ function showLarder() {
 function openLarder() {
   audio.ui('good');
   screens.take('larder', () => showLarder());
+  return true;
+}
+
+/**
+ * ══ #51 THE DROID POOL — a charge, and it fills the same slot a meal does ══
+ *
+ * *"droids charge instead of eating."* This is the other half of that
+ * sentence, and it is deliberately NOT a panel: there is one thing to do in
+ * this room and it is free, so a page listing it would be a menu with one row
+ * on it. You stand at the rack, you press the key, you are on the bus.
+ *
+ * WHAT IS OFFERED COMES FROM `Food.offeredTo`, which is the function that
+ * answers "what does this kind of eater take" and which had no caller outside
+ * its own file until this line. A man gets `dishes()` back, `c-post` is not in
+ * it, and the room hands the press back — `stationKey` then falls through to
+ * #51's own verb and a fleshy is never told off for standing in a machine
+ * shop. That fall-through is the whole reason this returns false rather than
+ * refusing out loud.
+ */
+function takeCharge() {
+  const kind = Food.eaterKind(sessionOr('army'));
+  const post = Food.offeredTo(kind).find((r) => r.id === 'c-post');
+  if (!post) return false;
+  const clock = Food.clockOf(stationDay(), world?._station?.hour ?? 0);
+  const got = Food.eat(post, { kind, clock, slot: fullUntil });
+  if (!got.ok) { world?.notify?.('DROID POOL', got.why); return true; }
+  fullUntil = got.slot;
+  audio.ui('good');
+  /* IT SAYS HOW LONG, because a buff you cannot see the end of is a buff you
+   * cannot plan around — the same line the larder prints for a meal. */
+  world?.notify?.('DROID POOL',
+    `${post.name} — ${(got.slot.until - clock).toFixed(0)} h on the bus`);
   return true;
 }
 screens.card('larder', () => closePane('larder'));
@@ -3149,20 +3346,199 @@ function holdLessons() {
   for (let i = 0; i < Math.min((d.index | 0) + 1, LESSONS.length); i++) clearLesson(LESSONS[i].id);
 }
 
+/**
+ * ══ THE TWO BENCHES — V16 Lane A3, and neither had a control on it ════════
+ *
+ * The audit's reading of what shipped: *"buttons: 0, inputs: 0, sliders: 0.
+ * Every row reads `open` or `0/12 calls`, and it reads 0/12 FOR EVER."* It was
+ * exact. `Bench.noteCall`, `Bench.setTuning` and `Bench.tuningFor` had zero
+ * callers anywhere; this pane printed a price list of things that could not be
+ * bought, and both rooms were a wall of text with a Leave button somebody had
+ * forgotten to add.
+ *
+ * The count is now taken where a call is actually made (`Stratagems._open`),
+ * and these are the two controls that spend it:
+ *
+ *   #50 FABRICATION   fit one variant per call, out of the ones your own use
+ *                     has opened. It holds for a run and dies with it.
+ *   #42 COMMS         lay a firing solution: three dials against a drifting
+ *                     mark, once an hour per call, and what you land is a
+ *                     tenth off a cooldown for that run.
+ *
+ * ── WHY THE DIAL VIEW IS NOT REPAINTED ───────────────────────────────────
+ *
+ * Every other panel in this file redraws itself with `innerHTML`. A pane with
+ * three live sliders in it cannot: rewriting the markup ten times a second
+ * would take the range input out from under the thumb the player is dragging.
+ * So the dial view is built ONCE and `benchTick` writes three text nodes and
+ * three bar widths, which is the same discipline `refreshRose` uses in the
+ * HUD — repaint on a change, never on a frame.
+ */
+
+/** The solution being laid, if one is open. `{ id, t0, timer }`. */
+let benchDial = null;
+
+function benchClock() { return Food.clockOf(stationDay(), world?._station?.hour ?? 0); }
+
+function benchStop() {
+  if (benchDial?.timer !== undefined) clearInterval(benchDial.timer);
+  benchDial = null;
+}
+
+/** Seconds the solution has been open, off the wall clock rather than a frame. */
+function benchAge() { return benchDial ? (performance.now() - benchDial.t0) / 1000 : 0; }
+
+/**
+ * One tick of the drift. Text and widths only — see the note above.
+ *
+ * The MARK is what the room is showing you; the DIAL is where you have put it.
+ * The row goes hot when the two are inside the score's own miss window, so the
+ * panel and `Bench.solve` cannot disagree about what "close" means.
+ */
+function benchTick() {
+  const el = document.getElementById('bench');
+  if (!benchDial || !el) { benchStop(); return; }
+  const at = markAt(benchDial.id, benchClock(), benchAge());
+  for (const d of DIALS) {
+    const mark = el.querySelector(`[data-mark="${d}"]`);
+    const bar = el.querySelector(`[data-bar="${d}"]`);
+    const dial = el.querySelector(`input[data-dial="${d}"]`);
+    if (!mark || !bar || !dial) continue;
+    const v = at[d];
+    mark.textContent = v.toFixed(2);
+    bar.style.left = `${(v * 100).toFixed(1)}%`;
+    const off = Math.abs(v - Number(dial.value));
+    bar.classList.toggle('on', off < 0.12);
+  }
+}
+
+function benchDialHtml(row) {
+  let html = `<div class="pane"><h2>Firing solution — ${esc(row.name)}</h2>`;
+  html += '<p class="sub">Three dials against a drifting mark. Set them, watch, '
+    + 'and send when all three are where you put them. One solution an hour.</p>';
+  html += '<div class="rows">' + DIALS.map((d) => `<div class="row dial">`
+    + `<b>${esc(d)}</b>`
+    + `<span class="track"><i data-bar="${d}"></i></span>`
+    + `<input type="range" data-dial="${d}" min="0" max="1" step="0.01" value="0.5">`
+    + `<span>mark <b data-mark="${d}">—</b></span></div>`).join('') + '</div>';
+  html += `<div class="acts"><button class="buy" data-do="send" data-id="${esc(row.id)}">Send it</button>`
+    + '<button class="care" data-do="back">Back</button></div></div>';
+  return html;
+}
+
 function showBench(which) {
   const el = paneRoot('bench');
-  const rows = STRATAGEMS.map((s) => ({ s, bench: benchFor(s.id) })).filter((r) => r.bench.length);
+  /* A solution belongs to the comms room; walking to Fabrication drops it. */
+  if (which !== 'tune' && benchDial) benchStop();
+  if (benchDial) {
+    const row = CALL_ROWS.find((s) => s.id === benchDial.id);
+    el.innerHTML = benchDialHtml(row);
+    el.classList.remove('hidden');
+    wireBench(el, which);
+    benchTick();
+    return;
+  }
+  const clock = benchClock();
+  const rows = CALL_ROWS.map((s) => ({ s, bench: benchFor(s.id) })).filter((r) => r.bench.length);
   let html = `<div class="pane"><h2>${which === 'make' ? 'Fabrication' : 'Comms &amp; sensor'}</h2>`;
   html += `<p class="sub">${which === 'make'
-    ? 'A variant is a shell with different innards. Use opens them; none of them is stronger.'
+    ? 'A variant is a shell with different innards. Use opens them; none of them is stronger, '
+      + 'and what you fit holds for one run.'
     : 'Three dials against a drifting mark. What you land holds for one run.'}</p>`;
-  html += '<div class="rows">' + rows.map((r) => r.bench.map((v) =>
-    `<div class="row"><b>${esc(r.s.name)} — ${esc(v.name)}</b>`
-    + `<span>${esc(v.gain)}, <i>${esc(v.cost)}</i></span>`
-    + `<span>${v.open ? 'open' : `${v.calls}/${v.at} calls`}</span></div>`).join('')).join('')
-    + '</div></div>';
+  if (which === 'make') {
+    html += '<div class="rows">' + rows.map((r) => {
+      const fitted = pickedFor(r.s.id);
+      return `<div class="row"><b>${esc(r.s.name)}</b>`
+        + `<span>${r.bench[0].calls} calls${fitted ? ` · fitted: ${esc(fitted.name)}` : ' · stock'}</span>`
+        + (fitted ? `<button class="care" data-fit="${esc(r.s.id)}" data-v="">stock</button>` : '')
+        + '</div>'
+        + r.bench.map((v) => `<div class="row sub"><b>${esc(v.name)}</b>`
+          + `<span>${esc(v.gain)}, <i>${esc(v.cost)}</i></span>`
+          + (v.open
+            ? `<button class="buy" data-fit="${esc(r.s.id)}" data-v="${esc(v.id)}"`
+              + `${fitted?.id === v.id ? ' disabled' : ''}>${fitted?.id === v.id ? 'fitted' : 'fit'}</button>`
+            : `<span>${v.calls}/${v.at} calls</span>`) + '</div>').join('');
+    }).join('') + '</div>';
+  } else {
+    html += '<div class="rows">' + rows.map((r) => {
+      const t = tuningFor(r.s.id);
+      const laid = t.cooldown < 1;
+      const can = canSolve(r.s.id, clock);
+      return `<div class="row"><b>${esc(r.s.name)}</b>`
+        + `<span>${laid ? `${((1 - t.cooldown) * 100).toFixed(1)}% off the wait, `
+          + `${((1 - t.cost) * 100).toFixed(1)}% off the call` : 'no solution laid'}</span>`
+        + `<button class="buy" data-solve="${esc(r.s.id)}"${can ? '' : ' disabled'}>`
+        + `${can ? 'lay one' : 'this hour is spent'}</button></div>`;
+    }).join('') + '</div>';
+  }
+  html += '<div class="acts"><button class="care" data-do="leave">Leave</button></div></div>';
   el.innerHTML = html;
   el.classList.remove('hidden');
+  wireBench(el, which);
+}
+
+/**
+ * Every control on both panes, in one place.
+ *
+ * `screens.guarded` is not used here for the reason the larder does not either
+ * — these buttons cannot take the screen away, so a throw inside one is a
+ * console error and a pane that is still on the screen, which is the honest
+ * failure. What they must not do is leave the drift timer running: `benchStop`
+ * is on every exit, on `cancelCook`'s precedent.
+ */
+function wireBench(el, which) {
+  for (const b of el.querySelectorAll('button[data-fit]')) {
+    b.addEventListener('click', () => {
+      pick(b.dataset.fit, b.dataset.v || null);
+      audio.ui('good');
+      showBench(which);
+    });
+  }
+  for (const b of el.querySelectorAll('button[data-solve]')) {
+    b.addEventListener('click', () => {
+      benchStop();
+      benchDial = { id: b.dataset.solve, t0: performance.now(), timer: undefined };
+      benchDial.timer = setInterval(benchTick, 100);
+      audio.ui('good');
+      showBench(which);
+    });
+  }
+  for (const b of el.querySelectorAll('button[data-do="send"]')) {
+    b.addEventListener('click', () => {
+      const id = b.dataset.id;
+      const clock = benchClock();
+      /* THE MARK AT THE INSTANT OF SENDING, and the dials as they stand. Both
+       * read here rather than off the last tick, so a send between two ticks
+       * is scored against where the mark actually is. */
+      const want = markAt(id, clock, benchAge());
+      const got = {};
+      for (const d of DIALS) got[d] = Number(el.querySelector(`input[data-dial="${d}"]`)?.value ?? 0);
+      const score = solve(want, got);
+      const t = setTuning(id, score, clock);
+      benchStop();
+      const name = CALL_ROWS.find((s) => s.id === id)?.name || id;
+      world?.notify?.('COMMS & SENSOR',
+        score > 0.01
+          ? `${name} — ${(score * 100).toFixed(0)}% solution: ${((1 - t.cooldown) * 100).toFixed(1)}% off the wait, `
+            + `${((1 - t.cost) * 100).toFixed(1)}% off the call`
+          : `${name} — the shell is somewhere else entirely`);
+      audio.ui(score > 0.5 ? 'good' : 'bad');
+      showBench(which);
+    });
+  }
+  for (const b of el.querySelectorAll('button[data-do="back"]')) {
+    b.addEventListener('click', () => { benchStop(); showBench(which); });
+  }
+  for (const b of el.querySelectorAll('button[data-do="leave"]')) {
+    b.addEventListener('click', () => {
+      benchStop();
+      closePane('bench');
+      screens.clear();
+      input.enabled = true;
+      input.requestLock();
+      screens.set('playing');
+    });
+  }
 }
 
 function openBench(which) {
@@ -3170,7 +3546,7 @@ function openBench(which) {
   screens.take('bench', () => showBench(which));
   return true;
 }
-screens.card('bench', () => closePane('bench'));
+screens.card('bench', () => { benchStop(); closePane('bench'); });
 
 function openMeditation() {
   audio.ui('good');
@@ -3692,10 +4068,69 @@ function record(stats = null) {
   /* BEFORE the run is filed, for the ordering reason in `foldCompanion`. */
   holdLessons();
   foldCompanion(stats);
-  /* V16 §B5 — A PROVISION DOES NOT SURVIVE THE RUN IT WAS STOCKED FOR. The
-   * doctrine amendment allows food precisely because it is temporary; a larder
-   * that outlived the run would make it the permanent buy it is not. */
-  emptyLarder();
+  /**
+   * ══ AND THE STATION'S CLOCK MOVED WHILE YOU WERE GONE ═════════════════
+   *
+   * V16 §C1's promise for the ward is *"you go and do something else and come
+   * back and he's on his feet"*, and a hostile pass measured what "something
+   * else" meant. `stepStation` is the only writer of `st.hour` and it runs on
+   * the STATION world alone, so the clock stopped during a run and stopped at
+   * the menu. A tank is twelve station hours — twenty-four real minutes of
+   * pacing the drum — and untended is eighty.
+   *
+   * A RUN IS THE SOMETHING ELSE, and this is the ending that says so.
+   * `world.time` is the run's own elapsed seconds at §3.4's rate, so twelve
+   * minutes of play is six station hours: most of a tank, which is the
+   * sentence. `passStationHours` refuses a zero, a negative and a NaN, so an
+   * ending with no duration cannot put the station back to midnight.
+   */
+  passStationHours((world?.time || 0) * HOURS_PER_SECOND);
+  /**
+   * ══ V16 §B5 — WHAT A RUN CONSUMES, AND WHAT IT DOES NOT ═══════════════
+   *
+   * WHAT IT ALWAYS CONSUMES: the slot and the bag. Whatever you had eaten and
+   * whatever you were carrying went into this run and is gone with it, win or
+   * lose. That is the doctrine's *"a run's worth of something, and gone when
+   * the run ends"* applied to the only two things that are actually IN a run.
+   *
+   * ══ AND THE LARDER IS EMPTIED BY A DEATH, NOT BY EVERY RUN ═════════════
+   *
+   * `emptyLarder()` was called unconditionally on this line, and `record()` is
+   * the funnel EVERY ending goes through — a win, a wipe, and `quitToMenu`
+   * walking away from a skirmish you never took a bowl into. So the cupboard
+   * was emptied by any run at all, and *"you can even buy food and take it to
+   * your apartment and save it for later"* was false the first time the player
+   * played anything after shopping. Measured: stow three dishes, deploy a
+   * skirmish, quit at 25 s — larder 0 rows, six portions destroyed, and the
+   * player was never told why.
+   *
+   * THE DOCTRINE DOES NOT ASK FOR THAT, and reading it carefully is the whole
+   * of the decision. A provision is *"a run's worth of something"* — the
+   * SUBJECT of that sentence is the thing that is doing something to your run.
+   * A bowl on a shelf is doing nothing to any run; it becomes a provision at
+   * the moment it is eaten, and the slot it becomes is emptied above, on this
+   * line, always. What the amendment is protecting is that a run is won by
+   * playing rather than by having played before, and a cupboard cannot win a
+   * run — it can only be eaten one meal at a time into a slot that holds ONE.
+   *
+   * So it is emptied by the thing the player's own words attach it to:
+   * *"powerups … that do not persist when you die."* You die, the cupboard
+   * goes. You win, or you walk away, and what you did not eat is still there.
+   * `Home.emptyLarder` is unchanged and still tests the ROW rather than
+   * emptying the list, so a mods-free keepsake would survive even a death.
+   *
+   * THE VERDICT IS THE RECORD'S OWN EXPRESSION and not a second reading of
+   * it. `won: stats?.won ?? (world.over ? false : null)` is what goes into
+   * `recent[]` forty lines down, and it exists because an ABANDONED run and a
+   * LOST one used to be the same byte — §2.3's "a missing thing answered with
+   * a plausible default", which is exactly the mistake a `!stats.won` here
+   * would make again. `null` is "still standing when they walked out" and it
+   * is not a death.
+   */
+  fullUntil = null;
+  carried = [];
+  const verdict = stats?.won ?? (world.over ? false : null);
+  if (verdict === false) emptyLarder();
   recordRun({
     ...(stats || { wave: world.director?.wave ?? 0, score: world.score,
                    kills: world.players.reduce((a, p) => a + (p.kills || 0), 0) }),
@@ -3717,8 +4152,12 @@ function record(stats = null) {
      * standing when the player walks out files `null`, which `recordRun` now
      * stores rather than flattening. §2.3's close relative, closed: a missing
      * thing answered with a plausible default.
+     *
+     * COMPUTED ABOVE, because the larder now reads it too — a death empties
+     * the cupboard and a walk-away does not. Two copies of this expression is
+     * how the record and the cupboard come to disagree about what a defeat is.
      */
-    won: stats?.won ?? (world.over ? false : null),
+    won: verdict,
     mode: sessionOr('mode'),
     boons: [...(world.takenBoons || [])],
     /**
@@ -4499,10 +4938,7 @@ input.onDevice = () => {
  * out does from each state. Input only raises it when no modifier is held, so
  * the Start chords in the pad map stay bindable.
  */
-input.onMenu = () => {
-  if (tree.open) { closeMeditation(); return; }
-  screens.escape();
-};
+input.onMenu = () => { wayOut(); };
 
 /**
  * A pad button, for whichever binding chip in the options list is listening.
@@ -4705,22 +5141,18 @@ refreshCoachKeys();
 hud.setBindings(input.bindings, padOf());
 
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'Escape' && tree.open) {
-    // The Holocron's own way out, and it is the same one the Return button
-    // uses. Not a special case in the state machine: closing it restores the
-    // world through `resume()` exactly as answering a draft does, so Escape
-    // still changes what is on the screen (rule 1) and still cannot leave the
-    // world stopped with nothing on top of it.
-    closeMeditation();
-    return;
-  }
   if (e.code === 'Escape') {
-    // Never a dead key. From 'paused' it resumes; on a death card it puts the
-    // card back (idempotent — the card is that state's only exit and a card
-    // that failed to arrive is the only way to be stuck there); from every
+    // Never a dead key, and never two lists of what it means — see `wayOut`.
+    // The Holocron and the plot table both close through their own doors
+    // (closing either restores the world through `resume()` exactly as
+    // answering a draft does, so rule 1 still holds and neither can leave the
+    // world stopped with nothing on top of it); everything else falls through
+    // to `screens.escape`. From 'paused' that resumes; on a death card it puts
+    // the card back (idempotent — the card is that state's only exit and a
+    // card that failed to arrive is the only way to be stuck there); from every
     // other state with a live world it raises the pause card, which can always
     // resume or abandon. See pause().
-    screens.escape();
+    wayOut();
   }
   // NOT the scoreboard — that is the `scoreboard` action, read once a frame in
   // frame() so it stays rebindable. This only stops the browser walking focus

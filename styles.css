@@ -3234,3 +3234,22 @@ body:has(#touch.on) .powers .pw{touch-action:none}
 .cmp-plate.down .cmp-bar i { background: #ffb03a; }
 .cmp-plate.down b { color: #ffb03a; }
 .cmp-plate.down .cmp-say { opacity: .95; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  THE FIRING SOLUTION — V16 §A3, and it is the only pane with a LIVE control
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * The station's panes (`.pane`) are deliberately unstyled markup on a
+ * `.screen`; this is three rules and not a sixth panel skin, because a dial
+ * the player cannot see the mark on is not a minigame. `i[data-bar]` is the
+ * drifting mark, positioned by `benchTick` as a percentage along the track,
+ * and `.on` is the window `Bench.solve` scores inside — so the colour and the
+ * arithmetic cannot disagree about what "close" means.
+ */
+.pane .row.dial{display:flex;align-items:center;gap:10px}
+.pane .row.dial .track{position:relative;flex:1;height:10px;min-width:140px;
+  background:var(--void,#100c0a);border:1px solid var(--stroke,#4a3a2e)}
+.pane .row.dial .track i{position:absolute;top:-3px;left:50%;width:3px;height:16px;
+  margin-left:-1px;background:#ffb03a;transition:left .1s linear}
+.pane .row.dial .track i.on{background:#8fe8ff;box-shadow:0 0 6px #8fe8ff}
+.pane .row.dial input[type=range]{flex:1;min-width:140px}

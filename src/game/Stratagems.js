@@ -76,6 +76,13 @@ import { clamp } from '../engine/MathUtil.js';
 import { addSmoke, updateSmoke, clearSmoke, clearAir } from './Smoke.js';
 import { SortieDirector } from './Sorties.js';
 import { TOUGHNESS } from './Combat.js';
+/**
+ * THE BENCH — V16 Lane A3. This import is the whole of what was missing: the
+ * ledger, the fitted shell and the firing solution all existed and nothing
+ * under src/ had ever imported this file, so `pack.mjs` put it in the build
+ * (main.js draws the panel) and the game never asked it a question.
+ */
+import { callMods, noteCall } from './Bench.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const TAU = Math.PI * 2;
@@ -421,7 +428,7 @@ export const STRATAGEMS = [
     deliver: 'lance', words: ['orbital', 'strike'],
     blurb: 'A lance from orbit, on the thing you painted. It follows what you '
       + 'marked. Five seconds of warning, for you and for them.',
-    fire: (ctx, site, S, s) => S.blast(ctx, site, s.radius, 150, 300,
+    fire: (ctx, site, S, s, k = 1) => S.blast(ctx, site, s.radius * k, 150, 300,
       { core: 0.35, shake: 1.0, size: 3.6, crater: 2.1, call: 'strike' }),
   },
   {
@@ -430,7 +437,7 @@ export const STRATAGEMS = [
     deliver: 'strafe', words: ['gun', 'run'],
     blurb: 'A gunship down the line you painted, cannons open. Twelve impacts '
       + 'across sixty metres, and it does not know whose side you are on.',
-    cadence: (ctx, site, S) => S.gunRun(ctx, site),
+    cadence: (ctx, site, S, k = 1) => S.gunRun(ctx, site, k),
   },
   {
     id: 'barrage', name: 'Artillery barrage',
@@ -438,7 +445,7 @@ export const STRATAGEMS = [
     words: ['fire', 'mission'],
     blurb: `${SHELL_WORD} shells walked across the position. Wider than the lance `
       + 'and much less certain about where anything is.',
-    fire: (ctx, site, S) => {
+    fire: (ctx, site, S, s, k = 1) => {
       /* WALKED, not dropped in a ring. A battery firing at a map reference
        * has an error along its own line of fire and almost none across it,
        * so the pattern is a LINE with scatter, laid along the bearing from
@@ -455,8 +462,8 @@ export const STRATAGEMS = [
       if (bear.lengthSq() < 1e-4) bear.set(0, 0, 1);
       bear.normalize();
       for (let i = 0; i < SHELLS; i++) {
-        const t = (i - (SHELLS - 1) / 2) * 3.4 + (S.rand() - 0.5) * 2.4;
-        const across = (S.rand() - 0.5) * 5.2;
+        const t = ((i - (SHELLS - 1) / 2) * 3.4 + (S.rand() - 0.5) * 2.4) * k;
+        const across = (S.rand() - 0.5) * 5.2 * k;
         /* CLONED HERE AND NOT INSIDE THE CLOSURE. `_v2` is a module-level
          * scratch vector shared by everything in this file, so a `p.clone()`
          * deferred into a timer cloned whatever the LAST caller had left in it
@@ -488,7 +495,7 @@ export const STRATAGEMS = [
     blurb: 'A gunship walks six canisters across the ground you painted — a bank '
       + 'you cannot see over. Nothing on either side shoots what it cannot see, '
       + 'and anything half-blinded by it sprays.',
-    cadence: (ctx, site, S) => S.canisters(ctx, site),
+    cadence: (ctx, site, S, k = 1) => S.canisters(ctx, site, k),
   },
   {
     id: 'reinforce', name: 'Reinforcements', commandOnly: true, safe: true,
@@ -602,7 +609,7 @@ export const STRATAGEMS = [
      * break the ground, it kills almost nothing (3 bodies), and for seven
      * seconds the enemy is furniture.
      */
-    fire: (ctx, site, S, s) => S.ionPulse(ctx, site, s.radius),
+    fire: (ctx, site, S, s, k = 1) => S.ionPulse(ctx, site, s.radius * k),
   },
 
   /* ══ HEAVY ORDNANCE — released at 130, about wave 9 ═══════════════════
@@ -633,7 +640,7 @@ export const STRATAGEMS = [
      * because a hazard the player forgets they laid is a hazard that kills the
      * player.
      */
-    cadence: (ctx, site, S) => S.scatterMines(ctx, site),
+    cadence: (ctx, site, S, k = 1) => S.scatterMines(ctx, site, k),
   },
   {
     id: 'cluster', name: 'Cluster munitions', earn: RELEASE.HEAVY,
@@ -1067,6 +1074,15 @@ export class Stratagems {
     this.arming = false;
     /** id → seconds remaining. */
     this.cooldowns = {};
+    /**
+     * CALLS THE SUPPLY LINE IS NOT BILLED FOR — the Quartermaster's
+     * `{stratagem: n}` provisions, read off the run-scoped bag `main.js` fills
+     * at deploy. Zero on every run nobody bought one for, which is every run
+     * this game has ever played: the rows were priced, sold and never read.
+     * Read here rather than every frame because a charge is a thing you
+     * carried in, and `run` is not allowed to change under a fight.
+     */
+    this.charges = Math.max(0, Math.floor(Number(owner?.world?.run?.provisions?.stratagem) || 0));
     /** Calls that have been made and have not landed. */
     this.pending = [];
     /** Deferred effects inside a single call — the barrage's six shells. */
@@ -1343,20 +1359,59 @@ export class Stratagems {
      * constructed by the character creator and by the Codex preview, neither of
      * which has a World, and a call there must still be refusable.
      */
+    /**
+     * ══ THE BENCH, AND IT REACHES A RUN HERE OR NOWHERE — V16 §A3 ═════════
+     *
+     * `Bench.callMods` is the fitted shell (#50 Fabrication) times the firing
+     * solution (#42 Comms), multiplied out. Both were finished, both were
+     * checked, and neither had a reader: `Bench.noteCall`, `Bench.setTuning`
+     * and `Bench.tuningFor` had ZERO CALLERS anywhere in the tree, and this
+     * file did not import `Bench.js` at all. Every row of both benches read
+     * `0/12 calls` and would have read it for ever, because the count that
+     * opens a variant is incremented by the act of making a call and nothing
+     * was counting. Measured before this line: forty barrages called in a
+     * skirmish left `callsOf('barrage')` at 0.
+     *
+     * COST AND COOLDOWN ARE APPLIED HERE because here is where they are
+     * charged; radius and lead are applied at the commit, where they are used.
+     * One reader each, at the one place the number is spent.
+     */
+    const mods = callMods(s.id);
     const support = p?.world?.support;
-    const cost = supportCost(s);
-    if (support) {
+    const cost = supportCost(s) * mods.cost;
+    /**
+     * ══ A STRATAGEM CHARGE IS ONE CALL YOU DO NOT PAY FOR — V16 Lane B ════
+     *
+     * The Quartermaster sells `{stratagem: 1}` ("One more call, this run") and
+     * `{stratagem: 2}`, and neither had a reader either: the credits were
+     * taken and nothing anywhere read the number back. It is the one provision
+     * key that is not a body's number — a comm call is not something a
+     * fighter's `boonMods` can express — so `World.applyProvisions` drops it
+     * and this holds it instead, off the same run-scoped bag.
+     *
+     * IT PAYS THE SUPPORT AND NOT THE COOLDOWN. A charge that also skipped the
+     * wait would let a player empty the whole rack in one push, which is a
+     * different call and a much larger one than the row's own prose promises.
+     */
+    if (this.charges > 0) {
+      this.charges -= 1;
+    } else if (support) {
       if (!support.spend(cost)) {
         this._say(`${s.name}: ${Math.ceil(cost - support.value)} more support`);
         audio.ui('bad');
         return false;
       }
-    } else if (p?._spend && !p._spend(s.cost)) {
+    } else if (p?._spend && !p._spend(s.cost * mods.cost)) {
       this._say(`${s.name}: not enough Force`);
       audio.ui('bad');
       return false;
     }
-    this.cooldowns[s.id] = s.cooldown;
+    this.cooldowns[s.id] = s.cooldown * mods.cooldown;
+    /* AND THE CALL IS COUNTED, at the moment it is made and not at the moment
+     * it lands: a call refused above is not a call, and a designation the
+     * player then throws away is — they stood in the open and said all of it.
+     * That is the same line `_open`'s own header draws for the price. */
+    noteCall(s.id);
     /* A CALL THAT LANDS ON YOU IS NOT DESIGNATED. There is nothing to place —
      * a rally is a shout and a resupply pod is thrown at your own feet — so
      * those commit on the spot and the phase never opens. */
@@ -1416,6 +1471,11 @@ export class Stratagems {
 
   _commit(s, site, lock, ctx) {
     const p = this.owner;
+    /* The fitted shell and the solution, asked for again rather than carried
+     * from `_open`: a call that lands on your own feet never opened a
+     * designation and reaches here by a different door, and one authority
+     * asked twice is cheaper than a field two paths have to remember to set. */
+    const mods = callMods(s.id);
     /**
      * NOTHING IS CALLED ONTO GROUND NOBODY CAN SEE. See `_visible`.
      *
@@ -1432,7 +1492,20 @@ export class Stratagems {
       audio.ui('bad');
       return;
     }
-    const lead = leadOf(s);
+    /**
+     * ── THE FITTED SHELL'S OTHER TWO AXES, AND `lead` IS HONOURED HONESTLY ──
+     *
+     * `leadOf` derives a delivered call's lead FROM THE FLIGHT, and the note
+     * beside `SortieDirector.launch` records what happens when a caller writes
+     * its own number over the craft's: "a 3.57 s lead put the ship over the
+     * site at 1.77 s, which is the payload and the craft on two clocks". So a
+     * variant that says `lead: 1.55` does not stretch the countdown and leave
+     * the gunship flying the old one — it slows the CRAFT by the same factor,
+     * through `slow` below, and the two stay on one clock by construction. A
+     * lance has no path to fly and its `fall` is scaled instead, which is the
+     * same statement for the shape that has no craft.
+     */
+    const lead = leadOf(s) * mods.lead;
     /* THE MARK IS PART OF THE MECHANIC and not decoration. A call with a lead
      * that landed with no warning would be a delayed instant-kill; a ring on
      * the ground is what makes standing somewhere else the counter-play — for
@@ -1444,8 +1517,13 @@ export class Stratagems {
      * "your troops should actively avoid being within the range of an
      * incoming stratagem after you aimed it". The ring the men run from is
      * the ring the player sees painted. */
+    /* `k` IS THE FITTED SHELL'S SPREAD, and it rides on the record rather than
+     * on the class: the payload fires seconds later, out of a closure, and a
+     * field on `this` would by then be whatever the NEXT call put there. It is
+     * 1 for every call nobody has fitted a variant to, which is every call in
+     * every check and every run before a player walks into #50. */
     const P = { s, site, t: lead, mark: lead > 0.4 ? lead : 0, lock: s.track ? lock : null,
-                radius: s.radius ?? MARK_RADIUS, owner: p };
+                k: mods.radius, radius: (s.radius ?? MARK_RADIUS) * mods.radius, owner: p };
     this.pending.push(P);
     /* AND NOW SOMETHING IS ACTUALLY COMING. See src/game/Sorties.js: the lead
      * used to be a number with nothing in it, and the whole of note #31's
@@ -1454,7 +1532,7 @@ export class Stratagems {
      * `leadOf` derives the lead FROM the flight, so the payload leaves the
      * craft at the instant the craft is over the mark. */
     if (s.deliver) {
-      const cad = s.cadence ? s.cadence(ctx, site, this) : [];
+      const cad = s.cadence ? s.cadence(ctx, site, this, mods.radius) : [];
       const bearing = this._bearing(site);
       /**
        * `hold` IS HOW LONG THE THING STAYS AFTER IT GETS HERE, and the row is
@@ -1472,7 +1550,9 @@ export class Stratagems {
        * shipped are untouched.
        */
       this._sorties(ctx).launch(s.deliver, site, bearing, cad,
-        { hold: lead + 0.25 + (s.hold ?? 0), follow: s.track ? () => P.site : null });
+        { hold: lead + 0.25 + (s.hold ?? 0), follow: s.track ? () => P.site : null,
+          /* ONE CLOCK. See the note over `lead` above. */
+          slow: mods.lead });
     }
     this._say(lead > 0.2 ? `${s.name} — ${lead.toFixed(1)}s` : s.name);
     audio.force(p.chest ?? p.position, 'push');
@@ -1743,7 +1823,7 @@ export class Stratagems {
         else { P.site.copy(P.lock.position); P.site.y = this._groundAt(ctx, P.site); }
       }
       if (P.mark && ctx?.particles) this._paintMark(ctx, P);
-      if (P.t <= 0) { this.pending.splice(i, 1); P.s.fire?.(ctx, P.site, this, P.s); }
+      if (P.t <= 0) { this.pending.splice(i, 1); P.s.fire?.(ctx, P.site, this, P.s, P.k ?? 1); }
     }
   }
 
@@ -1790,7 +1870,7 @@ export class Stratagems {
    */
   _paintMark(ctx, P) {
     const k = clamp(P.t / P.mark, 0, 1);
-    const R = P.s.radius ?? MARK_RADIUS;
+    const R = (P.s.radius ?? MARK_RADIUS) * (P.k ?? 1);
     const r = R * (0.35 + k * 0.65);
     const hot = k < 0.25;
     const n = hot ? 16 : 10;
@@ -2070,8 +2150,13 @@ export class Stratagems {
    * draw calls — and then cracks the ground with the same `blast` every other
    * call uses. Nothing here knows how to shoot or how to break ground.
    */
-  gunRun(ctx, site) {
-    const BEATS = 12, HZ = 8, HALF = 30;
+  gunRun(ctx, site, k = 1) {
+    /* `k` LENGTHENS THE RUN AND NOTHING ELSE — the Long Run's own prose is
+     * "twice the length of ground, thinner across it", and the thinness is
+     * the same twelve impacts spread over twice the line. Scaling the blast
+     * with it would make a longer run a heavier one, which is the upgrade the
+     * whole bench refuses to be. */
+    const BEATS = 12, HZ = 8, HALF = 30 * k;
     const b = this._bearing(site);
     /* OWN VECTORS, NOT THE MODULE'S SCRATCH. Everything a cadence entry does
      * calls back into this file — `_gunPair`, `blast` — and both of those use
@@ -2132,7 +2217,7 @@ export class Stratagems {
    * wants is a LINE between themselves and whatever is shooting, and a single
    * round bank leaves both ends open.
    */
-  canisters(ctx, site) {
+  canisters(ctx, site, k = 1) {
     const b = this._bearing(site);
     // Own vectors, for the reason `gunRun` gives above.
     const across = new THREE.Vector3(Math.cos(b), 0, -Math.sin(b));
@@ -2145,7 +2230,7 @@ export class Stratagems {
      * because a screen you have to re-lay before you have crossed it is a
      * screen that never did its job. */
     for (let i = 0; i < SMOKE_CANS; i++) {
-      const at = site.clone().addScaledVector(across, (i - (SMOKE_CANS - 1) / 2) * 9.0);
+      const at = site.clone().addScaledVector(across, (i - (SMOKE_CANS - 1) / 2) * 9.0 * k);
       out.push({
         t: i * 0.22 - 0.55,
         fn: (from, c) => { at.y = this._groundAt(c, at); this.smoke(c, at, 12, 22); },
@@ -2412,10 +2497,14 @@ export class Stratagems {
    * scattered on a spiral rather than at random so the field has no hole in the
    * middle of it, with a metre of jitter so it does not read as a pattern.
    */
-  scatterMines(ctx, site) {
+  scatterMines(ctx, site, k = 1) {
     const out = [];
     for (let i = 0; i < MINE_COUNT; i++) {
-      const a = i * 2.399, r = 2.0 + (i / MINE_COUNT) * 13.0;
+      /* THE SAME TWELVE CHARGES OVER MORE OR LESS GROUND. A Scattered Field is
+       * not more mines — that would be power off a use count — it is the same
+       * dozen spread thinner, which is exactly the trade the row's prose
+       * names: "they will find one of them; they will not find all of them". */
+      const a = i * 2.399, r = (2.0 + (i / MINE_COUNT) * 13.0) * k;
       const at = site.clone().add(new THREE.Vector3(
         Math.cos(a) * r + (this.rand() - 0.5) * 2, 0, Math.sin(a) * r + (this.rand() - 0.5) * 2));
       out.push({

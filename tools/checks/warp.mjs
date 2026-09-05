@@ -176,12 +176,33 @@ export async function run({ check, assert, near }) {
       const was = {};
       for (const k of ['strip', 'screen']) was[k] = st.mats[k].color.getHex();
 
+      /**
+       * ══ THE TWO UNIFORMS THE SEQUENCE WRITES TO, BEFORE IT WRITES ═══════
+       *
+       * `orderJump`'s `stars(k, swing)` sink is `if (u.uWarp) u.uWarp.value =
+       * k;` — an optional guard against a uniform table that did not declare
+       * either name, so the guard was false on every frame of every jump and
+       * the whole star half of the sequence was a silent no-op. Measured in
+       * the shipped build before this clause: a player-ordered jump took the
+       * deck to amber, swapped the planet and spoke every line, with `uWarp`
+       * peaking at 0.00 and `uOrbitSpin` at 0.00. That is `hangar.mjs`'s bug
+       * one file along — a call into an optional chain that eats it — and the
+       * name is the only part of it a check can pin.
+       */
+      const uni = world.engine?.skyDome?.mat?.uniforms;
+      assert(uni && 'uWarp' in uni && 'uOrbitSpin' in uni,
+        'the dome declares no uWarp/uOrbitSpin — orderJump writes to both behind an `if (u.x)` '
+        + 'guard, so a dome without them turns the star-lines and the bearing swing into two '
+        + 'assignments that never happen and nothing anywhere says so');
       assert(S.orderJump(world, to) === true, 'the plot table refused a legitimate order');
       assert(world._warp && !world._warp.done, 'ordering a jump started nothing');
 
       /* MID-JUMP THE STATION IS AMBER, and it is the deck's OWN material that
        * moved — not a tenth one, which §9.1 forbids and `station.mjs` measures. */
-      run(world, 3.0, idle);
+      let lines = 0, swing = 0;
+      const watch = () => { lines = Math.max(lines, uni.uWarp.value);
+        swing = Math.max(swing, Math.abs(uni.uOrbitSpin.value)); };
+      run(world, 3.0, idle, watch);
       let moved = 0;
       for (const k of ['strip', 'screen']) if (st.mats[k].color.getHex() !== was[k]) moved++;
       assert(moved > 0, 'the station did not change colour on the way — no deck knew a jump was ordered');
@@ -189,7 +210,15 @@ export async function run({ check, assert, near }) {
         `the jump left ${Object.keys(st.mats).length} materials on the deck — §9.1 is nine`);
 
       /* AND IT ARRIVES, AND PUTS ITSELF BACK. */
-      run(world, 7.5, idle);
+      run(world, 7.5, idle, watch);
+      /* THE SKY WAS DRAWN INTO LINES AND THE BEARING SWUNG, both off the dome's
+       * own uniforms rather than off the sink that wrote them — a sink asserted
+       * against itself is the twin this tree keeps deleting. */
+      assert(lines > 0.95, `the star-lines peaked at ${lines.toFixed(2)} on a real station`);
+      assert(swing > 1.0, `the starfield swung ${swing.toFixed(2)} rad coming onto the bearing`);
+      assert(uni.uWarp.value === 0 && uni.uOrbitSpin.value === 0,
+        `the jump left the sky at uWarp ${uni.uWarp.value}, uOrbitSpin ${uni.uOrbitSpin.value} — `
+        + 'the station is permanently in transit');
       assert(world._warp.done, `the jump was still in ${world._warp.phase} after 10.5s`);
       assert(world._pickedLevel === to,
         `the station thinks it is orbiting ${world._pickedLevel?.name} and it jumped to ${to.name}`);
@@ -206,6 +235,7 @@ export async function run({ check, assert, near }) {
       assert(world._deckBattle?.group?.parent, 'no fleet outside after the jump');
       assert(S.orderJump(world, to) === false, 'the station will jump to where it already is');
       return `${from.name} → ${to.name} in ${(10.5).toFixed(1)}s of frames; deck went amber and back; `
+        + `star-lines peaked ${lines.toFixed(2)} and the bearing swung ${swing.toFixed(2)} rad, both back to 0; `
         + `dome and fleet both on the new theatre`;
     } finally { world.dispose?.(); }
   });

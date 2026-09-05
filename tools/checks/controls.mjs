@@ -1496,8 +1496,18 @@ export async function run({ check, assert }) {
     for (const [path, raw] of files) {
       const code = strip(raw);
       for (const m of code.matchAll(/\bsettings\??\.([A-Za-z_$][\w$]*)/g)) note(m[1], path);
+      /* ── AN ALIAS OF THE SETTINGS OBJECT, AND NOT OF ONE SETTING ────────
+       *
+       * This catches `const s = world.settings;` so that `s.foo` counts as
+       * reading `foo`. It also caught `const v = settings?.keepsakes;` — a
+       * setting's VALUE, not the object — and then read the array's own
+       * `v.filter(...)` as a setting called `filter`, which the clause below
+       * duly reported as "read by shipped code and defaulted nowhere". An
+       * instrument that invents a setting is worse than one that misses a
+       * reader. The lookahead refuses a property access on `settings` itself.
+       */
       for (const m of code.matchAll(
-        /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:[\w$.?]*\.)?settings\s*(?:\|\||\?\?)?[^;\n]*;/g)) {
+        /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:[\w$.?]*\.)?settings(?!\s*\??[.[])\s*(?:\|\||\?\?)?[^;\n]*;/g)) {
         const scope = restOfBlock(code, m.index + m[0].length);
         for (const u of scope.matchAll(new RegExp(`\\b${m[1]}\\??\\.([A-Za-z_$][\\w$]*)`, 'g'))) note(u[1], path);
       }
@@ -2094,7 +2104,38 @@ export async function run({ check, assert }) {
         if (JSON.stringify(out[k]) !== JSON.stringify(DEFAULT_SETTINGS[k])) PROGRAMMED.add(k);
       }
     }
-    const orphans = [], ghost = [], programmed = [];
+    /**
+     * ══ A FIFTH SHAPE OF CONTROL: BOUGHT (V16 §B) ═════════════════════════
+     *
+     * *"maybe cosmetic stuff you buy is permanent."* A keepsake is moved at a
+     * counter, by spending credits — which is a control the player operates
+     * with their hands, and is not on the menu and must never be: a slider
+     * that granted a 3200-credit beskar plate would make the shop a decoration.
+     *
+     * DERIVED, LIKE `PROGRAMMED` AND UNLIKE A LIST, and for the identical
+     * reason: a key joins by a PURCHASE actually writing it, and falls off the
+     * day the last row that writes it goes — at which point it is an orphan
+     * again and this check asks for a control back by name. Every keepsake on
+     * every counter is bought against a copy of the defaults, and whatever
+     * moved is what the shop can move.
+     */
+    const K = await import('../../src/game/Keepsakes.js');
+    const V = await import('../../src/game/Vendors.js');
+    const BOUGHT = new Set();
+    for (const row of V.everyRow()) {
+      if (row.kind !== 'keepsake') continue;
+      const before = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+      const after = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+      try { K.takeKeepsake(after, row); } catch { continue; }
+      for (const k of Object.keys(DEFAULT_SETTINGS)) {
+        if (JSON.stringify(after[k]) !== JSON.stringify(before[k])) BOUGHT.add(k);
+      }
+      /* The ledger itself is written on every purchase and is not a field of
+       * the defaults' own shape until one lands, so it is named off the store
+       * rather than diffed. */
+      if (after.keepsakes && after.keepsakes.length) BOUGHT.add('keepsakes');
+    }
+    const orphans = [], ghost = [], programmed = [], bought = [];
     for (const key of Object.keys(DEFAULT_SETTINGS)) {
       if (EXCUSED[key] && !bound.has(key)) continue;
       if (TYPED[key]) {
@@ -2112,6 +2153,7 @@ export async function run({ check, assert }) {
          * is still held to having the card. The room is the last resort, not
          * an amnesty. */
         if (PROGRAMMED.has(key)) { programmed.push(key); continue; }
+        if (BOUGHT.has(key)) { bought.push(key); continue; }
         orphans.push(key);
         continue;
       }

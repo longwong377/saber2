@@ -190,7 +190,7 @@ function packField(b, team = 1) {
   return out;
 }
 
-export async function run({ check, assert, THREE: T }) {
+export async function run({ check, assert, near, THREE: T }) {
   /* Every check in this file is wrapped, so the shared module state goes back
    * before each body as well as after it. What that state IS lives in
    * tools/checks/_shared.mjs and is deliberately not restated here — a list
@@ -1795,6 +1795,97 @@ export async function run({ check, assert, THREE: T }) {
     return `${shipped.length} open, ${held.length} released over ${rungs.length} rungs at `
       + `${rungs.join('/')} effort — waves ${at.join(', ')} of a simulated run; `
       + `${notices.length} notices, none repeated; a fresh pool opens at 0`;
+  });
+
+  check('support calls: the bench is fed by the call, and the call is served by the bench', async () => {
+    /**
+     * ══ V16 §A3, AND THE WHOLE OF IT WAS UNREACHABLE ═════════════════════
+     *
+     * *"if you use certain strategems certain number of times maybe you can
+     * upgrade them and unlock new ones."* `Bench.js` had the ledger, the
+     * variants and the firing solution, `bench.mjs` was 4/4 over all three,
+     * and `Bench.noteCall`, `Bench.setTuning` and `Bench.tuningFor` had ZERO
+     * CALLERS anywhere in the tree — this file did not import `Bench.js` at
+     * all. Both rooms printed `0/12 calls` and would have printed it for ever.
+     *
+     * There are exactly two seams and this holds both of them:
+     *
+     *   THE COUNT is taken where a call is MADE, which is `_open` — the moment
+     *     the code is finished, the support is billed and the cooldown starts.
+     *     Not at the impact: a designation the player throws away is still a
+     *     call they stood in the open and spelled out loud, which is the same
+     *     line `_open`'s own header draws for the price.
+     *   THE TUNING AND THE SHELL reach the numbers the call is actually made
+     *     of. A stored tuning that no cooldown reads is the same silence one
+     *     step along.
+     */
+    const B = await import('../../src/game/Bench.js');
+    const say = (S, b, id) => {
+      const row = STRATAGEM_BY_ID[id];
+      S.setArming(true);
+      for (const c of row.code) S.feed(c, b.ctx);
+      S.setArming(false);
+      return row;
+    };
+
+    /* ── 1. THE COUNT, THROUGH THE CODE ──────────────────────────────────── */
+    B.clearBench();
+    const b = bench({ support: { value: 9999, spend() { return true; } } });
+    const S = b.p.stratagems;
+    assert(B.callsOf('strike') === 0, 'the ledger did not start empty');
+    for (let i = 0; i < 3; i++) { say(S, b, 'strike'); S.cooldowns.strike = 0; }
+    assert(B.callsOf('strike') === 3,
+      `three orbital strikes were called and the ledger says ${B.callsOf('strike')} — the count is `
+      + 'taken nowhere, so every variant on both benches reads 0/12 for ever');
+    /* A CODE THAT IS REFUSED IS NOT A CALL. The cooldown is the cheapest
+     * refusal to construct and it is the one a player meets most. */
+    S.cooldowns.strike = 20;
+    say(S, b, 'strike');
+    assert(B.callsOf('strike') === 3,
+      `a call refused on its cooldown was counted — the ledger says ${B.callsOf('strike')}`);
+    assert(B.callsOf('barrage') === 0, 'calling one thing counted another');
+
+    /* ── 2. THE SOLUTION REACHES THE COOLDOWN AND THE BILL ───────────────── */
+    const stock = STRATAGEM_BY_ID.barrage;
+    const c1 = bench({ support: { value: 9999, spent: 0, spend(n) { this.spent += n; return true; } } });
+    say(c1.p.stratagems, c1, 'barrage');
+    const plainWait = c1.p.stratagems.cooldowns.barrage;
+    const plainBill = c1.world.support.spent;
+    near(plainWait, stock.cooldown, 1e-6, 'an untuned call waits');
+
+    B.setTuning('barrage', 1);
+    const c2 = bench({ support: { value: 9999, spent: 0, spend(n) { this.spent += n; return true; } } });
+    say(c2.p.stratagems, c2, 'barrage');
+    const tunedWait = c2.p.stratagems.cooldowns.barrage;
+    const tunedBill = c2.world.support.spent;
+    const want = B.tuningFrom(1);
+    near(tunedWait, stock.cooldown * want.cooldown, 1e-6, 'a perfectly solved call waits');
+    assert(tunedWait < plainWait && tunedBill < plainBill,
+      `a perfect solution changed nothing: ${plainWait}s/${plainBill.toFixed(1)} support before, `
+      + `${tunedWait}s/${tunedBill.toFixed(1)} after`);
+
+    /* ── 3. THE FITTED SHELL REACHES THE SAME TWO, AND THE GROUND ────────── */
+    B.clearTuning();
+    B.noteCall('barrage', 60);
+    const v = B.benchFor('barrage').find((x) => x.open && (x.mods.cooldown ?? 1) !== 1);
+    assert(v, 'no open barrage variant moves a cooldown — this clause measures nothing');
+    assert(B.pick('barrage', v.id) === v.id, `${v.id} would not fit`);
+    const c3 = bench({ support: { value: 9999, spent: 0, spend(n) { this.spent += n; return true; } } });
+    say(c3.p.stratagems, c3, 'barrage');
+    near(c3.p.stratagems.cooldowns.barrage, stock.cooldown * v.mods.cooldown, 1e-6,
+      `the fitted ${v.id} waits`);
+    /* AND THE RING THE PLAYER SEES IS THE RING THE PAYLOAD USES. `radius` on
+     * the pending record is what the line runs out of (`Reactions.markOver`)
+     * and `_paintMark` draws off the same factor, so a shell that lands wider
+     * cannot be warned about at the stock width. */
+    const P = c3.p.stratagems.pending[0];
+    assert(P, 'the call never queued');
+    near(P.radius, (stock.radius ?? 7.5) * (v.mods.radius ?? 1), 1e-6, 'the marked ring is');
+    B.clearBench();
+    return `3 calls counted through the code and a refused one not; a perfect solution took `
+      + `${stock.cooldown}s to ${tunedWait.toFixed(1)}s and ${plainBill.toFixed(1)} support to `
+      + `${tunedBill.toFixed(1)}; ${v.id} fitted waits ${(stock.cooldown * v.mods.cooldown).toFixed(1)}s `
+      + `and marks ${P.radius.toFixed(1)} m`;
   });
 
   check('support calls: nothing a player can read says "stratagem"', () => {

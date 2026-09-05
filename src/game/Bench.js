@@ -177,7 +177,7 @@ export function variantsFor(id) { return (VARIANTS[id] || []).filter(saneVariant
  * anywhere subtracts from it. That distinction is the reason this file passes
  * the six-word scan honestly rather than by avoiding vocabulary.
  */
-function blank() { return { v: 1, called: {}, tuned: {} }; }
+function blank() { return { v: 1, called: {}, tuned: {}, picked: {}, solved: {} }; }
 let _cache = null;
 function read() {
   if (_cache) return _cache;
@@ -185,6 +185,8 @@ function read() {
   _cache = { ...blank(), ...(v && typeof v === 'object' ? v : {}) };
   if (!_cache.called || typeof _cache.called !== 'object') _cache.called = {};
   if (!_cache.tuned || typeof _cache.tuned !== 'object') _cache.tuned = {};
+  if (!_cache.picked || typeof _cache.picked !== 'object') _cache.picked = {};
+  if (!_cache.solved || typeof _cache.solved !== 'object') _cache.solved = {};
   /* Clamped on the way in — a hand-edited save is a hostile input, and this is
    * the field somebody would edit to open every variant at once. */
   const ids = new Set(STRATAGEMS.map((s) => s.id));
@@ -284,23 +286,182 @@ export function tuningFrom(score) {
   return { cooldown: 1 - 0.10 * k, cost: 1 - 0.05 * k };
 }
 
-/** Set this run's tuning for one stratagem. Run-scoped. */
-export function setTuning(id, score) {
+/**
+ * Set this run's tuning for one call. Run-scoped.
+ *
+ * `clock` is the station hour the solution was sent on, and passing it is what
+ * arms the one-an-hour gate below — a caller that has no clock (a check, the
+ * Codex preview) still sets a tuning and simply does not stamp one.
+ */
+export function setTuning(id, score, clock = null) {
   const s = read();
   s.tuned[id] = tuningFrom(score);
+  if (Number.isFinite(clock)) s.solved[id] = Math.floor(clock);
   return write(s).tuned[id];
 }
 
 /** This run's tuning, or the identity. */
 export function tuningFor(id) { return read().tuned[id] || { cooldown: 1, cost: 1 }; }
 
-/**
- * The run ended. THE TUNING GOES, and that is what keeps this a skill test:
- * a bench solution is a provision in everything but name and dies exactly as
- * one does. `called` survives, because a count of what you have done is a
- * record and `Progress.js` has always allowed one of those.
+/* ══════════════════════════════════════════════════════════════════════════
+ *  WHICH SHELL IS IN THE TUBE — the pick, and it is run-scoped too
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * `benchFor` has always said which variants are open. Nothing said which one
+ * you had FITTED, so twelve sidegrades sat behind a use count that nothing
+ * incremented and reached no run even if it had. The pick is a decision you
+ * make at #50 before you go, it holds for that run, and it dies with it — the
+ * same contract the solution has and for the same reason: a sidegrade that
+ * survived would be a loadout, and a loadout chosen once and kept is the
+ * cross-run power `Progress.js` refuses.
+ *
+ * A pick that is not open is refused HERE and not at the panel, so a hand-
+ * edited save cannot fit a shell it has not earned the right to.
  */
-export function clearTuning() { const s = read(); s.tuned = {}; return write(s); }
+export function pick(id, variantId) {
+  const s = read();
+  if (!variantId) { delete s.picked[id]; return write(s).picked[id] ?? null; }
+  const row = benchFor(id).find((v) => v.id === variantId && v.open);
+  if (!row) return null;
+  s.picked[id] = variantId;
+  return write(s).picked[id];
+}
+
+/** The variant fitted to this call for this run, as a row, or null. */
+export function pickedFor(id) {
+  const want = read().picked[id];
+  if (!want) return null;
+  return benchFor(id).find((v) => v.id === want && v.open) || null;
+}
+
+/**
+ * ══ THE ONE READER A CALL NEEDS ═══════════════════════════════════════════
+ *
+ * Everything this file knows about one support call, multiplied out into the
+ * four numbers a call is made of. `Stratagems._open` and `_commit` ask this
+ * and nothing else, so the fitted shell and the firing solution cannot be
+ * applied in two places that disagree, and a stratagem row's own numbers stay
+ * the only base there is.
+ *
+ * Identity is `{radius: 1, lead: 1, cooldown: 1, cost: 1}` — a player who has
+ * never walked into either room fights with the table exactly as written.
+ */
+export function callMods(id) {
+  const v = pickedFor(id)?.mods || {};
+  const t = tuningFor(id);
+  return {
+    radius: v.radius ?? 1,
+    lead: v.lead ?? 1,
+    cooldown: (v.cooldown ?? 1) * t.cooldown,
+    cost: (v.cost ?? 1) * t.cost,
+  };
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  THE DRIFTING MARK — where the dials should be, this hour
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * `solve(want, got)` needs a `want`, and the room is what generates it. Two
+ * properties and both are load-bearing:
+ *
+ *   IT IS A PURE FUNCTION OF THE CLOCK AND THE CALL. No `Math.random` — the
+ *     tree forbids one in `src/` and this is where one would be reached for
+ *     first. Two players on the same station hour get the same problem, which
+ *     is what makes a score worth comparing at all.
+ *   IT MOVES EVERY HOUR. A fixed solution is a number you write down once and
+ *     type in for ever, which is a password and not a skill.
+ *
+ * The hash is the integer mix `Store.js` and `Quests.js` already use for their
+ * own day rolls; three draws off it, one per dial, each landing in 0.12..0.88
+ * so no dial's answer is ever at an end stop you could hold and forget.
+ */
+function mix(n) {
+  let h = (n | 0) + 0x9e3779b9;
+  h = Math.imul(h ^ (h >>> 16), 0x21f0aaad);
+  h = Math.imul(h ^ (h >>> 15), 0x735a2d97);
+  return ((h ^ (h >>> 15)) >>> 0) / 4294967296;
+}
+function idNum(id) {
+  let n = 0;
+  for (let i = 0; i < String(id).length; i++) n = (Math.imul(n, 31) + String(id).charCodeAt(i)) | 0;
+  return n;
+}
+
+/** Where the mark STANDS for this call on this station hour — the centre. */
+export function wantFor(id, clock = 0) {
+  const base = idNum(id) * 7919 + Math.floor(Number(clock) || 0) * 104729;
+  const out = {};
+  for (let i = 0; i < DIALS.length; i++) out[DIALS[i]] = 0.12 + mix(base + i * 2654435761) * 0.76;
+  return out;
+}
+
+/**
+ * ══ AND IT DRIFTS, WHICH IS THE WHOLE OF THE TEST ═════════════════════════
+ *
+ * A mark that is shown and does not move is a number you copy into a box, and
+ * `solve` would answer 1.000 for everybody. Each dial's mark swings about its
+ * hour's centre at its own rate, so the three are never still together and a
+ * solution is a moment as much as a setting: you set the dials, you watch, and
+ * you send when the three of them are where you put them. That is a firing
+ * solution, which is what the room is.
+ *
+ * `t` is seconds since the solution was opened, and everything about the swing
+ * — centre, rate, phase — is a pure function of the call and the hour. No
+ * `Math.random`: two players on the same station hour are handed the same
+ * problem, which is the only thing that makes one score comparable to another.
+ *
+ * The rates are deliberately close together and irrational against each other
+ * (0.45..1.20 rad/s), so the three come back into the same relationship only
+ * every few minutes rather than every second.
+ */
+export const DRIFT = 0.18;
+
+export function markAt(id, clock = 0, t = 0) {
+  const c = wantFor(id, clock);
+  const base = idNum(id) + Math.floor(Number(clock) || 0) * 31;
+  const out = {};
+  for (let i = 0; i < DIALS.length; i++) {
+    const d = DIALS[i];
+    const rate = 0.45 + mix(base + 977 * (i + 1)) * 0.75;
+    const phase = mix(base + 613 * (i + 1)) * Math.PI * 2;
+    const v = c[d] + Math.sin((Number(t) || 0) * rate + phase) * DRIFT;
+    out[d] = v < 0 ? 0 : v > 1 ? 1 : v;
+  }
+  return out;
+}
+
+/**
+ * ══ ONE ATTEMPT AN HOUR, AND THAT IS WHAT MAKES IT A TEST ═════════════════
+ *
+ * `solve` is cheap to call and the panel could offer a SEND every second; a
+ * solution you may re-take until it is perfect is a button with extra steps,
+ * and every player would arrive at 1.000. So the room takes one solution per
+ * call per station hour — the same hour the shops reroll on and the medbay
+ * heals on, which is the clock this whole deck already runs on. Walking out
+ * and back in does not reset it, exactly as it does not reset a spin at #60.
+ */
+export function solvedAt(id) { const v = read().solved[id]; return Number.isFinite(v) ? v : null; }
+export function canSolve(id, clock = 0) {
+  const was = solvedAt(id);
+  return was === null || Math.floor(Number(clock) || 0) > was;
+}
+
+/**
+ * The run ended. THE TUNING GOES, and the fitted shell with it — that is what
+ * keeps this a skill test: a bench solution is a provision in everything but
+ * name and dies exactly as one does, and so does a sidegrade you chose for one
+ * fight. `called` survives, because a count of what you have done is a record
+ * and `Progress.js` has always allowed one of those.
+ *
+ * `solved` goes too. It is the hour-gate above, and holding it across a run
+ * would mean the room refused you a solution for a run it had never given one
+ * to — the gate exists to stop re-taking, not to ration by wall clock.
+ */
+export function clearTuning() {
+  const s = read();
+  s.tuned = {}; s.picked = {}; s.solved = {};
+  return write(s);
+}
 
 /** Start again. Only a check calls this. */
 export function clearBench() { store.drop(); _cache = null; return read(); }
