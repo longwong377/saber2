@@ -66,11 +66,32 @@
  * `LOOK_KEYS`, `match` and `army` each make in `Net.js`, and it is why `home`
  * is its own message rather than four more fields on `packAvatar`.
  *
- * WHAT IS NOT ON IT: `store` (the larder) and `pad` (which companion lives
- * there). Neither has a reader on another machine — see question 4 — and a
- * field on the wire with no reader is the defect `co-op: no field is put on the
- * wire and read by nobody` exists to catch. It is also the honest answer about
- * a friend's fridge: nobody else's machine is told what is in it.
+ * …AND THE PERCH, AND WHAT IS ASLEEP ON IT. Lane F's sentence is *"visit your
+ * friend's apartment / SEE THEIR COMPANION"*, and until this lane the second
+ * half of it crossed nothing at all: a guest's room was dressed from a packet
+ * with no fixture on it, so the wall where their basket stands was bare and
+ * the animal was not merely invisible — it did not exist on that machine.
+ *
+ * TWO MORE FIELDS, AND THEY ARE IDENTITY RATHER THAN STATE. `p` is the fixture
+ * (`'perch'`/`'basket'`/`'charge'` — a `Home.PADS` id, which is already a
+ * validated row of the home record) and `c` is `[kind, stage]`, which is the
+ * whole of what a body builder reads off a companion: `Home.petIdent` argues
+ * that at length and `Home.cleanPet` turns the pair back into something
+ * `bodyScaleOf` and `growthOptsFrom` will take. Measured: **20 B** on a packet
+ * that was 132 B, sent at the HOME cadence — when somebody moves a chair or
+ * chooses a fixture at the habitat — and never at the animal's. There is no
+ * per-frame anything: `seatCompanion` places the body once and never steps it,
+ * so a pose, a gait or a heading would be bytes describing motion that does
+ * not happen.
+ *
+ * WHAT IS STILL NOT ON IT: `store` (the larder), and a companion's LOOK. The
+ * larder has no reader on another machine — see question 4 — and a field on the
+ * wire with no reader is the defect `co-op: no field is put on the wire and
+ * read by nobody` exists to catch; it is also the honest answer about a
+ * friend's fridge. The look is eleven palette ids for a fact the ask does not
+ * name, so a painted animal wears its factory colours in somebody else's
+ * cabin; `Home.petIdent` states that limit rather than leaving it to be
+ * found.
  *
  * A `seq` RIDES EVERY PACKET and a lower one is dropped. Two placements a
  * second apart, delivered out of order, would otherwise leave the second
@@ -132,7 +153,7 @@
  */
 
 import { dressHome, undressApartment, cleanHome, homeUnder, homeAddress, larder,
-  pieceKind, CELL, NOTCHES, MAX_PIECES } from './Home.js';
+  homePetIdent, cleanPet, pieceKind, CELL, NOTCHES, MAX_PIECES } from './Home.js';
 import { PLACES } from './StationPlan.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -289,12 +310,21 @@ function readPieces(rows) {
 }
 
 /**
- * A home, as it crosses. `place`, the three surfaces and the furniture — and
- * NOT `store` or `pad`, which are the owner's and have no reader anywhere else
- * (see §2 and §4 above).
+ * A home, as it crosses. `place`, the three surfaces, the furniture, the
+ * fixture and the identity of the animal on it — and NOT `store`, which is the
+ * owner's and has no reader anywhere else (see §2 and §4 above).
+ *
+ * `p` and `c` are OMITTED when there is nothing to say rather than sent as
+ * null: a cabin with no perch and a player with no animal are the common case,
+ * and `"p":null,"c":null` is 18 B of two machines agreeing about nothing. The
+ * reader treats absence and null as the same thing, which they are.
+ *
+ * @param pet `Home.homePetIdent()` — `{ kind, stage }`, or null.
  */
-export function packHome(state, seq = 0) {
+export function packHome(state, seq = 0, pet = null) {
   if (!state) return null;
+  const p = state.pad || null;
+  const c = (pet && typeof pet.kind === 'string') ? [pet.kind, pet.stage | 0] : null;
   return {
     t: 'home',
     seq: seq | 0,
@@ -305,6 +335,9 @@ export function packHome(state, seq = 0) {
     a: state.place | 0,
     s: [state.surfaces?.floor, state.surfaces?.wall, state.surfaces?.trim],
     f: packPieces(state.pieces),
+    /* V15 §1.3's fixture and V16 Lane F's animal. Both absent when unset. */
+    ...(p ? { p } : null),
+    ...(c ? { c } : null),
   };
 }
 
@@ -321,8 +354,18 @@ export function readHome(msg) {
     place: msg.a,
     surfaces: { floor: msg.s?.[0], wall: msg.s?.[1], trim: msg.s?.[2] },
     pieces: readPieces(msg.f),
+    /* THE FIXTURE IS A ROW OF THE RECORD and goes through the record's own
+     * validator, which already answers null for a string that is not a `PADS`
+     * id — the clamp a hand-edited save meets, meeting a packet. */
+    pad: msg.p,
   });
-  return { seq: Math.max(0, msg.seq | 0), place: rec.place, rec };
+  /* THE ANIMAL IS NOT A ROW OF IT. The home record is what this machine writes
+   * to its own disk on the way out, and a copy of somebody else's companion in
+   * it would be a second Kennel with a home's lifetime. So it rides BESIDE the
+   * record and is handed to `dressHome` as an option, which is where a guest's
+   * dressing already differs from yours. */
+  const pet = cleanPet(Array.isArray(msg.c) ? { kind: msg.c[0], stage: msg.c[1] } : null);
+  return { seq: Math.max(0, msg.seq | 0), place: rec.place, rec, pet };
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -401,13 +444,19 @@ export function publishApartment(world) {
   const st = coopState(world);
   if (h.edits === st.edits) return null;
   st.edits = h.edits;
-  const msg = packHome(h.state, st.seq + 1);
+  /* THE ANIMAL IS READ HERE AND NOWHERE NEARER THE FRAME. `homePetIdent`
+   * reaches the Kennel, which is a `localStorage` read, and this line is past
+   * the `edits` gate — so it runs when a chair moves, not eighteen times a
+   * second. */
+  const msg = packHome(h.state, st.seq + 1, homePetIdent());
   /* THE SECOND GATE, AND IT IS NOT THE SAME AS THE FIRST. `edits` says the
    * record was touched; this says the touch CHANGED anything a reader could
    * see — a piece picked up and put back in the same cell is two edits and one
    * unchanged room. `seq` is excluded from the comparison or every packet
-   * would differ from the last by construction. */
-  const body = JSON.stringify([msg.a, msg.s, msg.f]);
+   * would differ from the last by construction. THE FIXTURE AND THE ANIMAL ARE
+   * IN IT: a player who swaps the basket for a perch has changed the room and
+   * nothing else, and a comparison over the furniture alone would swallow it. */
+  const body = JSON.stringify([msg.a, msg.s, msg.f, msg.p, msg.c]);
   if (body === st.sent) return null;
   st.sent = body;
   msg.seq = ++st.seq;
@@ -452,6 +501,8 @@ export function noteApartment(world, from, msg) {
     return { ok: false, why: `seq ${rec.seq} is not newer than ${held.seq}` };
   }
   st.homes.set(from, { name: row.name || 'Jedi', place: seat, rec: rec.rec, seq: rec.seq,
+    /* Beside the record rather than in it — `readHome` says why. */
+    pet: rec.pet,
     h: held?.h || null, drawn: held?.drawn ?? -1 });
   return { ok: true, why: null, place: seat, seq: rec.seq };
 }
@@ -515,6 +566,8 @@ export function dressApartments(world) {
     if (row.h) { undressApartment(world, row.h); row.h = null; }
     row.h = dressHome(world, stn, stn.mats, {
       place: row.place, state: row.rec, owner: { id, name: row.name },
+      /* V16 Lane F — their fixture is in `row.rec`, their animal beside it. */
+      pet: row.pet || null,
     });
     row.drawn = row.seq;
     if (row.h) n++;
