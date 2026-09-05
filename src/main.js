@@ -42,7 +42,7 @@ import { clearTuning, pick, pickedFor, tuningFor, setTuning, canSolve, markAt, s
  * manifest; neither it nor Command.js knows a store exists. */
 import * as Company from './game/Company.js';
 /* The companion's durable record and its fold — see `foldCompanion`. */
-import { keepCompanion, load as loadKennel, rungOf, temperById,
+import { keepCompanion, load as loadKennel, playLine, rungOf, temperById,
   adopt as adoptCompanion } from './game/Kennel.js';
 import { adoptCompanionBody, applyCompanionOrder, fieldCompanion,
   fieldForPeers } from './game/Companions.js';
@@ -57,7 +57,7 @@ import { guardZoneOf } from './game/Bolts.js';
 /* #28's page — V15 §4's "only reachable at the habitat". See `openHabitat`. */
 import { emptyLarder, stowFood, takeFood } from './game/Home.js';
 import { noteApartment, larderAt } from './game/Coop.js';
-import { habitatPanel, careAt, writePlaques } from './game/Habitat.js';
+import { habitatPanel, careAt, choosePad, writePlaques } from './game/Habitat.js';
 import { wardRows, wakePlan, arrivalNotice, checkIn, discharge, tanksFree, wounded, TANKS, soonestOut,
   awayFor } from './game/Medbay.js';
 import { watch as toteWatch, resultOf as toteResult, venueAtPlace, MAX_STAKE } from './game/Tote.js';
@@ -66,6 +66,10 @@ import {
   openWheelhouse, sabaccTable, nextHand, dejarikTable, dejarikTurn,
   drumTable, drumBets, drumQuote, WHEELHOUSE,
 } from './game/Casino.js';
+/* THE DRUM'S TICKET IS A RULE AND NOT A PANEL DETAIL, so its shape lives in
+ * `Games.js` where it can be swept and measured. See `drumTicket`'s note: this
+ * panel used to build the ticket by hand and destroyed the bet doing it. */
+import { drumTicket, drumDue, drumStop, drumClockOf } from './game/Games.js';
 import { takeJob, openJobs, dropJob, settleRun } from './game/Quests.js';
 import { programById, programSettings, rack, rackLines, Cycle } from './game/Holodeck.js';
 import { LESSONS } from './game/Dojo.js';
@@ -74,6 +78,7 @@ import { stakeAtTote, payAtTote, tickStationClock, stakeAtDrum, payAtDrum, payFo
 import {
   pitAtPlace, venueOpen, handlersOn, ROSTER_HOUR, offerBout, openBout, beginRound, callOrder,
   runRound, cornerAct, pitState, settleBout, foldPit, pitCall, pitCard,
+  runPitCard, settlePitCard, holdsOrder,
   PIT_ORDERS, ORDER_WINDOW, READ_WINDOW, CORNER_ACTS, ORDERS_PER_ROUND,
 } from './game/Pits.js';
 /* V16 Lane B's counters and Lane A3's bench — the two rooms that spend. */
@@ -985,6 +990,12 @@ async function enterHangar(arrival = null, opts = {}) {
      * `deploy` uses, so a mode that owns its ground (Command declares Geonosis)
      * puts Geonosis outside — which is the planet the next run is fought on. */
     const outside = theatreFor(sessionOr('mode'), sessionOr('level'), null);
+    /* AND THE STATION IS READ WHILE THIS IS BUILDING. The deck's lift goes
+     * exactly one place; two megabytes of room geometry fetched here is two
+     * megabytes not fetched behind the still of the car. Fire and forget —
+     * `enterStation` awaits the same call and is the one place a failure is
+     * reported. See `warmStation`. */
+    warmStation().catch(() => {});
     /* The ride back off the station holds the car's own last frame too — the
      * seam is the same seam and it is one argument (V15 §1.5). */
     /* WHAT THE CAR SAYS IF THE RIDE OUTLASTS THE SHAFT. `Screens.loading` keeps
@@ -1156,6 +1167,36 @@ async function enterHangar(arrival = null, opts = {}) {
  * and what the place is for: every resident is a real body, every prop is a
  * real prop, and the Force works on all of it.
  */
+/**
+ * ══ THE ROOMS ARE READ WHILE THE PLAYER IS STILL ON THE DECK ══════════════
+ *
+ * `prepareStation()` fetches and decodes five `.smesh` files — 2.0 MB on
+ * disk, and `assets/station/zocalo.smesh` alone is 964 KB — and it used to be
+ * awaited INSIDE `enterStation`, which is inside the seam. Everything it
+ * costs was therefore spent with the still of the lift car on the screen and
+ * nothing moving: a network round trip per room on the Pages build, a base64
+ * decode per room on the packed one, then the geometry decode itself. Headless
+ * on this box the decode alone is 160–290 ms; over a connection it is however
+ * long two megabytes take.
+ *
+ * None of it depends on anything that happens after the lift button is
+ * pressed. The flight deck's lift goes exactly one place, so the moment the
+ * deck is being built is the moment to start reading the station: the fetch
+ * overlaps the hangar's own build and the ride that follows it, and by the
+ * time `enterStation` awaits this the cache in `Station.js` is already full
+ * and the await is a resolved promise.
+ *
+ * IT IS AWAITED AGAIN AT THE SEAM RATHER THAN ASSUMED. `prepareStation` is
+ * idempotent — it fills a module-level Map and returns early per room — so
+ * calling it twice is free, and a warm-up that FAILED (offline, a 404) has
+ * left the Map empty and the second call retries it inside `enterStation`'s
+ * own try/catch, which is the one place that can report the failure to the
+ * player. A warm-up is an optimisation; it must never be the only attempt.
+ */
+function warmStation() {
+  return import('./game/Station.js').then((m) => m.prepareStation());
+}
+
 async function enterStation(floorRow = null, opts = {}) {
   const deck = floorRow?.deck ?? 40;
   /* The ride's own last frame, so the build happens behind the car rather than
@@ -1167,10 +1208,11 @@ async function enterStation(floorRow = null, opts = {}) {
    * who has been standing in it for six seconds does. */
   const shot = opts.still ? { still: opts.still, say: 'the car is still moving' } : null;
   try {
-    /* The rooms, before the world. See the note above. */
-    const { prepareStation } = await import('./game/Station.js');
+    /* The rooms, before the world. See the note above — and `warmStation`,
+     * which has ordinarily had them in hand since the deck was built, so this
+     * await is a resolved promise and the seam does not pay for it. */
     screens.loading?.(0.05, 'reading the station', shot);
-    await prepareStation();
+    await warmStation();
     await buildWorld('station', (frac, label) => screens.loading?.(frac, label, shot), null,
       { mode: 'station', level: 'station', allies: 0 },
       { onWorld: (w) => {
@@ -2075,11 +2117,40 @@ function showHabitat() {
     html += '<div class="acts">' + p.care.acts.map((a) =>
       `<button class="care" data-act="${esc(a.act)}"${a.can ? '' : ' disabled'}`
       + `${a.why ? ` title="${esc(a.why)}"` : ''}>${esc(a.label)}</button>`).join('') + '</div>';
+    /* AND THE ONE ACT OF THE THREE THAT ANSWERS. Feeding and grooming leave a
+     * count; play leaves a sentence about what the animal actually did, drawn
+     * off the record's own id and the count so it is the same line on every
+     * machine and after every reload. `playLine` is null until the animal has
+     * been played with once, which is when there is nothing to say. */
+    const played = playLine(p.rec);
+    if (played) html += `<p class="sub">Last time: it ${esc(played)}.</p>`;
     if (p.tempers.length) {
       html += '<div class="rows">' + p.tempers.map((t) =>
         `<div class="row"><b>${esc(t.label)}</b><span>${esc(t.gain)} · ${esc(t.cost)}</span></div>`).join('') + '</div>';
     }
   }
+  /**
+   * ══ AND WHAT THE CABIN GETS — V15 §1.3 ═══════════════════════════════════
+   *
+   * *"a cabin gets a perch, a basket or a charge pad for one small companion,
+   * and which one is a choice you make at the habitat."* THE HABITAT, which is
+   * this page and not the cabin's own key: the player choosing is standing at
+   * #28 with #27 two decks away, so there is nowhere else the control could be
+   * and still be the thing that was asked for.
+   *
+   * All three are always offered and none is ever disabled. The sentence gives
+   * the choice and states no condition, so `fits` is a LABEL — it says which
+   * one the animal you have is built for — and it is not a gate.
+   */
+  html += `<h3>Your cabin${p.pad.chosen ? '' : ' — nothing chosen'}</h3>`;
+  if (p.pad.why) html += `<p class="sub">${esc(p.pad.why)}</p>`;
+  else if (p.pad.who) {
+    html += `<p class="sub">${esc(p.pad.who.name || p.pad.who.label)} is small enough to live at home.</p>`;
+  }
+  html += '<div class="acts">' + p.pad.rows.map((r) =>
+    `<button class="pad" data-pad="${esc(r.id)}"${r.chosen ? ' disabled' : ''} `
+    + `title="${esc(r.note)}">${esc(r.label)}${r.fits ? ' ✓' : ''}</button>`).join('')
+    + (p.pad.chosen ? '<button class="pad" data-pad="">Take it out</button>' : '') + '</div>';
   /* THE SIX PLAQUES, which is the other half of the room: who is on the wall. */
   html += '<div class="rows">' + p.plaques.map((r) =>
     `<div class="row"><b>${esc(r[0])}</b><span>${esc(r[1])}</span></div>`).join('') + '</div></div>';
@@ -2091,6 +2162,16 @@ function showHabitat() {
       /* The plaques are geometry in the room and they say what the record
        * says, so they are re-cut on the same press that changed it. */
       try { writePlaques(world); } catch {}
+    });
+  }
+  /* AND THE CABIN'S FIXTURE. `world` is handed over so the room re-dresses on
+   * the same press — a player who chooses a basket here and walks home should
+   * find a basket, not the room as it was when the level was built. */
+  for (const b of el.querySelectorAll('button.pad')) {
+    b.addEventListener('click', () => {
+      audio.ui('good');
+      choosePad(b.dataset.pad || null, world);
+      showHabitat();
     });
   }
   el.classList.remove('hidden');
@@ -2171,6 +2252,98 @@ function pitOffer(placeId) {
   return { venue, offer: offerBout({ venue, rec, handler, hour, day, standing: standing() }) };
 }
 
+/**
+ * ══ THE RAIL TAKES MONEY, AND IT DOES NOT ONLY TAKE YOURS ═════════════════
+ *
+ * *"obviously you can bet on yourself"*, and *"you should be able to bet on
+ * other people's companion battles too even if you're not involved, you don't
+ * have to bet to watch."*
+ *
+ * Both of those were library functions with no door. `openBout` has taken a
+ * `wager` since the day it was written and this file passed `{ accept }` and
+ * nothing else, so `bout.stake.wager` was zero in every bout ever fought and
+ * `settleBout` returned an empty ledger — the "settled at the rail" line below
+ * could not print. `Pits.runPitCard`, the function that runs the night's card
+ * of people who are not you, had NO CALLER IN `src/` at all: the tote listed
+ * tonight's entrants with prices beside them and no way to back one and no
+ * bout to back them in.
+ *
+ * So there are two windows in this room now and they are the same window:
+ * `pit-stake` is read by the door you fight through and by the button beside
+ * every animal on tonight's card. `Credits.spend` takes it and `Credits.pay`
+ * hands back whatever the engine's own `settle` says came back — no balance
+ * lives in `Pits.js`, exactly as none lives in `Tote.js`, and `MAX_STAKE` is
+ * the tote window's own ceiling rather than a second number.
+ */
+
+/** Tonight's card at this pit, run once and held — the reveal is the button. */
+function pitNight(placeId) {
+  if (pit.night !== null) return pit.night;
+  const V = pit.venue;
+  const day = stationDay();
+  const open = V ? venueOpen(V, world?._station?.hour ?? 0, { standing: standing(), day }).open : false;
+  /**
+   * IT IS RUN BEFORE IT IS SHOWN, AND THAT IS THE TOTE'S OWN SHAPE. The card
+   * is seeded off the day, so the fight is the same fight whether anybody
+   * opens this panel or not — `Spectacle` runs forward from the seed and not
+   * from the bet, and `pits.mjs` drives a spectator's card against a punter's
+   * event for event. What the button reveals is a result that already
+   * happened; what it cannot do is change it.
+   */
+  pit.night = open ? runPitCard(V, { day, bouts: 1 }) : null;
+  return pit.night;
+}
+
+/** What the player has typed into the one window, clamped to its ceiling. */
+function pitStake() {
+  const v = Math.round(Number(document.getElementById('pit-stake')?.value) || 0);
+  return Math.max(0, Math.min(MAX_STAKE, v));
+}
+
+function pitStakeHtml(word) {
+  return `<div class="acts"><label>${esc(word)} <input id="pit-stake" type="number" min="0" `
+    + `max="${MAX_STAKE}" value="${pit.stake}"></label></div>`
+    + `<p class="sub">${purse()} credits on you. The rail takes ${MAX_STAKE} at most.</p>`;
+}
+
+/** THE NIGHT'S CARD — the people who live here, and the button beside them. */
+function pitCardHtml() {
+  const night = pitNight(pit.placeId);
+  if (!night) return '';
+  if (!night.card) return `<p class="sub">In the sand tonight — ${esc(night.why)}</p>`;
+  const race = night.races[0];
+  const by = new Map(night.handlers.map((h) => [h.id, h]));
+  let html = '<p class="sub">In the sand tonight — and you do not have to be in it to be on it.</p>';
+  /* THE BOARD CARRIES THE NAMES NOW. `Spectacle.priceCard` used to hand back
+   * `{ id, marketP, price }`, so this row printed an empty `<b>` and a number:
+   * two blank lines on the screen where a price is supposed to be about
+   * somebody. The row is the board's, unjoined and unedited. */
+  html += '<div class="rows">' + race.board.map((row) => {
+    const h = by.get(row.id);
+    const on = pit.tickets.filter((t) => t.entrant === row.id).reduce((a, t) => a + t.stake, 0);
+    const home = pit.watched && pit.watched.result.winner === row.id;
+    return `<div class="row"><b>${esc(row.name)}${home ? ' ◂' : ''}</b>`
+      + `<span>${esc(row.odds)}${on ? ` · ${on} on` : ''}</span>`
+      + (pit.watched ? '' : `<button class="buy" data-back="${esc(row.id)}">back</button>`)
+      + `<div class="sub">${esc(h ? `${h.who}, ${h.place}` : 'a stranger')}</div>`
+      + '</div>';
+  }).join('') + '</div>';
+  if (pit.watched) {
+    /* WHAT THE ROOM HEARD, in the pit's own voice — `pitCall` reads the same
+     * stream the crowd reacted to, and it calls a fight rather than a lap. */
+    const said = pit.watched.result.events.map((ev) => pitCall(ev, night.card)).filter(Boolean);
+    html += '<div class="rows">' + said.slice(-5).map((line) =>
+      `<div class="row"><span>${esc(line)}</span></div>`).join('') + '</div>';
+    if (pit.railed?.staked) {
+      html += `<p class="sub">${pit.railed.staked} down, ${Math.round(pit.railed.returned)} back.</p>`;
+    }
+  } else {
+    html += pitStakeHtml('on the card');
+    html += '<div class="acts"><button class="care" data-do="watch">Watch it</button></div>';
+  }
+  return html;
+}
+
 function showPit(placeId) {
   const el = pitRoot();
   clearPitTimer();
@@ -2179,20 +2352,34 @@ function showPit(placeId) {
    * would have to invent a state the sim does not have. */
   if (!pit) {
     const got = pitOffer(placeId);
-    if (!got.offer) {
-      el.innerHTML = `<div class="pane"><h2>${esc(got.venue?.name || 'The pit')}</h2>`
-        + `<p class="sub">${esc(got.why)}</p></div>`;
-      el.classList.remove('hidden');
-      return;
-    }
-    pit = { placeId, offer: got.offer, bout: null, last: null, t0: 0 };
+    pit = {
+      placeId, venue: got.venue || pitAtPlace(placeId), why: got.why || null,
+      offer: got.offer || null, bout: null, last: null, t0: 0,
+      /* The one window, its default, and what has been put through it. */
+      stake: 25, tickets: [], wager: 0, railed: null,
+      night: null, watched: null,
+    };
   }
   const { offer, bout } = pit;
   /* The book in the same room, if there is one. #20 has one, #61 does not. */
   const book = venueAtPlace(placeId);
-  let html = `<div class="pane"><h2>${esc(offer.venue.name)}</h2>`;
+  let html = `<div class="pane"><h2>${esc((offer?.venue || pit.venue)?.name || 'The pit')}</h2>`;
 
-  if (!bout) {
+  if (!offer) {
+    /**
+     * NO BOUT FOR YOU, AND THE ROOM IS STILL A ROOM.
+     *
+     * This branch used to be one sentence and a shut door — "you have nothing
+     * to put in there" — which is the whole of what a player with no animal
+     * ever saw of the Underlift. Watching is free and betting on other
+     * people's animals does not need one of your own, so the card is here.
+     */
+    html += `<p class="sub">${esc(pit.why || 'there is nothing on')}</p>`;
+    html += pitCardHtml();
+    html += '<div class="acts">'
+      + (book ? `<button class="care" data-do="book">The card at ${esc(book.name)}</button>` : '')
+      + '<button class="care" data-do="leave">Leave</button></div>';
+  } else if (!bout) {
     html += `<p class="sub">${esc(offer.handler.who || 'A handler')} and ${esc(offer.theirs.name)}`
       + ` — ${esc(offer.venue.rounds)} rounds.</p>`;
     html += `<p class="sub">${esc(offer.stake.words)}</p>`;
@@ -2202,6 +2389,10 @@ function showPit(placeId) {
     html += '<div class="rows">' + offer.board.map((r) =>
       `<div class="row"><b>${esc(r.name)}</b><span>${esc(r.odds || `${r.price}`)}</span></div>`).join('')
       + '</div>';
+    /* AND YOU CAN BE ON IT. The stake goes on YOUR animal — there is no button
+     * to back the other one, because a handler betting against the animal he
+     * is cornering is a fight nobody in that room would let happen. */
+    html += pitStakeHtml('on yours');
     html += '<div class="acts">';
     /* TWO DOORS AND THEY ARE NOT A YES AND A CANCEL. Declining the stake still
      * fights — for the smaller purse, with no doctor — which is what makes the
@@ -2218,10 +2409,21 @@ function showPit(placeId) {
      * and this line does not appear there. */
     if (book) html += `<button class="care" data-do="book">The card at ${esc(book.name)}</button>`;
     html += '<button class="care" data-do="leave">Walk away</button></div>';
+    html += pitCardHtml();
   } else if (bout.over) {
     const O = bout.outcome;
     html += `<p class="sub">${O.won ? 'Won' : 'Lost'} in ${O.rounds} — ${esc(O.how)}.`
       + (O.purse ? ` ${O.purse} credits.` : '') + '</p>';
+    /* WHAT THE ROOM SAID AS IT ENDED. The last round's stream, the pit's own
+     * words for it — a stoppage and a decision are the two calls the engine
+     * has no concept of, and they are the two a fight ends on. */
+    const closed = (pit.last?.events || []).map((ev) => pitCall(ev, bout.card)).filter(Boolean);
+    if (closed.length) html += '<div class="rows">' + closed.slice(-4).map((line) =>
+      `<div class="row"><span>${esc(line)}</span></div>`).join('') + '</div>';
+    if (pit.railed?.staked) {
+      html += `<p class="sub">${pit.railed.staked} on your own at ${pit.railed.lines[0].price.toFixed(2)}`
+        + ` — ${Math.round(pit.railed.returned)} back.</p>`;
+    }
     if (pit.fold?.scar) html += `<p class="sub">${esc(pit.fold.scar)}</p>`;
     if (pit.fold?.died) html += '<p class="warn">It did not come back.</p>';
     if (pit.fold && !pit.fold.kept && !pit.fold.died) {
@@ -2236,9 +2438,15 @@ function showPit(placeId) {
       + `, his ${Math.round(st.theirCondition)}${st.bleed ? `, ${st.bleed} open` : ''}.</p>`;
     if (bout.phase === 'read') {
       html += `<p class="sub"><b>${esc(bout.read.tell)}</b></p>`;
-      html += '<div class="acts">' + PIT_ORDERS.map((o) =>
-        `<button class="care" data-order="${esc(o.id)}" title="${esc(o.caption)}">${esc(o.label)}</button>`)
-        .join('') + '</div>';
+      /* THE WHEEL DOES NOT LIE ABOUT WHAT IT WILL TAKE. `holdsOrder` is the
+       * same reader `callOrder` gates on, so a button that is lit is an order
+       * the animal will take and a dark one says what it is waiting for. */
+      const mine = loadKennel().live;
+      html += '<div class="acts">' + PIT_ORDERS.map((o) => {
+        const held = holdsOrder(mine, o);
+        return `<button class="care" data-order="${esc(o.id)}"${held ? '' : ' disabled'}`
+          + ` title="${esc(held ? o.caption : o.note || o.caption)}">${esc(o.label)}</button>`;
+      }).join('') + '</div>';
       html += `<p class="sub">${bout.orders.length} of ${ORDERS_PER_ROUND} given`
         + (bout.orders.length ? ` · ${bout.orders.map((x) => esc(x.id)).join(', ')}` : '')
         + '</p>';
@@ -2257,17 +2465,72 @@ function showPit(placeId) {
   }
   el.innerHTML = html + '</div>';
 
+  const say = (line) => world?.notify?.(((offer?.venue || pit.venue)?.name || 'the pit').toUpperCase(), line);
+
   for (const b of el.querySelectorAll('button[data-do]')) {
     b.addEventListener('click', () => {
       const act = b.dataset.do;
       if (act === 'leave') { closePit(); return; }
       if (act === 'book') { closePit(); if (book) openTote(book.id); return; }
+      if (act === 'watch') {
+        /* THE REVEAL, AND THE SETTLEMENT AFTER IT. `settlePitCard` reads the
+         * bout's own board — the one the prices above came off — through the
+         * engine's `settle`, and the credits move here and nowhere else. */
+        const night = pitNight(placeId);
+        pit.watched = night?.races?.[0] || null;
+        pit.railed = pit.watched ? settlePitCard(night, pit.tickets, 0) : null;
+        const back = Math.round(pit.railed?.returned || 0);
+        if (back) pay(back, 'pit');
+        if (pit.railed?.staked) say(back ? `${back} credits at the rail` : 'nothing on that one');
+        showPit(placeId);
+        return;
+      }
       if (act === 'mortal' || act === 'safe') {
-        pit.bout = openBout(pit.offer, { accept: act === 'mortal' ? pit.offer.stake.token : null });
+        /* THE STAKE IS TAKEN AT THE DOOR AND IT IS REFUSED OUT LOUD. A player
+         * who cannot cover what they typed keeps the door — they lower it and
+         * push again — rather than being walked into a bout with a silently
+         * smaller bet on it. */
+        const amount = pitStake();
+        pit.stake = amount;
+        if (amount) {
+          const paid = spend(amount, 'pit');
+          if (!paid.ok) { say(paid.short ? `${paid.short} credits short` : paid.why); return; }
+        }
+        pit.wager = amount;
+        pit.bout = openBout(pit.offer, {
+          accept: act === 'mortal' ? pit.offer.stake.token : null,
+          wager: amount,
+        });
         pitBell();
         return;
       }
       if (act === 'next') pitBell();
+    });
+  }
+  /**
+   * THE ONE ACTION, AND IT HAD NO HANDLER.
+   *
+   * `CORNER_ACTS` drew three buttons and `cornerAct` was imported by this file
+   * and called by nothing in it — *"between rounds you get one action: water,
+   * a word, a wound bound"* was three dead controls on the glass. The refusal
+   * is a sentence, as everywhere else in this room.
+   */
+  for (const b of el.querySelectorAll('button[data-corner]')) {
+    b.addEventListener('click', () => {
+      const r = cornerAct(pit.bout, b.dataset.corner);
+      if (r.refused) say(r.refused);
+      showPit(placeId);
+    });
+  }
+  for (const b of el.querySelectorAll('button[data-back]')) {
+    b.addEventListener('click', () => {
+      const amount = pitStake();
+      pit.stake = amount;
+      if (!amount) { say('that is not a stake'); return; }
+      const paid = spend(amount, 'pit');
+      if (!paid.ok) { say(paid.short ? `${paid.short} credits short` : paid.why); return; }
+      pit.tickets.push({ entrant: b.dataset.back, stake: amount });
+      showPit(placeId);
     });
   }
   for (const b of el.querySelectorAll('button[data-order]')) {
@@ -2276,7 +2539,7 @@ function showPit(placeId) {
        * scored on — see `Pits.scoreOrder`. */
       const at = (performance.now() - pit.t0) / 1000;
       const r = callOrder(pit.bout, b.dataset.order, at, loadKennel().live);
-      if (r.refused) world?.notify?.(offer.venue.name.toUpperCase(), r.refused);
+      if (r.refused) say(r.refused);
       showPit(placeId);
     });
   }
@@ -2303,10 +2566,20 @@ function pitBell() {
        * not the one that fought, so a player who released the animal mid-bout
        * does not get it written back over the top. */
       pit.fold = foldPit(pit.bout);
+      /* AND THE TWO PAYMENTS, WHICH ARE NOT THE SAME PAYMENT. The purse is
+       * what the pit pays the man whose animal won; the ledger is what the
+       * rail owes the man who backed it. `settleBout` reads the wager that
+       * went in through `openBout` — it was always zero before this file
+       * passed one, so this line paid nothing and said nothing. */
       const paid = settleBout(pit.bout);
+      pit.railed = paid;
       const won = pit.bout.outcome.purse | 0;
       if (won) pay(won, 'pit');
-      if (paid?.lines?.length) world?.notify?.('THE PIT', `${paid.lines.length} settled at the rail`);
+      const back = Math.round(paid?.returned || 0);
+      if (back) pay(back, 'pit');
+      if (paid?.staked) {
+        world?.notify?.('THE PIT', back ? `${back} credits back at the rail` : `${paid.staked} gone at the rail`);
+      }
     }
     showPit(pit.placeId);
   }, ORDER_WINDOW * 1000);
@@ -2393,6 +2666,72 @@ function casinoRoot() { return paneRoot('casino'); }
 
 function casinoHour() { return world?._station?.hour ?? 0; }
 
+/**
+ * ══ THE WHEEL TURNS WHILE YOU ARE STANDING AT IT ═════════════════════════
+ *
+ * *"it runs once an hour whether you are there or not."* It did not run while
+ * you were there. `Screens.take` sets `world.paused`, the frame loop stops
+ * stepping the world, and `tickStationClock` — the only writer of the hour —
+ * was wound by exactly one panel in the building, the tote's. So the Drum, a
+ * game whose entire premise is a clock the player does not own, stood still
+ * for as long as its own room was open: a ticket riding the next turn could
+ * never be reached, because the next turn never came while anybody was there
+ * to watch it.
+ *
+ * This is `toteBell`'s shape and its reasoning verbatim — the panel keeps NO
+ * hour of its own, it winds the station's, at the station's rate (§3.4, one
+ * game hour per two real minutes), and `showCasino` still reads the hour back
+ * off `world._station.hour`. There is one clock in the building. It cannot
+ * double-count because the frame loop does not step a paused world at all.
+ *
+ * The re-arm happens BEFORE the render so that `showCasino`'s own call to
+ * `casinoBell` — which is what puts the bell back after Escape and resume —
+ * finds a timer pending and does nothing. One bell, however many renders.
+ */
+const CASINO_TICK = 250;
+let casinoTimer = null;
+let casinoAt = 0;
+
+/** One handle, cancelled by the card — a timer that outlives its screen
+ *  raises its last frame over whatever the player walked into next. */
+function clearCasinoTimer() {
+  if (casinoTimer !== null) { clearTimeout(casinoTimer); casinoTimer = null; }
+}
+
+function casinoBeat() {
+  casinoTimer = null;
+  /* THE GUARD. `screens.state` is 'casino' exactly while this card owns the
+   * screen; a pause, a clear or another door means this beat is winding the
+   * clock for a room the player has left. */
+  if (!casino || screens.state !== 'casino') return;
+  const now = performance.now();
+  /* REAL SECONDS, CLAMPED OFF THIS LOOP'S OWN BEAT and not off the frame
+   * loop's — `toteBell` records what happens when a 250 ms beat inherits a
+   * 100 ms clamp written for a 16 ms one: the station runs at two-fifths
+   * speed. A few beats of catch-up is a stall; more than that is an absence. */
+  const dt = Math.min(CASINO_TICK / 1000 * 4, (now - casinoAt) / 1000);
+  casinoAt = now;
+  tickStationClock(world, dt);
+  casinoTimer = setTimeout(casinoBeat, CASINO_TICK);
+  showCasino();
+}
+
+function casinoBell() {
+  if (casinoTimer !== null || screens.state !== 'casino') return;
+  casinoAt = performance.now();
+  casinoTimer = setTimeout(casinoBeat, CASINO_TICK);
+}
+
+/**
+ * A LIVE TICKET OUTLIVES THE DOOR, because the wheel does. The card nulls
+ * `casino` on the way out — the hand, the board and the tab are all things a
+ * fresh visit should deal again — and a paid-for bet on a turn that has not
+ * happened yet is not one of them. Dropping it there was the house keeping the
+ * stake for the crime of walking out of the room, which is the same defect as
+ * a wheel that cannot pay, wearing a different hat.
+ */
+let drumHeld = null;
+
 /** The pips on a sabacc card, signed. `−13` reads as a card, `-13` does not. */
 function cardOf(v) { return `${v < 0 ? '−' : ''}${Math.abs(v)}`; }
 
@@ -2400,7 +2739,7 @@ function showCasino() {
   const el = casinoRoot();
   const day = stationDay();
   const hour = casinoHour();
-  if (!casino) casino = { tab: 'sabacc', index: 0, acts: [], board: null, ticket: null, said: null };
+  if (!casino) casino = { tab: 'sabacc', index: 0, acts: [], board: null, ticket: drumHeld, said: null };
 
   const room = openWheelhouse(hour, day, WHEELHOUSE);
   let html = `<div class="pane"><h2>${esc(room.name)}</h2>`;
@@ -2487,14 +2826,15 @@ function showCasino() {
      * that settled against the hour it sold into would be selling a result
      * `drumAt` had already published, which is the one thing this game is
      * written not to be. */
-    if (casino.ticket && d.hour !== casino.ticket.on) {
-      const paid = payAtDrum(casino.ticket, drumTable(casino.ticket.on, casino.ticket.day).at);
-      html += `<p class="sub"><b>${paid.won ? `the ${String(casino.ticket.on).padStart(2, '0')}:00 turn paid ${paid.paid}` : `the ${String(casino.ticket.on).padStart(2, '0')}:00 turn took it`}</b>`
+    if (casino.ticket && drumDue(casino.ticket, hour, day)) {
+      const rode = drumClockOf(casino.ticket.turn).hour;
+      const paid = payAtDrum(casino.ticket, drumStop(casino.ticket));
+      html += `<p class="sub"><b>${paid.won ? `the ${String(rode).padStart(2, '0')}:00 turn paid ${paid.paid}` : `the ${String(rode).padStart(2, '0')}:00 turn took it`}</b>`
         + (paid.capped ? ` — the wallet capped it at ${paid.paid} of ${paid.owed}` : '') + '</p>';
       casino.ticket = null;
     } else if (casino.ticket) {
       html += `<p class="sub">${casino.ticket.stake} on ${esc(casino.ticket.label)}, `
-        + `riding on the ${String(casino.ticket.on).padStart(2, '0')}:00 turn. `
+        + `riding on the ${String(drumClockOf(casino.ticket.turn).hour).padStart(2, '0')}:00 turn. `
         + 'You cannot take it back and you cannot be here twice for it.</p>';
     }
     html += '<div class="rows">' + drumBets().map((b, i) => {
@@ -2542,15 +2882,18 @@ function showCasino() {
       /* THE STAKE IS ON THE NEXT HOUR, NEVER THIS ONE. The wheel this hour has
        * already stopped and `drumAt` will tell anybody who asks where — a
        * window still open on a known result is the one thing this game must
-       * not be. */
-      const hour = casinoHour();
-      casino.ticket = { ...struck.ticket, on: (Math.floor(hour) + 1) % 24, day: stationDay() };
+       * not be. `drumTicket` is what carries that: it keeps `on` — THE THING
+       * YOU BACKED — and writes the turn it rides into `turn`, which is the
+       * two fields this line used to collapse into one. */
+      casino.ticket = drumTicket(struck.ticket, casinoHour(), stationDay());
       casino.said = null;
       audio.ui('good');
       showCasino();
     });
   }
   el.classList.remove('hidden');
+  drumHeld = casino.ticket;
+  casinoBell();
 }
 
 /**
@@ -2564,7 +2907,7 @@ function openCasino(room) {
   screens.take('casino', () => showCasino());
   return true;
 }
-screens.card('casino', () => { casino = null; closePane('casino'); });
+screens.card('casino', () => { casino = null; clearCasinoTimer(); closePane('casino'); });
 
 
 /* ═══════════ 4. THE JOB BOARD — the same shape, one room smaller ═══════ */

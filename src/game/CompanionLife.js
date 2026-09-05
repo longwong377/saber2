@@ -151,7 +151,7 @@
 
 import * as THREE from '../../vendor/three/three.module.js';
 import { clamp, damp, lerp, TAU } from '../engine/MathUtil.js';
-import { COMPANION_KINDS } from './CompanionKinds.js';
+import { COMPANION_KINDS, wardOf } from './CompanionKinds.js';
 /* The material ladder, for the one split that is not a matter of degree: a
  * thing made of droid does not breathe and a thing made of flesh does not
  * re-seat its servos. Read off `A.toughness`, which every archetype declares,
@@ -618,7 +618,10 @@ export function lifeFor(id, rig, A = null, K = null, plan = null) {
     /** Cycles a second at rest. See the header for the three animals it lands on. */
     breath: LIFE.breath.rate * (LIFE.breath.ref / mass) ** LIFE.breath.exp * rJit,
     amp: aJit,
-    /** Does this one watch the field or watch you? See `K.ward`. */
+    /** Does this one watch the field or watch you? The kind's own metres, and
+     *  the FLOOR only — `stepCompanionLife` overwrites it every frame with
+     *  `wardOf`, which is the same number after every temper the animal wears.
+     *  This is what a caller that never steps (the deck's figure) reads. */
     ward: Math.max(0, Number(K?.ward) || 0),
     /* The four phases, so nothing about two of a kind is ever in step. */
     tBreath: seedOf(id, 0) * TAU,
@@ -1124,6 +1127,22 @@ export function stepCompanionLife(e, dt, world) {
     L = e._life = lifeFor(idOf(e), e.rig, e.A, K, e.built?.plan) || false;
   }
   if (!L) return null;
+  /**
+   * THE RING IS RE-READ EVERY FRAME AND NOT BAKED AT BUILD TIME.
+   *
+   * `lifeFor` is the constants for one individual — mass, nerve, poise, the
+   * phases — computed ONCE, and `ward` sat in that list reading `K.ward`. It
+   * does not belong there: the kind's row is a constant but the TEMPERS are
+   * not, and `wardOf` adds a swing that changes the first time the animal
+   * earns RANGING or KEPT. Baked, the gaze went on watching a nine-metre ring
+   * round a player whose animal had stopped defending one — the layer looking
+   * at something the aim wrap would refuse, which is the exact shape of defect
+   * `leashOf` was written to end one file across.
+   *
+   * One reader, and it is the one the wheel prints and the one `dutyAllows`
+   * measures with. A body with no kind row still gets zero.
+   */
+  L.ward = wardOf(e);
 
   const owner = e._cmpOwner || null;
   /* ── THE SENSES ──────────────────────────────────────────────────────

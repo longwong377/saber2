@@ -98,6 +98,7 @@ export const SPECIES = [
       face: {},
     },
     robe: { outer: 0x4a5462, inner: 0x8792a2, trim: 0x2a303a },
+    wear: 'jerkin',
   },
   {
     key: 'narn', name: 'Narn',
@@ -114,6 +115,7 @@ export const SPECIES = [
       face: { skull: -0.45, jaw: -0.80, brow: 0.90, cheek: 0.35, nose: -0.30 },
     },
     robe: { outer: 0x6b4a2c, inner: 0xa8794a, trim: 0x3a2716 },
+    wear: 'coverall',
   },
   {
     key: 'centauri', name: 'Centauri',
@@ -132,6 +134,7 @@ export const SPECIES = [
       face: { cheek: 0.2, chin: 0.15 },
     },
     robe: { outer: 0xe4dccb, inner: 0xf4efe4, trim: 0xb59a52 },
+    wear: 'service',
   },
   {
     key: 'minbari', name: 'Minbari',
@@ -150,6 +153,7 @@ export const SPECIES = [
       face: { skull: -0.12, jaw: -0.20, cheek: -0.25, brow: -0.20, nose: -0.35 },
     },
     robe: { outer: 0x35506b, inner: 0x6c8bab, trim: 0x1c2c3d },
+    wear: 'smock',
   },
   {
     key: 'drazi', name: 'Drazi',
@@ -163,6 +167,7 @@ export const SPECIES = [
       face: { skull: -0.52, jaw: 0.80, brow: 0.85, cheek: 0.55, nose: -0.25, chin: 0.3 },
     },
     robe: { outer: 0x4d6a2e, inner: 0x86a253, trim: 0x2b3a1a },
+    wear: 'jerkin',
   },
   {
     key: 'brakiri', name: 'Brakiri',
@@ -176,6 +181,7 @@ export const SPECIES = [
       face: { skull: 0.05, jaw: 0.20, brow: 0.30 },
     },
     robe: { outer: 0x2b2f3d, inner: 0x555c72, trim: 0x8a6f3a },
+    wear: 'service',
   },
   {
     key: 'pakmara', name: "Pak'ma'ra",
@@ -195,6 +201,7 @@ export const SPECIES = [
       face: { skull: 0.35, jaw: -1.00, brow: -0.45, cheek: 0.45, nose: -0.90, chin: -0.55 },
     },
     robe: { outer: 0x4c4a3e, inner: 0x7d7a68, trim: 0x2c2a22 },
+    wear: 'smock',
   },
   {
     key: 'vree', name: 'Vree',
@@ -208,6 +215,7 @@ export const SPECIES = [
       face: { skull: -0.36, jaw: -1.00, brow: -0.70, cheek: -0.40, nose: -1.00, chin: -0.70, eyes: 0.90 },
     },
     robe: { outer: 0x9aa4ac, inner: 0xc4ccd2, trim: 0x5e666e },
+    wear: 'coverall',
   },
   {
     key: 'abbai', name: 'Abbai',
@@ -224,6 +232,7 @@ export const SPECIES = [
       face: { skull: 0.19, jaw: -0.40, brow: -0.30, cheek: 0.30, nose: -0.55 },
     },
     robe: { outer: 0x2f6a68, inner: 0x63a29e, trim: 0x1a3b3a },
+    wear: 'smock',
   },
   {
     key: 'gaim', name: 'Gaim',
@@ -242,6 +251,7 @@ export const SPECIES = [
       face: { skull: -0.18, jaw: 1.00, brow: 0.60, cheek: 0.80, nose: -1.00, chin: -0.20 },
     },
     robe: { outer: 0x6d6444, inner: 0x9c9066, trim: 0x3c3724 },
+    wear: 'coverall',
   },
   {
     key: 'hyach', name: 'Hyach',
@@ -255,6 +265,7 @@ export const SPECIES = [
       face: { skull: 0.26, jaw: -0.60, cheek: -0.45, brow: 0.15, chin: -0.25 },
     },
     robe: { outer: 0x53406a, inner: 0x8a76a4, trim: 0x2c2138 },
+    wear: 'service',
   },
   {
     key: 'llort', name: 'Llort',
@@ -268,6 +279,7 @@ export const SPECIES = [
       face: { skull: -0.33, jaw: 0.60, brow: 0.55, cheek: 0.25, nose: 0.30 },
     },
     robe: { outer: 0x4a4238, inner: 0x7c7060, trim: 0x28231c },
+    wear: 'dungarees',
   },
   {
     key: 'grome', name: 'Grome',
@@ -281,6 +293,7 @@ export const SPECIES = [
       face: { skull: -0.54, jaw: 1.00, brow: 0.75, cheek: 0.60, nose: -0.15, chin: 0.4 },
     },
     robe: { outer: 0x54502f, inner: 0x86814f, trim: 0x2e2c1a },
+    wear: 'dungarees',
   },
   {
     key: 'other', name: 'Other',
@@ -298,6 +311,7 @@ export const SPECIES = [
       face: { skull: -0.12 },
     },
     robe: { outer: 0x5c4f66, inner: 0x93849c, trim: 0x322a3a },
+    wear: 'fatigues',
   },
   {
     key: 'vorlon', name: 'Vorlon',
@@ -315,6 +329,10 @@ export const SPECIES = [
       face: { skull: 0.6, jaw: 1.0, brow: 1.0, cheek: 1.0, nose: -1.0, mouth: -1.0 },
     },
     robe: { outer: 0x8a6f38, inner: 0xc8a86a, trim: 0x4a3a1c },
+    /* NO `wear`. The Vorlon is `suit: true` — an encounter suit is not a
+     * garment and has no cut, and the row above already says so. It is the
+     * one species on the station whose lower half is supposed to be a
+     * shrouded column. */
   },
 ];
 
@@ -807,6 +825,23 @@ for (const S of SPECIES) {
       ...o,
       species: S.row,
       robe: S.robe,
+      /**
+       * ── AND THE CUT, WHICH IS THE HALF `robe` COULD NOT SAY ────────────
+       *
+       * `robe` is three colours. Measured before `wear` existed, the human
+       * resident built 62 meshes in a byte-identical order to a default
+       * `buildJedi()` and the other fourteen built the same garment under a
+       * different head: fifteen species standing on a trade station in the
+       * Jedi Order's own robe, in fifteen palettes. V15 is explicit — *"not
+       * in jedi clothes obviously"* — and a palette cannot answer it.
+       *
+       * `wear` names a row of `Bodies.TOP_CUTS`, which is the same table the
+       * character creator's wardrobe page is built from, so a species is
+       * dressed out of the vocabulary a player can wear and not out of a
+       * costume list this file owns. An absent `wear` — the Vorlon's — falls
+       * through to the tunic exactly as it always did.
+       */
+      top: S.wear,
       /* `body.py`'s `build` column is a limb and torso GIRTH multiplier;
        * `buildOf` reads 0..1 with 0.5 as the identity, so the girth maps onto
        * the signed frame parameter that already exists. */
@@ -855,9 +890,27 @@ export const BORZ_RESIDENTS = [
    * unique non-jedi clothing."*
    *
    * So a row says which BODY it uses and, if it is a humanoid, what it is
-   * wearing when it is not working. A clone off duty is not in plastoid — he
-   * is a man in fatigues, which is `buildJedi` on the human row with a
-   * different palette and nothing else. That is the whole cost of the ask.
+   * wearing when it is not working.
+   *
+   * ── AND A PALETTE IS NOT CLOTHING, WHICH IS WHAT THIS SAID FOR A WHILE ──
+   *
+   * This note used to end *"which is `buildJedi` on the human row with a
+   * different palette and nothing else. That is the whole cost of the ask."*
+   * It was wrong, and it was wrong in the one way the ask names. Measured:
+   * `res_borz_crew` and a default `buildJedi()` both built 62 meshes, in a
+   * byte-identical order, both with `robeSkirt` on — the ONLY difference
+   * between a clone crewman off duty and a Jedi was `#8e9b80` where `#dfcfad`
+   * had been. He was wearing the Order's robe, skirt, under-robe, front
+   * panels and tabard, in fatigue green.
+   *
+   * So a row now names a `wear` — a cut from `Bodies.TOP_CUTS` — beside its
+   * `robe`, and the cut is what decides the SHAPE: whether there is a skirt
+   * under the belt at all, whether the chest has the over-panels, whether the
+   * trouser is cuffed into the boot, whether there is an apron over it. Five
+   * of the six civilian cuts are pure subtraction and cost less geometry than
+   * the robe did; the two pieces that were genuinely added (the apron and the
+   * cuff) are in `Bodies.js` and each says on itself why nothing already
+   * there could spell it.
    *
    * Four rows keep their own builder, because for those four the BODY IS THE
    * IDENTITY: a Wookiee off duty is still a Wookiee, an astromech is a droid
@@ -865,13 +918,17 @@ export const BORZ_RESIDENTS = [
    * `own: true` marks them.
    */
   { id: 'crew', label: 'Clone crew', species: 'human', home: 29, job: 'dockworker', haunt: 14,
+    wear: 'coverall',
     robe: { outer: 0x54604a, inner: 0x8a967c, trim: 0x2e352a },
-    why: 'off duty and unarmed — fatigues, not plastoid' },
+    why: 'off duty and unarmed — dock coveralls, cuffed into the boot, no skirt and no tabard' },
   { id: 'medic', label: 'Medic', species: 'human', home: 29, job: 'medical', haunt: 43,
-    robe: { outer: 0xe0e4e6, inner: 0xf2f4f5, trim: 0xb03434 } },
+    wear: 'smock',
+    robe: { outer: 0xe0e4e6, inner: 0xf2f4f5, trim: 0xb03434 },
+    why: 'a long smock over trousers — the apron is the garment, and it is the red one' },
   { id: 'pilot', label: 'Pilot', species: 'human', home: 30, job: 'traffic', haunt: 3,
+    wear: 'fatigues',
     robe: { outer: 0xd06a2a, inner: 0xe8974e, trim: 0x3a2a1c },
-    why: 'the ready room’s orange, which is a flight suit and reads as one' },
+    why: 'the ready room’s orange, and now a flight suit as well as a flight colour: harness panels across the chest, nothing below the knee' },
   /**
    * NOT LABELLED 'Jedi', AND THAT IS NOT A STYLE CHOICE.
    *
@@ -889,18 +946,40 @@ export const BORZ_RESIDENTS = [
    * this row is; the label says it now too, and it is distinct from the
    * Order's three fighting bodies (Knight, Sentinel, Master) as well.
    */
+  /**
+   * THE TWO ROWS WHOSE CLOTHES REALLY ARE ROBES, AND THEY PAY FOR IT.
+   *
+   * A Jedi's civilian dress is the robe, and an acolyte's is a black one:
+   * putting either of them in coveralls would be dressing a character as
+   * somebody else. But "it is supposed to be a robe" is exactly the sentence
+   * that let this whole cast go out in one repainted garment, so neither row
+   * is allowed to be the shipped `buildJedi()` with the colours moved. Both
+   * name a HOOD, which is the other half of the wardrobe and the half the
+   * Order does not share: the envoy travels in the deep travelling hood and
+   * the acolyte wears the Sith cut, tight to the skull with a standing collar
+   * at the nape. `hoods.mjs` measures those two apart from the Jedi cowl at
+   * 48.3 cm and 68° respectively, and the silhouette check below sees both.
+   */
   { id: 'jedi', label: 'Jedi envoy', species: 'human', home: 30, job: 'diplomat', haunt: 22,
+    hood: 'cloak',
     robe: { outer: 0x9d8567, inner: 0xd8c9a8, trim: 0x5d4b34 },
-    why: 'robes ARE a Jedi’s civilian dress — this row is the one exception and says so' },
+    why: 'robes ARE a Jedi’s civilian dress — so this row pays for the exception with the travelling hood rather than with a palette' },
   { id: 'acolyte', label: 'Sith acolyte', species: 'human', home: 38, job: 'visitor', haunt: 14,
+    hood: 'sith',
     robe: { outer: 0x1a1b20, inner: 0x2e3038, trim: 0x0c0d10 },
-    why: 'drinking alone — §3.2 #14 names them' },
+    why: 'drinking alone — §3.2 #14 names them. The hood is the Sith cut, which is what makes the black robe not a Jedi’s' },
   { id: 'officer', label: 'Officer', species: 'human', home: 30, job: 'command', haunt: 41,
-    robe: { outer: 0x2c3340, inner: 0x4e5768, trim: 0x8a7038 } },
+    wear: 'service',
+    robe: { outer: 0x2c3340, inner: 0x4e5768, trim: 0x8a7038 },
+    why: 'a service tunic to mid-thigh over trousers — one hem, not three' },
   { id: 'guard', label: 'Station guard', species: 'human', home: 29, job: 'security', haunt: 24,
-    robe: { outer: 0x33383f, inner: 0x585f68, trim: 0x1a1d21 } },
+    wear: 'jerkin',
+    robe: { outer: 0x33383f, inner: 0x585f68, trim: 0x1a1d21 },
+    why: 'the officer’s tunic with the over-panels stripped and the trouser cuffed — a duty coat, not a uniform' },
   { id: 'engineer', label: 'Engineer', species: 'human', home: 29, job: 'engineer', haunt: 48,
-    robe: { outer: 0x6a5a2e, inner: 0x9c8848, trim: 0x39301a } },
+    wear: 'dungarees',
+    robe: { outer: 0x6a5a2e, inner: 0x9c8848, trim: 0x39301a },
+    why: 'collar open, bib apron, cuffed trouser — what somebody wears under a repulsor lift' },
   /* ── AND THE FOUR WHOSE BODY IS THE IDENTITY. */
   { id: 'wookiee', label: 'Wookiee', own: 'wook', home: 38, job: 'merchant', haunt: 10,
     why: 'the Forge’s smith — §3.2 #10 names them' },
@@ -1009,7 +1088,25 @@ for (const R of BORZ_RESIDENTS) {
   const sp = SPECIES_BY.get(R.species || 'human');
   STATION_UNITS[`res_borz_${R.id}`] = {
     label: R.label,
-    build: (o = {}) => buildJedi({ ...o, species: sp.row, robe: R.robe, hood: false }),
+    /**
+     * `wear` AND `hood`, WHICH ARE THE TWO THINGS `robe` COULD NOT SAY.
+     *
+     * This line used to be `buildJedi({ species, robe, hood: false })` for all
+     * eight rows, and measured, that is what it produced: eight bodies of 62
+     * meshes each, in a byte-identical order to a default `buildJedi()`, with
+     * `robeSkirt` on every one. A clone crewman off duty was a Jedi robe in
+     * fatigue green, skirt and all.
+     *
+     * `wear` names a `Bodies.TOP_CUTS` row and `hood` a `Bodies.HOOD_CUTS`
+     * one, so a row says what it is wearing in the same vocabulary the
+     * character creator's wardrobe page is built from — no costume table of
+     * this file's own, and nothing here that a player cannot also wear.
+     * `characters.mjs`'s "off duty is not the Order's robe repainted" holds
+     * the result to it: a row whose mesh list still matches a default
+     * `buildJedi()` fails, and a colour cannot make it pass.
+     */
+    build: (o = {}) => buildJedi({ ...o, species: sp.row, robe: R.robe,
+                                   top: (R.wear === 'jerkin' ? 'service' : R.wear), hood: R.hood || false }),
     scale: 1.0, hp: 60, mass: 72, speed: 3.0,
     toughness: TOUGHNESS.flesh, melee: false, damage: 0,
     preferred: [1.4, 2.8],

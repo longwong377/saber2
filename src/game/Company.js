@@ -239,6 +239,12 @@ const MAN_FIELDS = [
    * so the tab can say "nine runs, since Geonosis" rather than a bare number.
    * Neither is read by anything that fights. */
   'runs', 'since', 'story',
+  /* THE PASS HE IS CARRYING — `Bars.js`'s `{ bar, since }`, and it persists
+   * for the same reason `ward` does: an evening off is hours of station time
+   * he is owed nerve and mending for, and a stamp that did not survive a page
+   * reload would credit him from scratch every boot. Written through this one
+   * door and no other; see `Bars.grantLeave`. */
+  'leave',
   /* AND WHO HE HAS BEEN THROUGH IT WITH. The one field on this list that is
    * about two men rather than one; see `settleBonds`. It is a TALLY of shared
    * grounds per partner, not a flag — a bond that could only be on or off
@@ -533,6 +539,13 @@ function readMan(m, army) {
     since: typeof m.since === 'string' ? m.since : null,
     story: Array.isArray(m.story) ? m.story.filter((s) => typeof s === 'string').slice(-STORY_KEEP) : [],
     bonds: saneBonds(m.bonds, m.designation),
+    /* HIS LEAVE PASS, MADE SAFE — spread rather than assigned, for `hp`'s
+     * reason four lines down: `leave: undefined` still puts the KEY on the
+     * record, and a man in the barracks must not carry an empty pass around.
+     * The ROOM is not validated here and must not be: which place ids are bars
+     * is `Bars.BARS`, this file knows nothing about the station, and a pass to
+     * an unknown room is torn up by the ledger that reads it. */
+    ...(saneLeave(m.leave) === undefined ? {} : { leave: saneLeave(m.leave) }),
     look: saneLook(m.look, m.kind === 'steel' ? 'steel' : 'flesh'),
     /* HIS INJURY, CLAMPED LIKE EVERY OTHER STORED NUMBER. A fraction and
      * nothing else: a save that hands a man 9e9 is a save that hands the
@@ -558,6 +571,18 @@ function readMan(m, army) {
  * two spellings of the same fact is the drift this file spends its whole
  * `readMan` refusing.
  */
+function saneLeave(v) {
+  if (!v || typeof v !== 'object') return undefined;
+  const bar = Number(v.bar);
+  /* `since` IS AN ABSOLUTE STATION HOUR — `day * 24 + hour` — so it is a
+   * forward-only line and not a 0..24 clock. Clamped at zero and nothing else:
+   * a stamp in the future credits nothing, which is the honest answer to a
+   * hand-edited save, and a negative one would credit every hour since. */
+  const since = Number(v.since);
+  if (!Number.isFinite(bar) || bar <= 0) return undefined;
+  return { bar: bar | 0, since: Number.isFinite(since) ? Math.max(0, since) : 0 };
+}
+
 function hurtOf(v) {
   /* `Number(null)` IS 0, and 0 is a man at death's door. An absent field and
    * an explicit `null` both mean "nothing wrong with him" and neither may be
@@ -1192,7 +1217,22 @@ export function storyLine(t, opts = {}) {
  * four recruits.
  */
 export function fieldable(company, n = Infinity) {
-  const men = (company?.men || []).slice();
+  /**
+   * ── AND A MAN ON LEAVE IS NOT AVAILABLE, WHICH IS WHAT MAKES IT A COST ──
+   *
+   * *"you can assign troops to go on leave … they will get increased morale
+   * and will heal over time"* — a pass that cost the player nothing would be a
+   * button whose only setting is on. `Bars.grantLeave` writes the field and
+   * this is the single choke point that spends it: `Muster.lineup` builds BOTH
+   * its default line and its by-name pick map out of this list, so a man with
+   * a pass cannot be fielded by the default, reached by a pick, or smuggled in
+   * on a slate saved before he was granted one.
+   *
+   * The field and not a call, because Bars.js reads a company and this file
+   * may not import a reader of itself — the same rule `Muster.issue`'s note
+   * states about which of the two stores may see the other.
+   */
+  const men = (company?.men || []).filter((m) => !m?.leave);
   men.sort((a, b) => (rankFor(b.xp | 0) - rankFor(a.xp | 0))
     || ((b.runs | 0) - (a.runs | 0))
     || ((b.kills | 0) - (a.kills | 0)));

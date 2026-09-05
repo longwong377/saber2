@@ -65,6 +65,21 @@ import { homeState, setHomeState } from './StationSave.js';
 import { signPanel } from './StationKit.js';
 import { floorOf } from './StationPlan.js';
 import * as Food from './Food.js';
+/**
+ * ── AND THE ONE SMALL COMPANION — V15 §1.3's last clause ──────────────────
+ *
+ * Read only, and only three things: the archetype rows (`COMPANION_UNITS` is
+ * the table `ARCHETYPES` is filled FROM, so a mass and a flight plan are
+ * reachable without importing `Enemy.js` and the graph it drags), the growth
+ * numbers the body is built with, and the Kennel's own record of what you
+ * have. Nothing here writes an animal — `Kennel.js` is the single writer of
+ * that record and this file never calls into it.
+ */
+import {
+  COMPANION_KINDS, COMPANION_UNITS, bodyScaleOf, growthOptsFrom,
+} from './CompanionKinds.js';
+import { load as loadKennel } from './Kennel.js';
+import { companionOptsFrom } from './Bodies.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE NUMBERS                                                               */
@@ -285,6 +300,121 @@ export const SURFACE_SLOTS = ['floor', 'wall', 'trim'];
 const DEFAULT_SURFACES = { floor: 'dark', wall: 'hull', trim: 'strip' };
 
 /* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE PERCH, THE BASKET AND THE CHARGE PAD                                  */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ V15 §1.3, IN FULL, AND IT WAS A FIELD WITH NOBODY AT EITHER END ═══════
+ *
+ * *"A cabin gets a perch, a basket or a charge pad for one small companion,
+ * and which one is a choice you make at the habitat."*
+ *
+ * `state.pad` was sanitised, copied through `leaveHome` and written to the
+ * fold, and `grep -rn "\bpad\b" src/` found NO READER AND NO WRITER: not in
+ * `Habitat.js`, not in `Kennel.js`, and no fixture in `dressHome`. Measured on
+ * a live deck-44 cabin it read `null`, and no path in the tree could have made
+ * it anything else. A record field that declares behaviour nothing keeps is
+ * HANDOFF §0.1b exactly, and this section is the two ends it never had.
+ *
+ * ── THREE ROWS, BECAUSE THE SENTENCE NAMES THREE THINGS ───────────────────
+ *
+ * `pad` is WHICH FIXTURE, not which animal. There is one live companion in
+ * `Kennel.js` and never two, so "which small companion" is already answered by
+ * the record the Kennel keeps; what the player is asked at the habitat, in the
+ * sentence's own words, is *which one* of the three. So the field holds the
+ * choice, and the animal is whoever is on the roll.
+ *
+ * `suits` is what the fixture is FOR, and it is checked against the archetype's
+ * own published facts rather than against a list of kind ids — see `padSuit`.
+ * Any of the three may be chosen for any animal: the sentence says the choice
+ * is yours and offers no rule, and a bird standing on a charge plate is a
+ * player's joke and not a defect. The habitat says which one fits.
+ */
+export const PADS = [
+  {
+    id: 'perch', label: 'Perch', suits: 'flier',
+    note: 'a bar across two posts, high on the wall',
+    /** Where a body standing on it rests, in metres over the cabin floor. */
+    rest: 1.02,
+  },
+  {
+    id: 'basket', label: 'Basket', suits: 'beast',
+    note: 'a low round bed with straw in it',
+    rest: 0.24,
+  },
+  {
+    id: 'charge', label: 'Charge pad', suits: 'droid',
+    note: 'a docking plate and a standing post',
+    rest: 0.07,
+  },
+];
+
+const PAD_BY_ID = new Map(PADS.map((p) => [p.id, p]));
+
+/** One row of the table, or null. The single door onto it. */
+export function padKind(id) { return PAD_BY_ID.get(id) || null; }
+
+/**
+ * ══ HOW SMALL "SMALL" IS, AND IT IS ONE NUMBER OFF THE ARCHETYPE TABLE ════
+ *
+ * The kennel (#28) is where the big ones live and the cabin gets ONE SMALL
+ * one, so something has to answer which is which. It is the archetype's own
+ * `mass`, because that is the field the design already reasons about: the
+ * tooka's row argues its 3 kg at length — *"the lightest mass in ARCHETYPES …
+ * you can pick it up"* — and a companion you can pick up is exactly the one
+ * that comes home in your arms.
+ *
+ * 40 kg, and the number is the gap in the measured table rather than a guess.
+ * Every companion archetype, by mass:
+ *
+ *   tooka 3 · hawk 6 · astro 32 │ tuk 45 · b1c 52 · medic 90 · pup 150 ·
+ *   wook 200 · varac 420 · taun 420 · blurrg 640
+ *
+ * The bar falls in a 13 kg hole, the widest one under 100, and it leaves
+ * exactly three animals in the cabin — and those three are one flier, one
+ * beast and one droid, which is the three fixtures the sentence names, one
+ * each. That is not arranged: it is what the table already said.
+ *
+ * A kind whose archetype row is missing reads as NOT small, which is the safe
+ * direction — an unknown body does not get put in a basket.
+ */
+export const PAD_MASS = 40;
+
+/**
+ * Which fixture suits a kind, or null if the kind is too big to live here.
+ *
+ * DERIVED FROM WHAT THE ARCHETYPE PUBLISHES, and never from a list of ids:
+ * `float`/`flight` is the flight plan (only the hawk carries one and only the
+ * hawk never lands), and `look: 'droid'` is the same field `CARE_WORDS` reads
+ * to say "charge" instead of "feed". Anything else small enough is a beast.
+ */
+export function padSuit(kind) {
+  const K = COMPANION_KINDS[kind];
+  if (!K) return null;
+  const A = COMPANION_UNITS[K.archetype];
+  if (!A || !(A.mass > 0) || A.mass > PAD_MASS) return null;
+  if (A.float || A.flight) return 'flier';
+  if (K.look === 'droid') return 'droid';
+  return 'beast';
+}
+
+/**
+ * The animal that lives in the cabin: the Kennel's live record if it is small
+ * enough, otherwise nothing. `k` is a record already read, for a caller that
+ * has one.
+ *
+ * IT IS THE LOCAL MACHINE'S KENNEL AND CAN NEVER BE A GUEST'S — `Coop.js`
+ * §WHAT A GUEST SEES makes the same argument for the larder. So the FIXTURE
+ * dresses in every apartment (it is a row of that apartment's record) and the
+ * ANIMAL only ever stands in yours.
+ */
+export function homeCompanion(k = null) {
+  const rec = (k || loadKennel()).live;
+  if (!rec || !padSuit(rec.kind)) return null;
+  return rec;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE ADDRESS                                                               */
 /* ══════════════════════════════════════════════════════════════════════════ */
 
@@ -337,8 +467,14 @@ function clean(v) {
     pieces: [],
     /** V16 §2 B5 and §3.2 — what the home HOLDS. Two lists, empty today. */
     store: { food: [], parcels: [] },
-    /** V15 §1.3 — the one small companion who lives here. An id or null. */
-    pad: typeof raw.pad === 'string' ? raw.pad.slice(0, 32) : null,
+    /**
+     * V15 §1.3 — the perch, the basket or the charge pad, or null for a cabin
+     * that has not been given one. A `PADS` id and nothing else: it is read
+     * straight into a fixture builder by `dressPad`, so an unknown string here
+     * is a `FIXTURES` lookup returning `undefined` on the frame a player walks
+     * through their own front door — the header's own example.
+     */
+    pad: PAD_BY_ID.has(raw.pad) ? raw.pad : null,
     /**
      * ══ WHERE THE PARTITIONS STAND — V15 §1.3.3 ═════════════════════════════
      *
@@ -441,6 +577,45 @@ export function setHomeStock(bin, rows) {
   rec.store[bin] = Array.isArray(rows) ? rows : [];
   return clean(saveHome(rec)).store;
 }
+
+/**
+ * ══ AND WHICH FIXTURE THE CABIN HAS — WRITTEN FROM THE HABITAT ════════════
+ *
+ * §1.3 puts the choice in ANOTHER ROOM, so this cannot be a verb on the
+ * cabin's key: the player making it is standing at #28 with the cabin two
+ * decks away and possibly not dressed at all. It is `setHomeStock`'s shape for
+ * `setHomeStock`'s reason — read the fold, change one field, write the fold —
+ * and it goes through `saveHome`, which is `StationSave.setHomeState`. There
+ * is still no `localStorage` in this file and `session.mjs` still counts the
+ * same writers it counted yesterday.
+ *
+ * `null` (or any id not on the table) takes the fixture out, which is the
+ * other half of a choice.
+ *
+ * @param world optional — pass the live world and the room re-dresses on the
+ *              same call, so a player who walks home finds what they chose
+ *              rather than what was there when the level was built.
+ * @returns the id that is now stored.
+ */
+export function setPad(id, world = null) {
+  const want = PAD_BY_ID.has(id) ? id : null;
+  const rec = loadHome();
+  rec.pad = want;
+  saveHome(rec);
+  /* THE ROOM, IF THERE IS ONE. Only your own: `dressPad` is a fixture builder
+   * and every fixture in this file belongs to the apartment it was dressed
+   * with — see `dressHome`'s note on `mine`. */
+  const h = world?._home;
+  if (h && h.mine) {
+    h.state.pad = want;
+    undressPad(h);
+    dressPad(world, h);
+  }
+  return want;
+}
+
+/** Which fixture the cabin has, off the fold. The habitat's own read. */
+export function homePad() { return loadHome().pad; }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE LARDER — V16 §B5                                                      */
@@ -788,6 +963,8 @@ export function dressHome(world, st, M, opts = {}) {
      * owner to fight over.
      */
     edits: 0,
+    /** V15 §1.3 — the perch/basket/charge pad, and what is standing on it. */
+    pad: null,
     surfaces: null, mirror: null, galley: null, panel: null, sign: null, wheel: null, draws: 0,
     /** Every mesh this dressing put in the room's group — see `undressOne`. */
     built: [],
@@ -807,6 +984,9 @@ export function dressHome(world, st, M, opts = {}) {
   dressMirror(world, h);
   dressGalley(world, h);
   dressPanel(world, h);
+  /* …and the one fixture that may not be there at all. AFTER the panel and
+   * before the sign for no reason but the order they stand in the room. */
+  dressPad(world, h);
   dressSign(world, h);
   /* …and the partitions, AFTER the sign, because putting the third room up
    * redraws the sign and there has to be one to redraw. */
@@ -1545,6 +1725,228 @@ export function atPanel(world) {
 }
 
 /**
+ * ══ THE PERCH, PUT UP — AND SOMETHING STANDING ON IT ══════════════════════
+ *
+ * A FIXTURE, for the galley's reason and the mirror's: you have to be able to
+ * find it. It is also the one fixture whose PRESENCE is a choice, so unlike
+ * the other four this builder can decide to build nothing at all — a cabin
+ * whose record says `pad: null` has a bare wall there, which is what "you have
+ * not chosen one yet" looks like.
+ *
+ * ── WHERE IT STANDS ───────────────────────────────────────────────────────
+ *
+ * Against the right-hand wall of the outer room, between the galley (`-d/2 +
+ * 1.4`) and the partition, opposite the mirror. It is not a blocker for the
+ * same reason the galley and the swatch panel are not: everything against a
+ * wall sits in the half metre the grid already keeps clear of it.
+ *
+ * ── AND THE ANIMAL IS THE LOCAL KENNEL'S, ALWAYS ──────────────────────────
+ *
+ * `homeCompanion` says why: a friend's apartment gets their FIXTURE and never
+ * their animal, because `loadKennel` reads this machine's roll and there is no
+ * second one. It is also gated on `mine` here, which is the same fence every
+ * placement verb in this file stands behind.
+ */
+const PAD_FIXTURES = {
+  /** Two posts and a bar, with a tray under it for what a bird drops. */
+  perch() {
+    const wing = [], strip = [], dark = [];
+    for (const sx of [-1, 1]) {
+      const post = cylGeo(0.03, 0.045, 1.02, 6, 1);
+      post.translate(sx * 0.32, 0.51, 0);
+      wing.push(post);
+    }
+    const bar = cylGeo(0.035, 0.035, 0.70, 8, 1);
+    bar.rotateZ(Math.PI / 2); bar.translate(0, 1.02, 0);
+    strip.push(bar);
+    const tray = slabGeo(0.80, 0.05, 0.34, { bevel: 0.02 });
+    tray.translate(0, 0.05, 0);
+    dark.push(tray);
+    return { wing, strip, dark };
+  },
+  /** A low tub with a straw pad in it. Eight sides, because a basket is round. */
+  basket() {
+    const deep = [], mark = [];
+    const tub = cylGeo(0.44, 0.34, 0.30, 10, 1);
+    tub.translate(0, 0.15, 0);
+    deep.push(tub);
+    const straw = cylGeo(0.40, 0.40, 0.06, 10, 1);
+    straw.translate(0, 0.27, 0);
+    mark.push(straw);
+    return { deep, mark };
+  },
+  /** A docking plate and the post that feeds it. */
+  charge() {
+    const wing = [], strip = [];
+    const plate = slabGeo(0.90, 0.07, 0.90, { bevel: 0.03 });
+    plate.translate(0, 0.035, 0);
+    wing.push(plate);
+    const post = slabGeo(0.14, 1.25, 0.14, { bevel: 0.02 });
+    post.translate(0, 0.62, -0.38);
+    wing.push(post);
+    const lamp = slabGeo(0.06, 0.42, 0.06, { bevel: 0 });
+    lamp.translate(0.05, 0.95, -0.38);
+    strip.push(lamp);
+    return { wing, strip };
+  },
+};
+
+function dressPad(world, h) {
+  const P = padKind(h.state.pad);
+  h.pad = null;
+  if (!P) return null;
+  const { w, d } = h.spot;
+  const lx = w / 2 - 0.5, lz = -d / 2 + 3.9;
+  const at = toWorld(h, lx, lz).clone();
+  const meshes = [];
+  for (const [key, geos] of Object.entries(PAD_FIXTURES[P.id]())) {
+    const geo = mergeGeos(geos);
+    if (!geo) continue;
+    const m = new THREE.Mesh(geo, h.M[key] || h.M.hull);
+    m.name = `home-pad-${P.id}-${key}`;
+    m.position.copy(at);
+    m.quaternion.setFromAxisAngle(UP, h.spot.yaw);
+    h.group.add(m);
+    h.built.push(m);
+    h.draws++;
+    meshes.push(m);
+  }
+  h.pad = { id: P.id, lx, lz, at, rest: P.rest, meshes, body: null, root: null };
+  seatCompanion(world, h);
+  return h.pad;
+}
+
+/**
+ * ══ WHAT "USING IT" MEANS, AND WHY IT IS A STILL BODY ═════════════════════
+ *
+ * The animal is built by the archetype's OWN builder with the same three
+ * option bags `CompanionDeck.callTheCompanion` uses — size, colours and growth
+ * — so the thing asleep on your basket is the thing you deploy with, which is
+ * the one fact two representations of one animal may never disagree about.
+ *
+ * IT IS NOT STEPPED. There is no gait, no brain and no per-frame hook: it is
+ * placed once at dress time and stands there. That is a decision and not an
+ * omission — a walking companion on the station is a lane of its own
+ * (`Companions.js`, whose heel, leash and orders all assume a field), and the
+ * sentence being kept here is *"a cabin gets a perch … for one small
+ * companion"*, which is about the cabin. What it costs is one build and, on
+ * the smallest of the three, 24 draws inside a room that is culled with its
+ * own door.
+ *
+ * THE FEET ARE PUT ON THE FIXTURE BY MEASUREMENT. The rig's root is the
+ * pelvis on both body paths, so "how far the lowest point of this animal is
+ * below its own origin" is a number that has to be read off the built body —
+ * a constant per kind would be four numbers that go wrong the first time a
+ * companion grows, and growth is exactly what `bodyScaleOf` is for.
+ */
+function seatCompanion(world, h) {
+  if (!h?.pad || !h.mine) return null;
+  const rec = homeCompanion();
+  if (!rec) return null;
+  const K = COMPANION_KINDS[rec.kind];
+  const A = COMPANION_UNITS[K?.archetype];
+  if (!A?.build) return null;
+  let built = null;
+  try {
+    built = A.build({
+      scale: bodyScaleOf(rec.kind, rec),
+      ...companionOptsFrom(rec.look),
+      ...growthOptsFrom(rec.kind, rec),
+    });
+  } catch { return null; }
+  const root = built?.rig?.root || built?.group;
+  if (!root) return null;
+  foldForRest(built, padSuit(rec.kind));
+  /* Measured at the origin, before it is moved: `setFromObject` reads world
+   * matrices, so a body already carried up to the fixture would measure its
+   * own new height and lift itself again. */
+  root.position.set(0, 0, 0);
+  root.quaternion.identity();
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(root);
+  const drop = Number.isFinite(box.min.y) ? -box.min.y : 0;
+  root.position.copy(h.pad.at);
+  root.position.y = h.y + h.pad.rest + drop;
+  /* Facing off the wall and into the room: the fixture is on the +x wall, so
+   * the animal looks down −x. A body's forward is +z, and a Y rotation takes
+   * +z to (sin, cos) — which is local −x at the room's own yaw less a right
+   * angle. */
+  root.quaternion.setFromAxisAngle(UP, h.spot.yaw - Math.PI / 2);
+  root.updateMatrixWorld(true);
+  h.group.add(root);
+  h.pad.body = { rec, built, drop };
+  h.pad.root = root;
+  let draws = 0;
+  root.traverse((o) => { if (o.isMesh) draws++; });
+  h.draws += draws;
+  return h.pad.body;
+}
+
+/**
+ * A FLIER AT REST HAS ITS WINGS IN. `creatureSkeleton` builds `wing{L,R}` and
+ * `wingTip{L,R}` off the body with a `rest` euler that holds them OUT — which
+ * is right for the only place a hawk has ever been, which is the air. On a bar
+ * in a cabin it is a bird with a 1.8 m span standing in a 15 m room.
+ *
+ * So the two bones a side are turned in toward the flank. It is the rest euler
+ * and nothing else: no solver, no beat, no `Flight` state — the wings are
+ * PARENTS of their own meshes on this rig, so a rotation is the fold.
+ */
+const WING_FOLD = { arm: [-1.30, 0, 0], fan: [-0.55, 0, 0] };
+const _fold = new THREE.Quaternion();
+const _euler = new THREE.Euler();
+
+function foldForRest(built, suit) {
+  if (suit !== 'flier') return 0;
+  const rig = built?.rig;
+  if (!rig?.bones) return 0;
+  let folded = 0;
+  for (const L of ['L', 'R']) {
+    const side = L === 'L' ? 1 : -1;
+    for (const [name, rot] of [[`wing${L}`, WING_FOLD.arm], [`wingTip${L}`, WING_FOLD.fan]]) {
+      const b = rig.bones.get ? rig.bones.get(name) : rig.bones[name];
+      if (!b?.obj) continue;
+      /* ON THE RIGHT OF THE REST QUATERNION, which is what makes one pair of
+       * numbers do both sides: a right multiply is a rotation in the BONE's
+       * own frame, and the two wings' rest frames are already mirrored by
+       * `creatureSkeleton`. Multiplying on the left would be a rotation in the
+       * body's frame and would fold one wing in and the other out. */
+      _euler.set(rot[0], rot[1] * side, rot[2] * side);
+      _fold.setFromEuler(_euler);
+      b.obj.quaternion.copy(b.restQuat).multiply(_fold);
+      /* AND THE POSE THE ANIMATOR WOULD BLEND TOWARD, for the day something
+       * does step this body: `Rig` seeds `pose` from the rest quaternions, so
+       * a fold written only onto `obj` would be undone by the first solve. */
+      rig.pose?.[name]?.copy(b.obj.quaternion);
+      folded++;
+    }
+  }
+  return folded;
+}
+
+/** The fixture and whatever was standing on it, taken down. */
+function undressPad(h) {
+  const P = h?.pad;
+  if (!P) return;
+  for (const m of P.meshes || []) {
+    const i = h.built.indexOf(m);
+    if (i >= 0) h.built.splice(i, 1);
+    h.group.remove(m);
+    m.geometry?.dispose?.();
+  }
+  if (P.root) {
+    h.group.remove(P.root);
+    /* GEOMETRY ONLY, WHICH IS THIS FILE'S OWN RULE ONE SCREEN DOWN: the
+     * geometry was machined for this body and the materials came out of the
+     * body foundry's own cache, shared with every other copy of the animal.
+     * Disposing one of those would take the hide off the companion standing on
+     * the hangar deck. */
+    P.root.traverse((o) => { if (o.isMesh) o.geometry?.dispose?.(); });
+  }
+  h.pad = null;
+}
+
+/**
  * The address, on the door. §1.3.4's *"what makes a home a place rather than a
  * menu"*, and the one panel in the room a passer-by reads rather than you.
  */
@@ -2042,12 +2444,14 @@ export function leaveHome(world) {
    *
    * `store` and `pad` are written by systems that are not in this room:
    * `V16.md` §2 B5 buys food at a counter and §3.2 has a parcel delivered to
-   * your apartment overnight, and V15 §1.3 says which small companion lives
-   * here is *"a choice you make at the habitat"*. All three happen while the
-   * player is somewhere else on the station, and a visit that ended by writing
-   * the copy of the record it STARTED with would take the shopping back off
-   * the shelf. So the two fields this file never edits are taken from the fold
-   * at the moment of writing, and the ones it does edit are taken from memory.
+   * your apartment overnight, and V15 §1.3 says which of the perch, the basket
+   * and the charge pad the cabin gets is *"a choice you make at the habitat"*.
+   * All three happen while the player is somewhere else on the station, and a
+   * visit that ended by writing the copy of the record it STARTED with would
+   * take the shopping back off the shelf. So the two fields this file never
+   * edits FROM THE ROOM are taken from the fold at the moment of writing, and
+   * the ones it does edit are taken from memory. `setPad` writes the fold and
+   * the dressed room together, so this reads back what it just wrote.
    */
   const now = loadHome();
   h.state.store = now.store;
@@ -2098,6 +2502,11 @@ function undressOne(world, h) {
   }
   if (h.kitWall) { slideKitPartition(h.kitWall, h.kitWall.at); h.kitWall = null; }
   if (h.walls) h.walls.length = 0;
+  /* THE PERCH AND ITS OCCUPANT, before the sweep below: the animal's body is a
+   * whole rig in the group and `h.built` holds meshes, so the sweep's
+   * `remove` + one `geometry.dispose` would leave thirty-seven of them alive
+   * inside a Group nobody points at any more. */
+  undressPad(h);
   for (const p of h.props) { if (p && !p.dead) p.destroy(); }
   h.props.length = 0;
   /* And the fixtures and surfaces this dressing added to the room's group.
@@ -2112,7 +2521,7 @@ function undressOne(world, h) {
     m.geometry?.dispose?.();
   }
   if (h.built) h.built.length = 0;
-  h.surfaces = h.mirror = h.galley = h.sign = h.panel = null;
+  h.surfaces = h.mirror = h.galley = h.sign = h.panel = h.pad = null;
   const at = (world?._homes || []).indexOf(h);
   if (at >= 0) world._homes.splice(at, 1);
   if (world && world._home === h) world._home = null;
@@ -2133,6 +2542,8 @@ export function homeRecord(world) {
     address: h.address, place: h.place.id, deck: h.place.deck,
     surfaces: { ...h.state.surfaces }, pieces: h.state.pieces.length,
     store: h.state.store, pad: h.state.pad,
+    /** V15 §1.3 — is the small companion actually standing on it? */
+    padded: !!h.pad, resident: h.pad?.body?.rec?.id || null,
     /** V15 §1.3.3 — how many rooms are behind the address. One more than walls. */
     rooms: (h.walls ? h.walls.length : 0) + 1,
   };

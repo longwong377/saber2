@@ -29,7 +29,7 @@ import { RANKS, ARMIES, ORDERS, SHAKEN_AT } from '../game/Command.js';
 /* The six orders and the one reader that says whether a slot is live and why
  * not — see `CompanionWheel`. */
 import { COMPANION_ORDERS, orderArg, orderCompanion, refuseOrder } from '../game/Companions.js';
-import { COMPANION_KINDS, rungOf as rungOfCompanion } from '../game/CompanionKinds.js';
+import { COMPANION_KINDS, rungOf as rungOfCompanion, wardOf } from '../game/CompanionKinds.js';
 /* THE PLATE'S "shaken" IS THE REFUSAL RULE'S OWN QUESTION, asked the same way.
  * It was `t.morale < 0.4` — a typed literal against a raw morale reading, while
  * the rule that stops a man advancing is `braveryOf(body) < SHAKEN_AT` (0.30)
@@ -1058,8 +1058,12 @@ export class CompanionWheel extends RadialWheel {
     }
     if (e._cmpDuty?.id === item.id) return `${item.blurb} — on now, again to lift`;
     if (item.id === 'ward') {
-      const r = COMPANION_KINDS[e._cmpKind]?.ward || 0;
-      return r > 0 ? `Meet anything inside ${r} m of ME` : item.blurb;
+      /* `wardOf` AND NOT `K.ward` — the ring the order actually defends, after
+       * every temper the animal wears. Read off the row alone, this caption
+       * promised nine metres to a KEPT animal that would only meet something
+       * at four and a half. One reader; see CompanionKinds.js. */
+      const r = wardOf(e);
+      return r > 0 ? `Meet anything inside ${Math.round(r * 10) / 10} m of ME` : item.blurb;
     }
     return item.blurb;
   }

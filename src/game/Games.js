@@ -435,16 +435,113 @@ export function drumAt(hour, day = 0) {
   return Math.floor(rng() * DRUM.SEGMENTS.length) % DRUM.SEGMENTS.length;
 }
 
+/**
+ * IS THIS A THING THE WHEEL CAN LAND ON? `on` is WHAT YOU BACKED, and the
+ * three kinds count it in three different alphabets — a deck is one of the six
+ * numbers painted on the drum, a band is 0..2, the spine is 0 or 1. A bet
+ * carrying anything else is not a losing bet, it is a MALFORMED one, and the
+ * difference matters because `drumPays` cannot tell them apart by looking: an
+ * hour written into `on` reads as deck 14 (never wins, silently) or as spine 1
+ * (wins half the time, for the wrong reason). See `drumTicket`.
+ */
+export function drumLegal(bet) {
+  if (!bet) return false;
+  if (bet.kind === 'deck') return bet.on !== null && DRUM.SEGMENTS.includes(bet.on);
+  if (bet.kind === 'band') return Number.isInteger(bet.on) && bet.on >= 0 && bet.on < DRUM.BANDS.length;
+  if (bet.kind === 'spine') return bet.on === 0 || bet.on === 1;
+  return false;
+}
+
 /** What a bet is worth against a stop. `bet` is `{on, kind, stake}`. */
 export function drumPays(bet, at) {
   const seg = DRUM.SEGMENTS[at];
   const stake = Math.max(0, Math.round(Number(bet?.stake) || 0));
   if (!stake) return 0;
+  /* A BET ON NOTHING PAYS NOTHING, LOUDLY RATHER THAN BY ACCIDENT. Without
+   * this line a deck bet whose `on` had been overwritten by something that is
+   * not a deck simply never won, and the window kept selling it. */
+  if (!drumLegal(bet)) return 0;
   if (seg === null) return 0;                       // the house's segment
   if (bet.kind === 'deck') return seg === bet.on ? Math.round(stake * DRUM.DECK_PAYS) : 0;
   if (bet.kind === 'band') return bandOf(seg) === bet.on ? Math.round(stake * DRUM.BAND_PAYS) : 0;
   if (bet.kind === 'spine') return (at % 2) === bet.on ? Math.round(stake * DRUM.SPINE_PAYS) : 0;
   return 0;
+}
+
+/* ── A TICKET IS TWO NUMBERS AND THEY ARE NOT THE SAME NUMBER ─────────────
+ *
+ * `on`   — WHAT YOU BACKED: a deck, a band, a side of the spine.
+ * `turn` — WHICH SPIN IT RIDES: an absolute hour count, `day * 24 + hour`.
+ *
+ * THE DEFECT THIS EXISTS TO MAKE IMPOSSIBLE. The Wheelhouse panel wrote the
+ * hour it was betting into `on` — `{ ...bet, on: (floor(hour) + 1) % 24 }` —
+ * so the thing the player backed was destroyed on the way to the wallet and
+ * `drumPays` compared an hour against a deck number. Swept over all 24 hours
+ * and all 11 rows on the board: 10 of 264 tickets could pay at all, and every
+ * one of those ten paid the WRONG BET — at hour 0 "the even spine" collected
+ * while the wheel said it had lost, and deck 48, which had actually won, was
+ * paid nothing. A hundred per cent house edge, dressed as a payout table.
+ *
+ * The turn is ABSOLUTE and not an hour of the day for the second half of the
+ * same defect: the ticket carried `floor(hour) + 1` while the room compared it
+ * against `floor(hour)`, so it settled on the click that struck it — against a
+ * stop `drumAt` had already published. Counting from the start of time means
+ * "has the clock reached it yet" is `>=` on two integers, with no wrap to get
+ * backwards, and a ticket struck at 23:40 rides tomorrow's 00:00 turn.
+ */
+
+/** The absolute turn the clock is standing on. */
+export function drumTurnOf(hour, day = 0) {
+  return (day | 0) * 24 + Math.floor(Number(hour) || 0);
+}
+
+/** The clock face of an absolute turn — what `drumAt` wants back. */
+export function drumClockOf(turn) {
+  const t = Math.floor(Number(turn) || 0);
+  return { hour: ((t % 24) + 24) % 24, day: Math.floor(t / 24) };
+}
+
+/**
+ * Strike a ticket. It rides the NEXT turn, never this one: the wheel this hour
+ * has already stopped and `drumAt` will tell anybody who asks where.
+ */
+export function drumTicket(bet, hour, day = 0) {
+  return {
+    kind: bet?.kind, on: bet?.on,
+    label: bet?.label ?? '', pays: bet?.pays ?? 0,
+    stake: Math.max(0, Math.round(Number(bet?.stake) || 0)),
+    turn: drumTurnOf(hour, day) + 1,
+  };
+}
+
+/** Has the clock reached the turn this ticket rides? */
+export function drumDue(ticket, hour, day = 0) {
+  const t = Number(ticket?.turn);
+  return Number.isFinite(t) && drumTurnOf(hour, day) >= t;
+}
+
+/** Where the wheel stops for a ticket — the one reading that settles it. */
+export function drumStop(ticket) {
+  const when = drumClockOf(ticket?.turn);
+  return drumAt(when.hour, when.day);
+}
+
+/**
+ * THE EDGE ALONG THE PATH THE ROOM ACTUALLY WALKS: strike a ticket at an hour,
+ * let the clock reach it, settle it. `drumEdge` below measures the WHEEL;
+ * this measures the WINDOW, and the two were 90 points apart for the whole
+ * life of the panel because only one of them was ever run.
+ */
+export function drumTicketEdge(bet, spins = 12000) {
+  const STAKE = 1000;
+  let staked = 0, back = 0;
+  for (let i = 0; i < spins; i++) {
+    /* Struck mid-hour, exactly as a player standing at the window is. */
+    const t = drumTicket({ ...bet, stake: STAKE }, (i % 24) + 0.5, (i / 24) | 0);
+    staked += STAKE;
+    back += drumPays(t, drumStop(t));
+  }
+  return 1 - back / staked;
 }
 
 /** The house's edge on one kind of bet, measured rather than declared. */

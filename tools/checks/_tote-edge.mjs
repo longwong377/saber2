@@ -31,9 +31,11 @@
  * the player's is not. `Tote.bookAt` replays `FORM_DAYS` and hands over what
  * that fortnight wrote: measured, 27.9 starts a runner at the Holo-theatre,
  * 17.8 in the Pit, 8.1 at the Arena. A reader measured on sixty starts is a
- * reader nobody can be, and the gap is not cosmetic — the same reading is
- * worth a correlation of 0.41 against the truth on a saturated log and 0.34 on
- * the book the window actually prints.
+ * reader nobody can be, and the gap is not cosmetic — the same going-split
+ * reading is worth a correlation of 0.41 against the truth on a saturated log
+ * and 0.31 on the book the window actually prints, and every constant in
+ * `Spectacle.SKINS` that says how much reading recovers was fitted on the
+ * short book for that reason.
  *
  * So a betting day here is exactly what `bookAt` is: a FRESH yard, the
  * fortnight replayed into it, and then one day bet on. That also makes every
@@ -144,13 +146,13 @@ export function agreesWithBookAt(venueId, day) {
  *  TWO PUNTERS AT ONE WINDOW
  * ══════════════════════════════════════════════════════════════════════════
  *
- *   THE FORM-READER  reads what the window prints — the board, the form line,
- *                    the going the log can be split on and this room's own
- *                    head-to-head column — through `researchedProbabilities`,
- *                    which is handed no hidden field. He backs the runner his
- *                    reading says is the best PRICE, not the one it says is
- *                    the best runner, and he does not bet at all when nothing
- *                    on the board is worth `MARGIN` more than it is quoted at.
+ *   THE FORM-READER  reads what the window prints — the board, the rating,
+ *                    the finishing record and the going the log can be split
+ *                    on — through `researchedProbabilities`, which is handed
+ *                    no hidden field at all. He backs the runner his reading
+ *                    says is the best PRICE, not the one it says is the best
+ *                    runner, and he does not bet when nothing on the board is
+ *                    worth `MARGIN` more than it is quoted at.
  *
  *   THE PIN          picks a runner off the card at random. Averaged over
  *                    every runner the pin could have landed on rather than

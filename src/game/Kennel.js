@@ -185,8 +185,26 @@ export const TEMPERS = [
      * exactly the reason HEELED does: a record wearing "it has learned to
      * stay" and "it has learned to go" at once describes nothing. */
     up: { recall: 4.0 }, down: { ward: 4.5 }, sheds: 'ranging',
+    /**
+     * AND IT IS THE ONE THAT PANICS, WHICH IS THE PLAYER'S OWN SENTENCE.
+     *
+     * V15 §4: "a companion that only ever helps is a stat. A big one is slow
+     * and loud; A BONDED ONE PANICS WHEN IT IS HURT." HEAVY had the first half
+     * of that from the day it landed and KEPT had none of the second — it was
+     * a bond that bought 4 m of recall and sold a ring, which is a trade and
+     * not a panic. So the bonded animal breaks off and runs to you when it is
+     * hurt, for `SHY.run` seconds, and will not fight while it is doing it.
+     *
+     * IT IS A FLAG ON THE ROW AND NOT A SIXTH AXIS, and the difference is the
+     * pricing. `TEMPER_AXES` prices metres and seconds against each other; a
+     * panic is neither, and inventing an axis for it would mean pricing "runs
+     * away" against "4 m of recall" with a made-up span. It is a DRAWBACK with
+     * no gain beside it, so `priceTemper` — which may not come out positive —
+     * cannot be made wrong by it, and `Companions.stepShy` is the one reader.
+     */
+    shy: true,
     gain: 'comes home from further, and faster, than it used to',
-    cost: 'and will not stand a ward as wide as it once did',
+    cost: 'and will not stand a ward as wide as it once did — and it bolts to you when it is hurt',
   },
   {
     id: 'ranging', label: 'RANGING', earn: 'five runs spent beyond twelve metres',
@@ -338,7 +356,7 @@ export function readOne(r) {
     orders: Math.max(0, num(r.orders, 0) | 0),
     ranged: Math.max(0, num(r.ranged, 0) | 0),
     /**
-     * WHAT WAS DONE FOR IT AT THE HABITAT — two counts of acts, and NOT a
+     * WHAT WAS DONE FOR IT AT THE HABITAT — three counts of acts, and NOT a
      * quantity of anything.
      *
      * Clamped to `runs + 1` on the way in as well as on the way out, which is
@@ -352,6 +370,13 @@ export function readOne(r) {
      */
     meals: Math.max(0, Math.min(Math.max(0, num(r.runs, 0) | 0) + 1, num(r.meals, 0) | 0)),
     grooms: Math.max(0, Math.min(Math.max(0, num(r.runs, 0) | 0) + 1, num(r.grooms, 0) | 0)),
+    /* AND THE THIRD, ON THE SAME CLAMP AND ON THE SAME LINE OF ARGUMENT. A
+     * field a screen can increment is a field a save file can forge, and the
+     * ceiling is the one `careFor` enforces. It is read at the bottom of the
+     * whitelist rather than defaulted somewhere else, because a care count
+     * that `readOne` does not name is a count that survives one save and is
+     * gone by the next load — which is a play control that does nothing. */
+    plays: Math.max(0, Math.min(Math.max(0, num(r.runs, 0) | 0) + 1, num(r.plays, 0) | 0)),
     since: typeof r.since === 'string' ? r.since : null,
     tempers: Array.isArray(r.tempers)
       ? [...new Set(r.tempers.filter((t) => typeof t === 'string' && TEMPER_BY_ID[t]))].slice(0, TEMPERS_WORN)
@@ -419,8 +444,8 @@ function saneLook(look) {
  * truth that goes stale the first time the formula changes.
  */
 const COMPANION_FIELDS = ['id', 'kind', 'name', 'look', 'xp', 'runs', 'areas',
-  'kills', 'saves', 'downs', 'orders', 'ranged', 'meals', 'grooms', 'since',
-  'tempers', 'story', 'scars'];
+  'kills', 'saves', 'downs', 'orders', 'ranged', 'meals', 'grooms', 'plays',
+  'since', 'tempers', 'story', 'scars'];
 
 /** One epitaph off disk, made safe — the `saneFallen` pattern (Company.js:317). */
 function saneEpitaph(f) {
@@ -614,6 +639,18 @@ export function temperSwing(rec) {
   return out;
 }
 
+/**
+ * IS ONE OF THE TEMPERS IT WEARS THE ONE THAT PANICS?
+ *
+ * One reader, off the row's own `shy` field, so the pack tests a FLAG on a
+ * table rather than a temper id spelled out in the middle of a sim file. A
+ * second temper that panics is a second `shy: true` and not a second `if`.
+ */
+export function shyTemper(rec) {
+  for (const id of rec?.tempers || []) if (TEMPER_BY_ID[id]?.shy) return true;
+  return false;
+}
+
 /* ── the write door for cosmetics ────────────────────────────────────── */
 
 /**
@@ -661,10 +698,10 @@ export function dressCompanion(id, look = {}) {
  * "care, feeding, grooming, play, at the habitat, ON the station, between
  *  runs — and for some rungs to need BOTH."
  *
- * TWO ACTS, TWO COUNTS, AND NOTHING IN BETWEEN THEM. There is no stock, no
+ * THREE ACTS, THREE COUNTS, AND NOTHING IN BETWEEN THEM. There is no stock, no
  * shelf, no counter, no thing to choose between and no number that goes DOWN.
- * `meals` and `grooms` only ever increment, by one, at a door the player walks
- * to. That is the whole of it, and it is deliberate: V16 §2 B5 wants food
+ * `meals`, `grooms` and `plays` only ever increment, by one, at a door the
+ * player walks to. That is the whole of it, and it is deliberate: V16 §2 B5 wants food
  * bought at a market and V16 §4 is the argument that has to be settled in
  * `Progress.js`'s header before any market exists. This lane does not settle
  * it and does not lean on it — the habitat's trough and charging post are free
@@ -673,8 +710,9 @@ export function dressCompanion(id, look = {}) {
  *
  * ── THE ONE RULE THAT KEEPS IT FROM BEING A GRIND ─────────────────────────
  *
- * An animal may be fed once per run it has been out on, and groomed once per
- * run, with one of each in hand before it has ever deployed. So care can never
+ * An animal may be fed once per run it has been out on, groomed once per run
+ * and played with once per run, with one of each in hand before it has ever
+ * deployed. So care can never
  * outrun runs, the whole ladder is bounded by the thing that is bounded by
  * playing, and standing in the habitat pressing a control a hundred times does
  * exactly nothing after the second press. The alternative — a cooldown in
@@ -692,8 +730,101 @@ export function dressCompanion(id, look = {}) {
  * grep-pin written on the same commit. It may increment two counters and it
  * may do nothing else — xp, runs, kills, downs, tempers and scars are written
  * by the game, from a run, and are not reachable from a room.
+ *
+ * ── AND THE THIRD ACT, WHICH THE ROOM HAD BEEN PROMISING FOR FOUR ROUNDS ──
+ *
+ * V15 §4 asks for "care, feeding, grooming, PLAY" and `StationPlan.js:452`
+ * gives #28 the gazetteer verb `'feed, play, groom'`, which the room prints
+ * verbatim on the wall. `CARE_ACTS` was `['meals','grooms']` and the panel
+ * offered exactly two controls, so one third of a sentence the player can
+ * read in the room was a thing the room could not do. That is the same shape
+ * of lie as a card describing a mechanic that does not exist, and it is
+ * closed the only way it can be: by building the act, not by editing the sign.
+ *
+ * IT IS NOT A FOURTH KIND OF THING. Same door, same once-per-run rule, same
+ * whitelist, same counter, counted by `careOf` exactly as the other two are —
+ * so it feeds the growth ladder and it is the third way to earn KEPT. WHAT
+ * MAKES IT ITS OWN ACT rather than a third button that does what the first two
+ * do is `playLine`: play is the only one of the three that ANSWERS, with a
+ * sentence about what the animal actually did, drawn deterministically off the
+ * record's own id and the count. Nothing about that sentence is stored — see
+ * the note on it — so `careFor` still writes exactly one field, and the pin
+ * that says so is unchanged in shape.
  */
-export const CARE_ACTS = Object.freeze(['meals', 'grooms']);
+export const CARE_ACTS = Object.freeze(['meals', 'grooms', 'plays']);
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  WHAT IT DID WHEN YOU PLAYED WITH IT
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * The one act of the three that answers. Feeding and grooming are things you
+ * do TO an animal and the record is the whole of what they leave behind; play
+ * is a thing you do WITH one, and a control that reported nothing back would
+ * have been the third button doing what the first two do.
+ *
+ * DERIVED AND NEVER STORED, which is the whole reason this can exist without
+ * touching the write door. The sentence is a pure function of the record's own
+ * id and how many times it has been played with, so it is the same sentence on
+ * every machine and after every reload, and `careFor` still writes exactly one
+ * field — the pin on its body is unchanged and did not have to be widened.
+ *
+ * SEEDED, NOT RANDOM. `Math.random` is refused across `src/` by
+ * `tools/checks/determinism.mjs` and it would be wrong here anyway: a line
+ * that changed every time the panel re-rendered would be noise rather than a
+ * memory. The hash is the same 32-bit mix `CompanionLife.seedOf` uses, over
+ * `id` and the count, so consecutive plays walk the table instead of sticking.
+ *
+ * THE VOCABULARY IS THE KIND'S OWN. A droid runs a drill where a massiff
+ * chases a rope, and that is `CARE_WORDS` one file across rather than a switch
+ * on a kind's name here — the same rule feeding and grooming already follow.
+ */
+const PLAY_GAMES = Object.freeze({
+  creature: [
+    'chased a knotted rope the length of the pen and would not give it back',
+    'shouldered you into the rail twice and thought that was the game',
+    'went flat on its forelegs, tail up, and waited for you to move first',
+    'carried the rope to the far corner and dared you to come and get it',
+  ],
+  mount: [
+    'took two laps of the pen at a canter and came back blowing',
+    'shied at nothing, wheeled, and stood there pleased with itself',
+    'let you work its head round both ways and leaned into it',
+    'stamped a slow circle round you until you gave in and moved',
+  ],
+  wookiee: [
+    'took your arm, mimed breaking it, and laughed at the noise you made',
+    'hid your kit behind the crates and watched you look for it',
+    'wrestled you off your feet twice and let you up both times',
+    'drummed on the bulkhead until half the deck looked over',
+  ],
+  droid: [
+    'ran the obstacle drill twice and shaved a second off the second pass',
+    'projected a target grid on the deck and scored you on it',
+    'chirped through a whole call-and-answer sequence without a fault',
+    'chased a thrown spanner and filed a complaint about the throw',
+  ],
+});
+
+/** The 32-bit mix `CompanionLife.seedOf` uses, over a string and a counter. */
+function playSeed(id, n) {
+  let h = 2166136261 ^ (n | 0);
+  const str = String(id || '');
+  for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+  h ^= h >>> 13; h = Math.imul(h, 1274126177); h ^= h >>> 16;
+  return (h >>> 0);
+}
+
+/**
+ * WHAT HAPPENED THE LAST TIME YOU PLAYED WITH THIS ANIMAL, or null if you
+ * never have. Read by the habitat panel; read by nothing that fights.
+ */
+export function playLine(rec) {
+  const n = Math.max(0, (Number(rec?.plays) || 0) | 0);
+  if (!rec || n <= 0) return null;
+  const rows = PLAY_GAMES[COMPANION_KINDS[rec.kind]?.look] || PLAY_GAMES.creature;
+  return rows[playSeed(rec.id, n) % rows.length];
+}
 
 /**
  * MAY THIS ANIMAL BE LOOKED AFTER AGAIN YET? One reader, so the habitat's

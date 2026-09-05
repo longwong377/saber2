@@ -42,7 +42,8 @@ import {
   PHASES, pitById, pitAtPlace, venueOpen, isHandler, handlerOf, handlersOn,
   heftOf, footOf, bondOf, entrantForRecord, matchFor,
   offerBout, openBout, beginRound, callOrder, runRound, cornerAct, pitState,
-  settleBout, foldPit, scarFor, pitCard, runPitCard, pitCall, orderById,
+  settleBout, foldPit, scarFor, pitCard, runPitCard, settlePitCard, pitCall, orderById,
+  holdsOrder,
 } from '../../src/game/Pits.js';
 import { announce, MOMENTS, momentsOf } from '../../src/game/Spectacle.js';
 import * as Kn from '../../src/game/Kennel.js';
@@ -283,25 +284,55 @@ export async function run({ check, assert }) {
       + 'different handlers\' craft';
   });
 
-  check('pits: the order wheel is the licence table, and a fresh animal is not handed the top of it', async () => {
-    /* THE GATE IS `holdsCompanion` AND NOTHING ELSE. A second table here would
-     * be a rung the player climbed in the field meaning nothing in the pit,
-     * which is exactly the "two ladders" defect `COMPANION_RANKS` refuses. */
+  check('pits: a first bout is playable, and the top of the wheel is still earned', async () => {
+    /**
+     * ══ THE DEFECT THIS CHECK WAS BLIND TO ═══════════════════════════════
+     *
+     * It read `holdsCompanion(rec, o.holds)` and asserted only that STRANGE
+     * held FEWER orders than SWORN. STRANGE held ONE — BREAK OFF, whose whole
+     * effect is *"Takes the round off."* A player's first animal on its first
+     * night had a wheel of five buttons, four of which answered *"STRANGE does
+     * not hold GUARD yet"*, and the answer to *"there needs to be a certain
+     * level of skill, a minigame in here"* was a screen with one button that
+     * declines to fight. Fewer-than is true of one, and one is not a game.
+     *
+     * So the floor is asserted as well as the ceiling, and both in the terms
+     * the minigame is actually played in: how many orders the animal will
+     * take, and how many of the four intents it can ANSWER. A first bout must
+     * be a decision; a SWORN animal must be able to answer all of them.
+     */
     const C = await import('../../src/game/Companions.js');
     for (const o of PIT_ORDERS) {
       assert(C.COMPANION_ORDERS[o.holds],
         `the pit order ${o.label} is licensed by '${o.holds}', which is not one of COMPANION_ORDERS`);
+      assert(!o.licence || C.COMPANION_ORDERS[o.licence],
+        `the pit order ${o.label} is gated on '${o.licence}', which is not one of COMPANION_ORDERS`);
     }
     const K = await import('../../src/game/CompanionKinds.js');
     const fresh = { kind: 'massiff', xp: 0 };
     const sworn = { kind: 'massiff', xp: 20 };
-    const held = (rec) => PIT_ORDERS.filter((o) => K.holdsCompanion(rec, o.holds)).map((o) => o.id);
+    const held = (rec) => PIT_ORDERS.filter((o) => holdsOrder(rec, o)).map((o) => o.id);
+    const answers = (rec) => PIT_ORDERS.filter((o) => holdsOrder(rec, o) && o.counters).length;
     const f = held(fresh), s = held(sworn);
     assert(f.includes('break'),
       'a STRANGE animal cannot be told to break off — "protection that needs a licence is not protection"');
+    assert(f.length >= 3,
+      `a STRANGE animal — every player's first one — holds ${f.length} of ${PIT_ORDERS.length} orders `
+      + `(${f.join(', ')}). A first bout with fewer than three is a refusal with a wheel drawn round it`);
+    assert(answers(fresh) >= 2,
+      `a STRANGE animal can answer ${answers(fresh)} of the ${INTENTS.length} intents — with one answer `
+      + 'there is nothing to read the telegraph FOR');
     assert(f.length < s.length,
       `STRANGE holds ${f.length} pit orders and SWORN holds ${s.length} — the ladder buys nothing in here`);
+    assert(answers(sworn) === INTENTS.length,
+      `a SWORN animal answers ${answers(sworn)} of ${INTENTS.length} intents — the top of the ladder is `
+      + 'supposed to be the animal that can be told anything');
     assert(s.length === PIT_ORDERS.length, `SWORN holds only ${s.length} of ${PIT_ORDERS.length}`);
+    /* AND THE ONE READER. A surface that greys a button on a different rule
+     * from the one `callOrder` gates on is a wheel that lies both ways. */
+    const bad = PIT_ORDERS.filter((o) => holdsOrder(sworn, o) !== K.holdsCompanion(sworn, o.holds));
+    assert(bad.length === 0 || bad.every((o) => !o.licence),
+      `${bad.map((o) => o.label).join(', ')} is gated on something that is neither its licence nor its duty`);
     /* AND THE REFUSAL IS A SENTENCE, not a silent no-op. */
     const rec = grown();
     const bout = openBout(offerBout({ venue: arena, rec, handler: roster[0], hour: 12, seed: 5 }), {});
@@ -314,13 +345,13 @@ export async function run({ check, assert }) {
     for (const o of PIT_ORDERS) {
       assert(orderById(o.id) === o, `orderById cannot find ${o.label} — two tables of orders`);
     }
-    const answers = PIT_ORDERS.filter((o) => o.counters).map((o) => o.counters);
-    assert(new Set(answers).size === answers.length, 'two orders answer the same intent');
+    const covered = PIT_ORDERS.filter((o) => o.counters).map((o) => o.counters);
+    assert(new Set(covered).size === covered.length, 'two orders answer the same intent');
     for (const i of INTENTS) {
-      assert(answers.includes(i.id), `nothing answers ${i.label} — that round cannot be read`);
+      assert(covered.includes(i.id), `nothing answers ${i.label} — that round cannot be read`);
     }
-    return `${PIT_ORDERS.length} orders over ${INTENTS.length} intents; STRANGE holds ${f.join(', ')}, `
-      + `SWORN holds ${s.join(', ')}`;
+    return `${PIT_ORDERS.length} orders over ${INTENTS.length} intents; STRANGE holds ${f.join(', ')} `
+      + `and answers ${answers(fresh)} of them, SWORN holds ${s.join(', ')} and answers ${answers(sworn)}`;
   });
 
   check('pits: the corner is one action, it is spent, and the animal\'s state is on the table', () => {
@@ -765,16 +796,38 @@ export async function run({ check, assert }) {
       + `identical event streams watched and bet on; a 10 stake settled ${led.net >= 0 ? '+' : ''}${led.net}`;
   });
 
-  check('pits: the announcer reads the fight, and the room never talks over the engine', () => {
+  check('pits: the announcer calls a fight, and not a lap of a podrace', async () => {
+    /**
+     * ══ WHAT THIS CHECK USED TO ASSERT ═══════════════════════════════════
+     *
+     * It asserted `pitCall(ev, card) === announce(ev, card)` for every event
+     * type the engine speaks, and called that "the room never talks over the
+     * engine". `Spectacle`'s `LINES` is the PODRACE announcer, so what the
+     * assertion actually required was that a death match between two animals
+     * in a service gap on deck 44 be called in gates and laps. Driven, it was:
+     *
+     *     They're away — 2 on the card.
+     *     Yavk Ninefingers goes to the front, Tooth loses it at 2.
+     *     Yavk Ninefingers takes Tooth at gate 2.
+     *
+     * It also fabricated `{ type: 'bell' }` by hand to prove the room's own
+     * six lines existed — a test for a line no caller could reach, because
+     * nothing in the game pushed an event of that type. Both halves are
+     * inverted below: the room's words must NOT be the course's, and the six
+     * room events must turn up in a bout nobody fabricated.
+     */
     const rec = grown();
     const b = fight('read', { venue: under, rec, handler: roster[0], seed: 999, day: openNight(under), rng: makeRng(1) });
     const cut = momentsOf(b.result);
     assert(cut.length > 3, `a whole bout produced ${cut.length} moments worth cutting to`);
+
     let said = 0;
+    const lines = [];
     for (const ev of b.result.events) {
       const line = pitCall(ev, b.card);
       if (!line) continue;
       said++;
+      lines.push([ev, line]);
       /* EVERY LINE NAMES A REAL ENTRANT OR NOBODY — the engine's own rule. */
       if (ev.who) {
         const name = b.card.entrants.find((e) => e.id === ev.who)?.name;
@@ -782,25 +835,74 @@ export async function run({ check, assert }) {
       }
     }
     assert(said > 4, `${said} lines over a whole bout — the room is silent`);
-    /* THE ROOM MAY NOT SHADOW THE ENGINE. For every event the engine has a
-     * line for, both functions must say the same words. */
-    const card = b.card;
-    for (const type of MOMENTS) {
-      const ev = { t: 1, type, who: card.entrants[0].id, by: card.entrants[1].id,
-        from: card.entrants[1].id, past: card.entrants[1].id, gate: 2, cause: 'wound', margin: 1 };
-      const engine = announce(ev, card);
+
+    /**
+     * ── THE COURSE VOCABULARY, READ OUT OF THE ENGINE ─────────────────────
+     *
+     * Not a list somebody typed here. `Spectacle`'s own `LINES` table is
+     * parsed out of its source and every STATIC fragment of it — the words
+     * between the interpolations, which is exactly the part that is the
+     * announcer's own language rather than the fight's facts — becomes a
+     * phrase the pit may not say. Anything of two words or more: "on the
+     * card", "goes to the front,", "at gate", "into the wall at". Add a
+     * sentence to the race's announcer and this check starts holding the pit
+     * to it, which a hard-coded blacklist could never do.
+     */
+    const spec = await readFile(new URL('../../src/game/Spectacle.js', import.meta.url), 'utf8');
+    const table = /const LINES = \{([\s\S]*?)\n\};/.exec(spec)?.[1];
+    assert(table, "Spectacle's LINES table cannot be found — this check is reading nothing");
+    const course = [...new Set([...table.matchAll(/`([^`]*)`/g)]
+      .flatMap((m) => m[1].split(/\$\{[^}]*\}/))
+      .map((t) => t.trim())
+      .filter((t) => t.length >= 5 && /\S\s+\S/.test(t)))];
+    assert(course.length >= 8, `only ${course.length} phrases came out of LINES — the parse is wrong`);
+    for (const [ev, line] of lines) {
+      for (const frag of course) {
+        assert(!line.includes(frag),
+          `the pit says "${line}" about a '${ev.type}' — "${frag}" is the podrace announcer's, off `
+          + "Spectacle's own LINES table, and this is two animals in a pit");
+      }
+    }
+
+    /* AND NO PIT LINE IS THE ENGINE'S LINE. For every event in the bout the
+     * engine has words for, the room must have said it differently — the
+     * translation is the whole point, and an identical string means the
+     * fallback fired where a fight line should have been. */
+    let translated = 0;
+    for (const [ev, line] of lines) {
+      const engine = announce(ev, b.card);
       if (!engine) continue;
-      assert(pitCall(ev, card) === engine,
-        `the room says something different from the engine about '${type}'`);
+      translated++;
+      assert(line !== engine, `the room quotes the engine word for word on '${ev.type}': "${line}"`);
     }
-    /* AND THE ROOM'S OWN EVENTS ARE ONES THE ENGINE HAS NO LINE FOR. */
-    for (const t of ['bell', 'stake', 'corner', 'stoppage', 'decision']) {
-      assert(announce({ type: t, who: null }, card) === null, `the engine already speaks '${t}'`);
-      assert(pitCall({ type: t, who: card.entrants[0].id, round: 2, of: 3, did: 'water', mortal: true }, card),
-        `the room has no line for its own '${t}'`);
+    assert(translated > 3, `only ${translated} of the sim's own events were re-said in the room's words`);
+
+    /**
+     * ── AND THE ROOM'S SIX ARE REACHABLE, WHICH IS THE HALF THAT WAS DEAD ─
+     *
+     * Read off a bout that was actually fought. `stoppage` and `decision` are
+     * the two ways one ends and only one of them can happen, so the pair is
+     * held rather than each; the other four happen in every bout there is.
+     */
+    const types = new Set(b.result.events.map((e) => e.type));
+    for (const t of ['stake', 'bell', 'order', 'corner']) {
+      assert(types.has(t), `a whole bout emitted no '${t}' event — the room's line for it is unreachable`);
+      assert(announce({ type: t, who: null }, b.card) === null, `the engine already speaks '${t}'`);
     }
+    assert(types.has('stoppage') || types.has('decision'),
+      'the bout ended without the room saying how — no stoppage and no decision in the stream');
+    /* THE SIM'S PER-ROUND BOOKENDS ARE NOT THE FIGHT'S. A round is a call of
+     * the engine, so it opens with `off` and closes with `result`; a room
+     * that forwarded those said "and they're away" and named a winner once
+     * per round. Exactly one `result` in a whole bout, and it is the last. */
+    assert(b.result.events.filter((e) => e.type === 'result').length === 1,
+      `the bout named a winner ${b.result.events.filter((e) => e.type === 'result').length} times`);
+    assert(!types.has('off'), "the sim's per-round `off` reached the room — the fight starts five times");
+
     return `${said} lines over ${b.result.events.length} events and ${cut.length} moments; `
-      + `${MOMENTS.length} engine lines unshadowed, 5 room lines added`;
+      + `${translated} of the sim's own events re-said in the room's words, none of them quoting any of `
+      + `the ${course.length} phrases read out of Spectacle's LINES; room events fired: `
+      + `${['stake', 'bell', 'order', 'corner', 'stoppage', 'decision'].filter((t) => types.has(t)).join(', ')}`;
   });
 
   check('pits: the bout is the engine\'s fight — this file rolls no dice about who hit whom', () => {

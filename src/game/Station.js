@@ -69,6 +69,10 @@ import { countersAt, counterById, COUNTERS } from './Vendors.js';
  * `dressKeepers`. One import, no new archetype. */
 import { resident } from './StationCast.js';
 import { stepMedbay } from './Medbay.js';
+/* THE LEAVE LEDGER. `isBar` names the rooms a soldier drinks in and `stepLeave`
+ * is what pays him for standing in one — see the branch at the bottom of
+ * `stationKey` and the call beside `stepMedbay` in `stepStation`. */
+import { isBar, stepLeave } from './Bars.js';
 import { pitAtPlace } from './Pits.js';
 /* THE ROOM'S OWN NOISE — see `stepCrowd`. The same singleton sixteen other
  * game files reach for; §G4's crowd is a cue on the engine, not a new path. */
@@ -961,6 +965,30 @@ export function dressStation(world) {
     draws: 0,
     /** Which place the arrival prompt last named. */
     promptedAt: undefined,
+    /**
+     * ══ WORK THE SEAM DOES NOT HAVE TO STAND STILL FOR ═════════════════════
+     *
+     * `dressStation` runs inside `World._loadSteps`, which is synchronous, and
+     * every millisecond it spends is a millisecond the player is looking at a
+     * photograph of a lift car (V15 §1.5). Profiled headless with the flight
+     * deck already built — which is the only way a player ever reaches this
+     * function — the dress is about 2.8 s, and `dressDeckBattle` is 477 ms of
+     * it: fourteen instanced hulls, two hundred fighters and five engagements
+     * in real geometry, OUTSIDE the glass.
+     *
+     * The car arrives with its doors SHUT (`dressDeckLift({arrive:true})`
+     * starts in `STATE.OPENING`), so for the first 1.1 s of the new world
+     * there is no line of sight out of it at all, let alone through a window
+     * on the far side of a room. Work that cannot be seen for a second does
+     * not belong in the interval the player is frozen for.
+     *
+     * So it goes on this queue and `drainStationBuild` — called first thing in
+     * `stepStation` — spends it on the frames after the world is live, while
+     * the doors are running their animation. Each entry is `{name, run}`;
+     * `finishStationBuild` drains the lot at once for a caller that needs the
+     * station whole and is not going to step it.
+     */
+    pending: [],
     tris: 0,
     solids: 0,
     /**
@@ -1203,7 +1231,10 @@ export function dressStation(world) {
      * rather than 13° up where the soffit would cut it. */
     rise: 0.10,
   });
-  if (shown) dressDeckBattle(world);
+  /* NOT NOW — see `pending`. The fleet is outside a window the player cannot
+   * see for at least the 1.1 s his doors take to open, and it is the single
+   * biggest thing in this function that is true of. */
+  if (shown) st.pending.push({ name: 'the fleet outside', run: () => dressDeckBattle(world) });
 
   /* ── AND SOMETHING TO THROW, from the first frame (§6 step 1). The station
    * is a sandbox and the cheapest proof of it is a crate in your hands. */
@@ -1289,6 +1320,10 @@ export function orderJump(world, to) {
 export function undressStation(world) {
   const st = world._station;
   if (!st) return;
+  /* Anything still queued is not going to be built now — see `pending`. A job
+   * closes over this world, and running one against a scene being taken down
+   * is how a disposed room comes back as a leak. */
+  st.pending.length = 0;
   /* THE HOME IS SAVED BEFORE ANYTHING IS TAKEN DOWN, which is V15 §1.3.5's
    * "saved on leaving" and `DeckEdit.leaveDeck`'s pattern: the record is
    * authored in memory across a visit and committed once, here, on the way
@@ -3151,9 +3186,51 @@ function turnToWatch(world, place) {
   return n;
 }
 
+/**
+ * How long one frame may spend finishing the build. One job runs per call
+ * whatever it costs — the jobs are hundreds of milliseconds each and slicing
+ * INSIDE one is a different piece of work — so this only decides whether a
+ * second job joins it on the same frame, and the answer is no unless the
+ * first was trivial.
+ */
+const BUILD_SLICE = 4;
+
+const _now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+/**
+ * Finish what `dressStation` put off. See `pending`.
+ *
+ * A failed job is reported and dropped rather than retried: it has already
+ * been taken out of the queue, and a builder that throws every frame for the
+ * rest of a visit is worse than the thing it was going to build.
+ */
+export function drainStationBuild(world, st = world?._station, all = false) {
+  if (!st?.pending?.length) return 0;
+  const t0 = _now();
+  let n = 0;
+  do {
+    const job = st.pending.shift();
+    try { job.run(); } catch (e) { console.error(`station: ${job.name} failed to build`, e); }
+    n++;
+  } while (st.pending.length && (all || _now() - t0 < BUILD_SLICE));
+  return n;
+}
+
+/**
+ * The whole of it, now.
+ *
+ * For a caller that wants the station as it stands when somebody has been
+ * looking at it — a screenshot, a census, a check that asserts on the world
+ * it just booted without stepping it. Play never calls this: play steps.
+ */
+export function finishStationBuild(world) { return drainStationBuild(world, world?._station, true); }
+
 export function stepStation(world, dt) {
   const st = world._station;
   if (!st) return;
+  /* THE REST OF THE BUILD, ON THE FRAMES AFTER THE FREEZE. First, so that
+   * anything stepped below finds what it owns already standing. */
+  drainStationBuild(world, st);
   tickStationClock(world, dt);
   /* §11's consequence, reaching the disk. One integer compare a frame — see
    * `persistStanding` for why it is a delta and not a copy. */
@@ -3167,6 +3244,19 @@ export function stepStation(world, dt) {
     for (const m of mended) {
       const n = m.healed.length;
       world.notify?.('MEDICAL BAY', `${n === 1 ? m.healed[0] : `${n} of the company`} off the list`);
+    }
+  }
+  /* AND SO DOES A MAN WITH A PASS IN HIS POCKET. The same ten-second settle
+   * and the same argument `stepMedbay` makes one line up: an evening off is a
+   * thing that happens while you shop, not a thing that happens when you walk
+   * into the cantina and look at him. `Bars.stepLeave` credits the nerve and
+   * the mending; the banner is only for a man who came off the wounded list,
+   * because that is the one event worth interrupting somebody for. */
+  const rested = stepLeave(world, dt);
+  if (rested) {
+    for (const r of rested) {
+      const n = r.mended.length;
+      world.notify?.('LIBERTY', `${n === 1 ? r.mended[0] : `${n} of the company`} back on their feet`);
     }
   }
   stepBoards(world, st, dt);

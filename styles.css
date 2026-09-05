@@ -403,6 +403,36 @@ b{font-weight:800}
 #loading.still .load-wrap{width:min(420px,70vw);padding-bottom:26px}
 #loading.still .load-wrap .boot-bar{margin-top:0;height:4px;width:220px;opacity:.7}
 #loading.still .boot-msg{font-size:10px;opacity:.6}
+/* ── AND THE SEAM MOVES ──────────────────────────────────────────────────
+   src/ui/Screens.js's `seamMotion` says why this is a stylesheet rule and not
+   a render: between the two worlds there is no world to draw and the thread
+   that would draw it is the thread building the next one, so the only thing
+   that can still be moving is an animation the compositor owns. Chromium runs
+   a `transform`-only animation off the main thread; these two touch nothing
+   else, so they keep going for the whole of a synchronous build.
+
+   The plate rises and sways on the same period DeckLift gives the car
+   (`0.022*sin(2.3t)` and friends), scaled up 4% first so the drift never
+   walks an edge of the picture into view. The band is the shaft going past
+   the window — the thing the player was watching a second before the seam —
+   and it is translated, never repositioned, for the same reason. */
+#loading.seam{animation:seamRise 6.4s ease-in-out infinite;will-change:transform;
+  transform-origin:50% 50%}
+#loading .seam-lights{position:absolute;left:0;right:0;top:-120%;height:340%;z-index:1;
+  pointer-events:none;opacity:.16;mix-blend-mode:screen;
+  background:repeating-linear-gradient(180deg,
+    rgba(255,255,255,0) 0 46px,rgba(190,222,255,.85) 46px 52px,rgba(255,255,255,0) 52px 98px);
+  animation:seamShaft 1.05s linear infinite;will-change:transform}
+@keyframes seamRise{
+  0%{transform:scale(1.04) translate3d(0,6px,0)}
+  38%{transform:scale(1.04) translate3d(1.5px,-3px,0)}
+  62%{transform:scale(1.04) translate3d(-1px,-6px,0)}
+  100%{transform:scale(1.04) translate3d(0,6px,0)}}
+@keyframes seamShaft{from{transform:translate3d(0,0,0)}to{transform:translate3d(0,98px,0)}}
+/* A player who has asked for less motion gets the still and nothing else. */
+@media (prefers-reduced-motion:reduce){
+  #loading.seam{animation:none}
+  #loading .seam-lights{display:none}}
 .load-wrap{position:relative;z-index:2;width:min(720px,88vw);text-align:center;
   animation:stampIn .35s cubic-bezier(.22,1,.36,1) both}
 .load-wrap .boot-bar{margin-top:30px}

@@ -90,6 +90,51 @@ export const OVERLAY_STATES = ['draft', 'dead', 'muster', 'deploy'];
  */
 export const SEAM_QUIET = 4;
 
+/**
+ * ══ THE SEAM IS NOT A FREEZE-FRAME ════════════════════════════════════════
+ *
+ * *"should feel like just going to a different place, not two separate
+ * games."* The plate and the progress bar went first, and what was left was
+ * still a photograph the player stares at while the world is rebuilt — the
+ * car standing still is the whole of what reads as a load.
+ *
+ * WHY THIS IS CSS AND NOT A RENDER. Between the two worlds there is nothing
+ * to render: the old one has been disposed and the new one does not exist, and
+ * the thread that would draw a frame is the thread building it. A JS animation
+ * over the still would be as frozen as the still. A CSS animation of
+ * `transform` alone is not — Chromium runs it on the compositor thread, off
+ * the main thread entirely, so it keeps moving for the whole of a synchronous
+ * build. That is why the two keyframes below touch nothing but `transform`,
+ * and why the drift lives on the plate rather than on its background-position
+ * (which would be a main-thread animation and would stop dead).
+ *
+ * WHAT IT LOOKS LIKE. The still is the inside of the car; it rises slowly and
+ * sways, on the same period as `DeckLift`'s own sway, and a band of shaft
+ * light runs down over it — the levels going past the window, which is what
+ * the player was watching a second ago. It is the cheap half of V15's third
+ * move ("both worlds alive"): the car is not really moving, but the seam is.
+ * `styles.css` owns both keyframes; this owns when they are on.
+ *
+ * The band is built here rather than in `index.html` because it exists only
+ * for the length of a seam, and a screen element that is empty for the whole
+ * of every other load is one more thing for a screen check to reason about.
+ */
+export const SEAM_LIGHTS = 'seam-lights';
+
+function seamMotion(el, on) {
+  if (!el) return;
+  el.classList.toggle('seam', !!on);
+  let band = el.querySelector?.(`.${SEAM_LIGHTS}`) || null;
+  if (!on) { band?.parentNode?.removeChild(band); return; }
+  if (!band && typeof document !== 'undefined' && document.createElement) {
+    band = document.createElement('div');
+    band.className = SEAM_LIGHTS;
+    /* Behind the caption, over the picture. The rest of it — the gradient and
+     * the keyframe — is a stylesheet rule, so it is one place. */
+    el.insertBefore ? el.insertBefore(band, el.firstChild) : el.appendChild(band);
+  }
+}
+
 export class Screens {
   /**
    * @param {object} io
@@ -205,9 +250,11 @@ export class Screens {
     if (still && !el.classList.contains('still')) {
       el.classList.add('still');
       el.style.backgroundImage = `url(${still})`;
+      seamMotion(el, true);
     } else if (!still && el.classList.contains('still')) {
       el.classList.remove('still');
       el.style.backgroundImage = '';
+      seamMotion(el, false);
     }
     el.classList.remove('hidden');
     /**
@@ -258,7 +305,10 @@ export class Screens {
     this._seamAt = null;
     if (typeof document === 'undefined') return;
     const el = document.getElementById('loading');
-    if (el) { el.classList.add('hidden'); el.classList.remove('still'); el.style.backgroundImage = ''; }
+    if (el) {
+      el.classList.add('hidden'); el.classList.remove('still'); el.style.backgroundImage = '';
+      seamMotion(el, false);
+    }
     this._loading = false;
   }
 

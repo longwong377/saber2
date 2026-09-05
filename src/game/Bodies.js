@@ -4512,6 +4512,67 @@ export const TOP_CUTS = [
     /* See the header. Above this the chest keeps its cloth. */
     chestFrom: 0.001,
   },
+  /**
+   * ══ AND SIX THAT ARE NOT THE ORDER'S AT ALL ═══════════════════════════
+   *
+   * V15, about the station's cast: *"not in jedi clothes obviously, they
+   * would have to have unique non jedi clothing."* Measured before these
+   * rows existed, every off-duty body on the station — the clone crew, the
+   * medic, the pilot, the officer, the dock engineer, the guard, and the
+   * human resident — built 62 meshes in a byte-identical order to a default
+   * `buildJedi()`, with the robe skirt on. They were the Jedi robe REPAINTED:
+   * `#8e9b80` fatigue green over the same two lathes, the same two front
+   * panels and the same three tabard panels.
+   *
+   * The three rows above only ever reached the torso, and the torso is not
+   * where a Jedi robe lives — the skirt is. So `lower` is the field that was
+   * missing, and with it five of the six rows below are pure SUBTRACTION:
+   * the leg under a dropped skirt is already dressed, because `dressHumanoid`
+   * is handed `leg: outer`. Two pieces of geometry were added in the whole
+   * exercise, the apron and the trouser cuff, and each says on itself why no
+   * arrangement of the existing meshes could spell it.
+   *
+   * They are read against each other, not against a palette:
+   *
+   *   coverall   55 meshes   no tabard, no skirt, cuffed into the boot
+   *   dungarees  54          the coverall with the collar open and a bib
+   *   fatigues   60          the chest panels kept, the skirt gone, cuffed
+   *   service    59          the over-skirt alone over plain trousers
+   *   jerkin     56          the service tunic with the chest panels dropped
+   *   smock      54          no tabard, no skirt, a long apron over trousers
+   *
+   * against the tunic's 62. Nothing here is a colour.
+   */
+  {
+    id: 'coverall', name: 'Work Coveralls',
+    blurb: 'One piece from the collar to the boot, with the trouser gathered into a cuff over the leather. Nothing hangs off you and nothing is in the way.',
+    tabard: false, lower: 'trousers', cuff: true,
+  },
+  {
+    id: 'dungarees', name: 'Dock Dungarees',
+    blurb: 'The coveralls with the collar open and a bib apron over the front. What somebody wears to lie under a repulsor lift.',
+    tabard: false, collar: false, lower: 'trousers', cuff: true, apron: 0.30,
+  },
+  {
+    id: 'fatigues', name: 'Flight Fatigues',
+    blurb: 'A flight suit: the harness panels across the chest, trousers cuffed into the boot, and not a thread of it below the knee.',
+    lower: 'trousers', cuff: true,
+  },
+  {
+    id: 'service', name: 'Service Tunic',
+    blurb: 'A tunic to mid-thigh over plain trousers. One hem instead of three, and no under-robe reaching for the floor.',
+    lower: 'jerkin',
+  },
+  {
+    id: 'jerkin', name: 'Belted Jerkin',
+    blurb: 'The service tunic with the over-panels stripped off and the trouser cuffed — a plain belted coat and a working leg.',
+    tabard: false, lower: 'jerkin', cuff: true,
+  },
+  {
+    id: 'smock', name: 'Work Smock',
+    blurb: 'A long apron over trousers and no over-robe under it. What you put on over your own clothes to do a job in.',
+    tabard: false, lower: 'trousers', apron: 0.54,
+  },
 ];
 const TOP_BY_ID = new Map(TOP_CUTS.map((t) => [t.id, t]));
 /** The torso cut with this id, or null. Same contract as `hoodCut`. */
@@ -5651,6 +5712,19 @@ export function buildJedi(opts = {}) {
   const TOP = TOP_BY_ID.get(opts.top) || TOP_CUTS[0];
   const bareBones = new Set(TOP.skin || []);
   if (TOP.chestFrom != null && f > TOP.chestFrom) bareBones.delete('chest');
+  /**
+   * ── AND WHAT IS BELOW THE BELT. See TOP_CUTS's second header. ──────────
+   *
+   * Three states and one default. The tunic, the wrap and the bare row carry
+   * no `lower`, so this is `'robe'` for every body that shipped before the
+   * civilian cuts existed and the whole of the lower half below reads exactly
+   * as it read.
+   *
+   *   robe      over-skirt, under-robe and two front panels — the order's
+   *   jerkin    the over-skirt alone, to mid-thigh, over the leg
+   *   trousers  none of them; the leg is the garment
+   */
+  const LOWER = TOP.lower || 'robe';
 
   /**
    * Five cloth tones off a two-tone palette, not two.
@@ -6219,141 +6293,194 @@ export function buildJedi(opts = {}) {
       const foldAmt = (th) => 0.055 * Math.cos(7 * th + 0.4)
         + 0.030 * Math.cos(3 * th - 1.1) + 0.014 * Math.cos(11 * th + 2.3);
       const foldT = (t) => Math.pow(clamp(t, 0, 1), 1.25);
-      // The last swell is NEGATIVE: the profile pinches 6% just short of the
-      // hem and comes back out to r1 at it, which with a double-sided lathe is
-      // a rolled edge. The first attempt at a hem was a separate horizontal
-      // band and it read as a flying saucer round the character's ankles.
-      // 28 segments, not 36. The tightest harmonic in the fold is the 11th and
-      // 28 samples is 2.5 per period of it at an amplitude of 14mm — the two
-      // skirts together were 316 triangles over the 13000 an archetype is
-      // allowed, and this is the cheapest 200 of them that costs nothing you
-      // can see.
-      const skirtGeo = limbGeo(skirtH, 0.142 * KHIP * s, 0.262 * KHIP * s, 28, false, {
-        rings: 9, bulge: 0, swells: [[0.22, 0.26, 0.20], [0.93, -0.065, 0.055]],
-        section: (th, t) => 1 + foldT(t) * foldAmt(th),
-      });
-      // The valleys of those folds are in shadow and the ridges catch the sun.
-      // Geometry alone would give a fold a lit side and a dark side; only the
-      // occlusion term makes the bottom of a fold read as a fold rather than
-      // as a facet. Plus the whole top under the belt and the tabard.
-      shadeAO(skirtGeo, (x, y, z) => {
-        const th = Math.atan2(x, z), t = clamp(y / skirtH, 0, 1);
-        const valley = clamp(-foldAmt(th) / 0.075, 0, 1);
-        return (1 - 0.46 * foldT(t) * valley) * (0.60 + 0.40 * clamp(t / 0.28, 0, 1));
-      }, { floor: 0.30 });
-      // The over-skirt is the DARKER cloth — the over-robe reads darker than
-      // the body under it, which is the same tonal ladder the tabard uses. It
-      // was the mid tone, which made it and the under-layer one garment.
-      const skirtMat = over.clone();
-      skirtMat.side = THREE.DoubleSide;
-      // Turned over about Z, not X. Both flips hang the lathe downward, but a
-      // flip about X also sends local +Z to the BACK — so anything with a
-      // front to it (these panels have a lobe on the centre line) ends up
-      // facing the wrong way, which is a mistake that costs an hour to find in
-      // a screenshot. About Z the front stays the front.
-      // Hung from +0.058 rather than -0.012: the top edge now sits up inside
-      // the obi (which spans +0.020 to +0.128), so the belt holds the skirt
-      // instead of floating above a 3cm ring of bare pelvis.
-      /*
-       * KEPT, AND HANDED OUT.
+      /* ── AND WHETHER THIS BODY HAS A SKIRT AT ALL ──
        *
-       * This lathe and the two front panels below are the whole OUTER layer of
-       * the robe under the belt, and every one of them is welded to the pelvis:
-       * measured on a walking Jedi, a hem vertex of this mesh travels 0.000 mm
-       * in the pelvis frame over seven seconds while the cape's hem travels
-       * 217 mm beside it. That contrast is the jankiness — nothing is wrong
-       * with the cape, it is hanging next to a cylinder.
+       * `LOWER` is 'robe' for every cut that does not say otherwise, so the
+       * expression below is the one that shipped and the neutral Jedi emits
+       * the same two lathes and two panels it always did. A cut that says
+       * `lower: 'trousers'` emits NONE of them, and the leg it leaves showing
+       * is already dressed: `dressHumanoid` is handed `leg: outer`, so a thigh
+       * and a shin under no skirt are cloth in the over-robe's own tone. That
+       * is the whole cost of a mechanic who is not in a robe — four meshes
+       * fewer, no geometry added. */
+      if (LOWER !== 'trousers') {
+        // The last swell is NEGATIVE: the profile pinches 6% just short of the
+        // hem and comes back out to r1 at it, which with a double-sided lathe is
+        // a rolled edge. The first attempt at a hem was a separate horizontal
+        // band and it read as a flying saucer round the character's ankles.
+        // 28 segments, not 36. The tightest harmonic in the fold is the 11th and
+        // 28 samples is 2.5 per period of it at an amplitude of 14mm — the two
+        // skirts together were 316 triangles over the 13000 an archetype is
+        // allowed, and this is the cheapest 200 of them that costs nothing you
+        // can see.
+        const skirtGeo = limbGeo(skirtH, 0.142 * KHIP * s, 0.262 * KHIP * s, 28, false, {
+          rings: 9, bulge: 0, swells: [[0.22, 0.26, 0.20], [0.93, -0.065, 0.055]],
+          section: (th, t) => 1 + foldT(t) * foldAmt(th),
+        });
+        // The valleys of those folds are in shadow and the ridges catch the sun.
+        // Geometry alone would give a fold a lit side and a dark side; only the
+        // occlusion term makes the bottom of a fold read as a fold rather than
+        // as a facet. Plus the whole top under the belt and the tabard.
+        shadeAO(skirtGeo, (x, y, z) => {
+          const th = Math.atan2(x, z), t = clamp(y / skirtH, 0, 1);
+          const valley = clamp(-foldAmt(th) / 0.075, 0, 1);
+          return (1 - 0.46 * foldT(t) * valley) * (0.60 + 0.40 * clamp(t / 0.28, 0, 1));
+        }, { floor: 0.30 });
+        // The over-skirt is the DARKER cloth — the over-robe reads darker than
+        // the body under it, which is the same tonal ladder the tabard uses. It
+        // was the mid tone, which made it and the under-layer one garment.
+        const skirtMat = over.clone();
+        skirtMat.side = THREE.DoubleSide;
+        // Turned over about Z, not X. Both flips hang the lathe downward, but a
+        // flip about X also sends local +Z to the BACK — so anything with a
+        // front to it (these panels have a lobe on the centre line) ends up
+        // facing the wrong way, which is a mistake that costs an hour to find in
+        // a screenshot. About Z the front stays the front.
+        // Hung from +0.058 rather than -0.012: the top edge now sits up inside
+        // the obi (which spans +0.020 to +0.128), so the belt holds the skirt
+        // instead of floating above a 3cm ring of bare pelvis.
+        /*
+         * KEPT, AND HANDED OUT.
+         *
+         * This lathe and the two front panels below are the whole OUTER layer of
+         * the robe under the belt, and every one of them is welded to the pelvis:
+         * measured on a walking Jedi, a hem vertex of this mesh travels 0.000 mm
+         * in the pelvis frame over seven seconds while the cape's hem travels
+         * 217 mm beside it. That contrast is the jankiness — nothing is wrong
+         * with the cape, it is hanging next to a cylinder.
+         *
+         * attachSkirt() replaces the three of them with a simulated tube and
+         * hides these while it is live. They are not deleted, because the cloth
+         * is switched off past lod > 1 exactly as the cape is, and a character at
+         * range with no cloth and no lathe has a bare pelvis. `robeSkirt` is the
+         * handle: pass it to attachSkirt as `rigid` and the LOD swap is one call.
+         */
+        /* The robe below the belt is a third of the standing figure and all of
+         * it was culled at thirty metres, so a Jedi's legs were two bare tubes
+         * — the one thing the under-robe's own note says separates this body
+         * from an armoured trooper. Both hems are kept. */
+        outerLayer.push(markSilhouette(mesh(skirtGeo, skirtMat, hips, [0, 0.058 * s, 0], [0, 0, Math.PI])));
+      }
+      /* ── AND THE TWO LAYERS BELOW IT ARE THE ROBE ITSELF ──
        *
-       * attachSkirt() replaces the three of them with a simulated tube and
-       * hides these while it is live. They are not deleted, because the cloth
-       * is switched off past lod > 1 exactly as the cape is, and a character at
-       * range with no cloth and no lathe has a bare pelvis. `robeSkirt` is the
-       * handle: pass it to attachSkirt as `rigid` and the LOD swap is one call.
-       */
-      /* The robe below the belt is a third of the standing figure and all of
-       * it was culled at thirty metres, so a Jedi's legs were two bare tubes
-       * — the one thing the under-robe's own note says separates this body
-       * from an armoured trooper. Both hems are kept. */
-      outerLayer.push(markSilhouette(mesh(skirtGeo, skirtMat, hips, [0, 0.058 * s, 0], [0, 0, Math.PI])));
+       * The under-robe's own note calls its 230mm hem "the only free
+       * differentiator left between this figure and an armoured trooper".
+       * That cuts both ways: it is also what makes every body wearing it read
+       * as the same order, which is what `lower: 'jerkin'` and
+       * `lower: 'trousers'` are for. A tunic over trousers keeps the
+       * over-skirt above and drops these three; a coverall drops all four and
+       * the leg IS the garment. See LOWER, above. */
+      if (LOWER === 'robe') {
+        // ── the under-robe ─────────────────────────────────────────────────
+        // The long layer, in the mid tone, running from the belt to the ankle and
+        // showing for 32cm below the over-skirt's hem. Its own fold harmonics
+        // are 5 and 3 against the over-skirt's 7, 3 and 11: cloth woven at the
+        // same pitch as the cloth over it is the same cloth, and the eye knows.
+        // The 230mm hem is also the only free differentiator left between this
+        // figure and an armoured trooper — they share a skeleton, a stance and an
+        // arm swing, and their whole-body silhouettes overlap 0.856 of a limit of
+        // 0.86 without it. Cloth reaching where armour does not is what separates
+        // them, and it costs no triangles.
+        // Its top 60% is inside the over-skirt and is never drawn against the
+        // sky, so it is tessellated for the 26cm of it that shows: 24 segments
+        // and 7 rings against the over-skirt's 28 and 9.
+        const underH = 0.72 * s * RANK.hem;
+        const underFold = (th) => 0.042 * Math.cos(5 * th - 0.7) + 0.020 * Math.cos(3 * th + 1.9);
+        // The swell is centred at 0.45 and worth 20%, which is not a styling
+        // choice: the over-skirt now ends ABOVE the knee, so this layer is the
+        // only cloth the knee has to swing inside. At the knee's height the old
+        // single skirt gave 219mm of radius and a plain taper here gave 186mm —
+        // 33mm less room for a joint that travels, which buys a knee through the
+        // front of the robe. With the swell it is 223mm, better than it was.
+        const underGeo = limbGeo(underH, 0.132 * KHIP * s, 0.230 * KHIP * s, 24, false, {
+          rings: 7, bulge: 0, swells: [[0.45, 0.20, 0.34], [0.94, -0.05, 0.05]],
+          section: (th, t) => 1 + foldT(t) * underFold(th),
+        });
+        shadeAO(underGeo, (x, y, z) => {
+          const th = Math.atan2(x, z), t = clamp(y / underH, 0, 1);
+          const valley = clamp(-underFold(th) / 0.055, 0, 1);
+          // dark for the whole length that the over-skirt hangs in front of, and
+          // darkest right under its hem, which is what makes the hem read as an
+          // edge with something behind it rather than as a change of colour
+          return (1 - 0.42 * foldT(t) * valley)
+            * (0.52 + 0.48 * clamp((t - 0.60) / 0.16, 0, 1));
+        }, { floor: 0.28 });
+        const underMat = outer.clone();
+        underMat.side = THREE.DoubleSide;
+        /**
+         * HANDED OUT TOO — and this line is THE CONE.
+         *
+         * The note above the over-skirt diagnoses the problem exactly ("a hem
+         * vertex travels 0.000 mm in the pelvis frame… it is hanging next to a
+         * cylinder") and then fixes it for the OUTER layer only. This mesh — the
+         * LONGER one, 0.72 m from the belt to the ankle, the one that actually
+         * covers the legs — was left welded to the pelvis and was never in
+         * `outerLayer`, so `attachSkirt` never hid it and the cloth never
+         * replaced it.
+         *
+         * The result is that the simulated skirt reaches dy -0.42 and this tube
+         * continues to -0.70: twenty-eight centimetres of rigid cone hanging
+         * below the cloth, from mid-thigh to ankle, covering both legs and
+         * moving with none of them. It is most obvious in a jump, because the
+         * legs travel and it does not. Reported repeatedly; fixed for the wrong
+         * garment each time.
+         *
+         * It joins the outer layer now, so everything below the belt is either
+         * simulated or hidden, and nothing under there is welded to the pelvis.
+         */
+        outerLayer.push(markSilhouette(mesh(underGeo, underMat, hips, [0, 0.020 * s, 0], [0, 0, Math.PI])));
+        // Two over-panels down the front in the darker cloth, so the layering
+        // carries all the way down the figure instead of stopping at the belt.
 
-      // ── the under-robe ─────────────────────────────────────────────────
-      // The long layer, in the mid tone, running from the belt to the ankle and
-      // showing for 32cm below the over-skirt's hem. Its own fold harmonics
-      // are 5 and 3 against the over-skirt's 7, 3 and 11: cloth woven at the
-      // same pitch as the cloth over it is the same cloth, and the eye knows.
-      // The 230mm hem is also the only free differentiator left between this
-      // figure and an armoured trooper — they share a skeleton, a stance and an
-      // arm swing, and their whole-body silhouettes overlap 0.856 of a limit of
-      // 0.86 without it. Cloth reaching where armour does not is what separates
-      // them, and it costs no triangles.
-      // Its top 60% is inside the over-skirt and is never drawn against the
-      // sky, so it is tessellated for the 26cm of it that shows: 24 segments
-      // and 7 rings against the over-skirt's 28 and 9.
-      const underH = 0.72 * s * RANK.hem;
-      const underFold = (th) => 0.042 * Math.cos(5 * th - 0.7) + 0.020 * Math.cos(3 * th + 1.9);
-      // The swell is centred at 0.45 and worth 20%, which is not a styling
-      // choice: the over-skirt now ends ABOVE the knee, so this layer is the
-      // only cloth the knee has to swing inside. At the knee's height the old
-      // single skirt gave 219mm of radius and a plain taper here gave 186mm —
-      // 33mm less room for a joint that travels, which buys a knee through the
-      // front of the robe. With the swell it is 223mm, better than it was.
-      const underGeo = limbGeo(underH, 0.132 * KHIP * s, 0.230 * KHIP * s, 24, false, {
-        rings: 7, bulge: 0, swells: [[0.45, 0.20, 0.34], [0.94, -0.05, 0.05]],
-        section: (th, t) => 1 + foldT(t) * underFold(th),
-      });
-      shadeAO(underGeo, (x, y, z) => {
-        const th = Math.atan2(x, z), t = clamp(y / underH, 0, 1);
-        const valley = clamp(-underFold(th) / 0.055, 0, 1);
-        // dark for the whole length that the over-skirt hangs in front of, and
-        // darkest right under its hem, which is what makes the hem read as an
-        // edge with something behind it rather than as a change of colour
-        return (1 - 0.42 * foldT(t) * valley)
-          * (0.52 + 0.48 * clamp((t - 0.60) / 0.16, 0, 1));
-      }, { floor: 0.28 });
-      const underMat = outer.clone();
-      underMat.side = THREE.DoubleSide;
-      /**
-       * HANDED OUT TOO — and this line is THE CONE.
-       *
-       * The note above the over-skirt diagnoses the problem exactly ("a hem
-       * vertex travels 0.000 mm in the pelvis frame… it is hanging next to a
-       * cylinder") and then fixes it for the OUTER layer only. This mesh — the
-       * LONGER one, 0.72 m from the belt to the ankle, the one that actually
-       * covers the legs — was left welded to the pelvis and was never in
-       * `outerLayer`, so `attachSkirt` never hid it and the cloth never
-       * replaced it.
-       *
-       * The result is that the simulated skirt reaches dy -0.42 and this tube
-       * continues to -0.70: twenty-eight centimetres of rigid cone hanging
-       * below the cloth, from mid-thigh to ankle, covering both legs and
-       * moving with none of them. It is most obvious in a jump, because the
-       * legs travel and it does not. Reported repeatedly; fixed for the wrong
-       * garment each time.
-       *
-       * It joins the outer layer now, so everything below the belt is either
-       * simulated or hidden, and nothing under there is welded to the pelvis.
-       */
-      outerLayer.push(markSilhouette(mesh(underGeo, underMat, hips, [0, 0.020 * s, 0], [0, 0, Math.PI])));
-      // Two over-panels down the front in the darker cloth, so the layering
-      // carries all the way down the figure instead of stopping at the belt.
+        // A panel is a lathe with a LOBE in its section: full radius over a 70°
+        // wedge on the centre line and a third of it everywhere else, so the
+        // back three quarters of the tube is tucked inside the skirt and only
+        // the wedge is ever drawn. That gets a curved, folded, correctly-lit
+        // panel out of one lathe instead of out of a flat slab with hard edges,
+        // which is what the two front plates here used to be.
+        // Re-fitted against the new over-skirt rather than the old narrow one:
+        // at r0=0.150 against a skirt that now bells to 0.21 over the hip they
+        // would have spent their top third buried inside it. They also hang
+        // PAST the over-skirt's hem, which is the third hem line down the
+        // figure — three edges at three heights is the opposite of a cone.
+        const lobe = (w) => (th) => 0.28 + 0.72 / (1 + (th / w) ** 6);
+        for (const [sx, r0, r1, ln] of [[1, 0.212, 0.268, 0.52], [-1, 0.206, 0.248, 0.43]]) {
+          const g = limbGeo(ln * s, r0 * KHIP * s, r1 * KHIP * s, 14, false,
+            { rings: 4, bulge: 0, section: (th, t) => (1 + 0.05 * foldT(t) * Math.cos(5 * th)) * lobe(0.60)(th) });
+          shadeAO(g, (x, y) => 0.62 + 0.38 * clamp(y / (ln * s), 0, 1), { floor: 0.40 });
+          outerLayer.push(mesh(g, over, hips, [0, 0.040 * s, 0], [0, sx * 0.42, Math.PI]));
+        }
+      }
 
-      // A panel is a lathe with a LOBE in its section: full radius over a 70°
-      // wedge on the centre line and a third of it everywhere else, so the
-      // back three quarters of the tube is tucked inside the skirt and only
-      // the wedge is ever drawn. That gets a curved, folded, correctly-lit
-      // panel out of one lathe instead of out of a flat slab with hard edges,
-      // which is what the two front plates here used to be.
-      // Re-fitted against the new over-skirt rather than the old narrow one:
-      // at r0=0.150 against a skirt that now bells to 0.21 over the hip they
-      // would have spent their top third buried inside it. They also hang
-      // PAST the over-skirt's hem, which is the third hem line down the
-      // figure — three edges at three heights is the opposite of a cone.
-      const lobe = (w) => (th) => 0.28 + 0.72 / (1 + (th / w) ** 6);
-      for (const [sx, r0, r1, ln] of [[1, 0.212, 0.268, 0.52], [-1, 0.206, 0.248, 0.43]]) {
-        const g = limbGeo(ln * s, r0 * KHIP * s, r1 * KHIP * s, 14, false,
-          { rings: 4, bulge: 0, section: (th, t) => (1 + 0.05 * foldT(t) * Math.cos(5 * th)) * lobe(0.60)(th) });
-        shadeAO(g, (x, y) => 0.62 + 0.38 * clamp(y / (ln * s), 0, 1), { floor: 0.40 });
-        outerLayer.push(mesh(g, over, hips, [0, 0.040 * s, 0], [0, sx * 0.42, Math.PI]));
+      /* ── THE APRON, WHICH IS THE ONE PIECE OF GEOMETRY THIS ADDED ──────
+       *
+       * Everything else a non-Jedi wears here is subtraction. This is not:
+       * `lower: 'trousers'` leaves a figure with nothing between the belt and
+       * the boot, and a medic, a cook and a dock hand all put the SAME thing
+       * on over that — one panel, hung off the front of the belt, in a tone
+       * that is not the suit's. There is no way to spell it by dropping a
+       * mesh, so it is a mesh.
+       *
+       * It is the front over-panel's own lathe, unchanged: the `lobe` section
+       * that draws full radius over a 70° wedge on the centre line and a third
+       * of it everywhere else, so three quarters of the tube is never drawn.
+       * `TOP.apron` is the drop in metres of body scale — 0.54 is a surgical
+       * smock to the shin, 0.30 a work apron at the knee — and the number is
+       * on the row rather than here, because that difference is what separates
+       * a medic from a machinist and both from the shipped robe.
+       */
+      if (TOP.apron) {
+        const aLobe = (th) => 0.28 + 0.72 / (1 + (th / 0.72) ** 6);
+        const aH = TOP.apron * s;
+        const ag = limbGeo(aH, 0.156 * KHIP * s, 0.244 * KHIP * s, 14, false,
+          { rings: 5, bulge: 0, section: (th, t) => (1 + 0.05 * t * Math.cos(4 * th)) * aLobe(th) });
+        shadeAO(ag, (x, y) => 0.64 + 0.36 * clamp(y / aH, 0, 1), { floor: 0.42 });
+        // The trim tone, not the over-robe's: an apron is a garment somebody
+        // put on OVER their clothes, and in the suit's own colour it is a
+        // panel of the suit.
+        const amat = trim.clone();
+        amat.side = THREE.DoubleSide;
+        markSilhouette(mesh(ag, amat, hips, [0, 0.044 * s, 0], [0, 0, Math.PI]));
       }
 
       // ── boots ──────────────────────────────────────────────────────────
@@ -6377,6 +6504,24 @@ export function buildJedi(opts = {}) {
         // to be buckling.
         mesh(bandGeo(0.066 * KLEG * s, 0.077 * KLEG * s, 0.065 * KLEG * s, 0.076 * KLEG * s, 0.020 * s, 10),
           trim, sh.obj, [0, sh.length - 0.055 * s, 0]);
+        /* ── AND THE TROUSER BLOUSED OVER IT ────────────────────────────
+         *
+         * The second of the two pieces this file gained, and it exists for
+         * the same reason the boot's own cuff does: under a robe the shaft
+         * simply stopped and that measured as a 25mm step with nothing to
+         * explain it. Under TROUSERS there is no robe above the step at all,
+         * so the leg runs cloth-cloth-leather with two unexplained edges in
+         * it. One band of the leg's own cloth, sitting over the top of the
+         * boot cuff and wider than it, is what a work trouser actually does
+         * and is what makes fatigues read as fatigues rather than as tights.
+         * Its outer radius is 0.092 against the boot cuff's 0.086, so it
+         * stands 6mm proud of the leather it is falling over rather than
+         * disappearing inside it. */
+        if (TOP.cuff) {
+          const cf = mesh(bandGeo(0.076 * KLEG * s, 0.092 * KLEG * s, 0.070 * KLEG * s, 0.084 * KLEG * s, 0.058 * s, 14),
+            outer, sh.obj, [0, shaftY + 0.026 * s, 0]);
+          shadeAO(cf.geometry, (x, y) => 0.58 + 0.42 * clamp((y - shaftY) / (0.07 * s), 0, 1), { floor: 0.40 });
+        }
       }
 
       // ── sleeve and bracer ──────────────────────────────────────────────
@@ -6495,7 +6640,21 @@ export function buildJedi(opts = {}) {
     },
   });
 
-  return { rig, robeSkirt: outerLayer,
+  return { rig,
+           /**
+            * THE RIGID ROBE, OR NOTHING — and `null` rather than `[]`.
+            *
+            * Every reader of this field tests it with `if (built.robeSkirt)`:
+            * Enemy._build before it attaches a simulated skirt, Player's
+            * `_makeCloak`, and the menu's preview in two places. An empty
+            * ARRAY is truthy, so a body in trousers handed back `[]` would
+            * have a cloth skirt simulated over legs it does not have, hiding
+            * meshes that are not there — the field would be declaring a
+            * garment the body is not wearing. `null` is what those four
+            * callers already mean by "no cloth on this one", and it is what
+            * `attachSkirt`'s own `rigid` option treats as absent.
+            */
+           robeSkirt: outerLayer.length ? outerLayer : null,
            /**
             * THE HEAD-TAILS, as a spec plus the rigid meshes that stand in for
             * them. `lekku` is null for every species that has none, which is

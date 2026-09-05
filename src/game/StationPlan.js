@@ -318,6 +318,63 @@ export const PLACES = [
     verb: 'take a seat — sabacc, dejarik or the Drum',
     band: 'outer', at: 89.85, w: 14, d: 16, h: 7.4, peak: 1, heads: 22,
   },
+  /**
+   * ══ #59 THE ASCENDANT — V16 Lane C2's OTHER HALF ══════════════════════
+   *
+   * *"add one or two bars and a casino/nightclub … some being really fancy
+   * and incredibly upscale and others being incredibly grimy and sleezy."*
+   *
+   * V16 §6 lists #59 among the four new places and it was never built. #60
+   * The Wheelhouse shipped for the games and the grimy end has been standing
+   * since the plan was written — `#18 The Pit` is a low room with a cashier
+   * behind bars and one exit, `#61 The Underlift Pit` is a hole in the deck
+   * plate with chain-link over it. The CONTRAST the player asked for needs
+   * both ends and only one of them existed, so the sentence was half built.
+   *
+   * ── WHERE IT GOES, AND THE BEARING IS THE ARGUMENT ────────────────────
+   *
+   * Deck 40's INNER band, at 78°. Two facts make that the only siting worth
+   * having:
+   *
+   *   THE BAND. `inner` is the balcony's outer edge — *"the places that want
+   *     the void in the window"*. Everything upscale about this room is the
+   *     view, and the drum's own atrium is the only view deck 40 has. Every
+   *     other bar on the station faces a wall: #14 is SUNK below the
+   *     concourse, #18 is a lower room with one exit, #60 is a deep hall with
+   *     the wheel at the end of it. This is the first one with a window.
+   *   THE ANGLE. `#18 The Pit` is on the OUTER wall at 76° and `#60 The
+   *     Wheelhouse` at 89.85°. So the fanciest room on the station stands on
+   *     the balcony looking down and across at the grimiest, on the same
+   *     bearing, forty metres apart: from the Ascendant's window you can see
+   *     the door you are not going in. The two ends of one evening, and the
+   *     player can walk between them without changing deck.
+   *
+   * 16 by 12 at r = 32 subtends 28.6° — 63.7° to 92.3° — and the inner band's
+   * next room is `#15 The Fresh Air` at 112 (96° at its near corner), so this
+   * clears it by 3.7° with the whole of the arc back to `#21` empty behind it.
+   * `station.mjs`'s separating-axis test on the yawed rectangles is what
+   * proves that rather than this note.
+   *
+   * `peak: 23` and `heads: 18`. Later than the cantina (21) and earlier than
+   * the Wheelhouse (1): a room people come to after dinner and leave before
+   * the gambling quarter has finished. Eighteen in a room that seats far more
+   * is the whole reading — the grimy rooms are FULL, this one is never full,
+   * and `StationLife.headcount` is what makes the difference visible from the
+   * door.
+   */
+  {
+    id: 59, deck: 40, name: 'The Ascendant', shape: 'balconysalon',
+    look: 'a lit portal in the balcony wall with a doorman under it, opening onto a long room '
+      + 'stepped in three terraces down to a glass rail over the atrium void: a lit onyx bar '
+      + 'running the whole inner wall, low tables in ones and twos with deep chairs round them, '
+      + 'a grand piano on the middle terrace, carpet instead of deck plate, and a soffit of '
+      + 'hanging brass lamps that are the only light in it',
+    who: 'a Minbari maître d’, a doorman, 18 at most — officers, traders and two people '
+      + 'nobody can place',
+    idle: 'the piano runs all evening; the lamps dim by the hour; nobody raises their voice',
+    verb: 'take a table — and see who your company has earned in here',
+    band: 'inner', at: 78, w: 16, d: 12, h: 6.2, peak: 23, heads: 18,
+  },
   {
     id: 19, deck: 40, name: 'Holo-theatre', shape: 'fanauditorium',
     look: 'a fan-shaped auditorium of 60 seats facing a stage where the last run plays as a battle holo',

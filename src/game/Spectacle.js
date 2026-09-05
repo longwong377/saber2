@@ -236,9 +236,10 @@ export const SKINS = Object.freeze({
   PODRACE: Object.freeze({
     id: 'PODRACE', word: 'race', entrantWord: 'pod', room: 'holo-theatre',
     advance: courseAdvance, mode: 'course',
-    field: 8, vol: 0.20, daySd: 0.60, sigma: 0.70, houseRead: 0.35, leftBlind: 0.95, grudge: 0,
+    field: 8, vol: 0.20, daySd: 0.60, sigma: 0.70, houseRead: 0.85,
+    blind: 1.12, leftBlind: 0.86, stand: 1.53, rate: 0.39, grudge: 0, grudgeSd: 0,
     terms: POD_TERMS, hazards: POD_HAZARDS,
-    read: [{ key: 'rain', at: 0.4, k: 0.57 }, { key: 'heat', at: 0.62, k: 0.57 }],
+    read: [{ key: 'rain', at: 0.4, k: 0.62 }, { key: 'heat', at: 0.62, k: 0.62 }],
     /* The mean hazard load the market DOES price — every field has wall
      * strikes in it and the board knows that much. */
     take: 0.06,
@@ -251,7 +252,9 @@ export const SKINS = Object.freeze({
   PIT: Object.freeze({
     id: 'PIT', word: 'bout', entrantWord: 'fighter', room: 'the-pit',
     advance: boutAdvance, mode: 'bout',
-    field: 6, vol: 0.20, daySd: 0.52, sigma: 0.75, houseRead: 0.35, leftBlind: 1.00, grudge: 0.75, bite: 7.5, pool: 100,
+    field: 6, vol: 0.20, daySd: 0.52, sigma: 0.75, houseRead: 0.85,
+    blind: 0.90, leftBlind: 0.65, stand: 2.57, rate: 0.69, grudge: 0.75, grudgeSd: 0.06,
+    bite: 7.5, pool: 100,
     terms: FIGHT_TERMS, hazards: FIGHT_HAZARDS,
     read: [{ key: 'crowd', at: 0.7, k: 0.06 }, { key: 'sand', at: 0.55, k: 0.06 }, { key: 'heat', at: 0.6, k: 0.06 }],
     take: 0.08,
@@ -265,7 +268,9 @@ export const SKINS = Object.freeze({
   ARENA: Object.freeze({
     id: 'ARENA', word: 'bout', entrantWord: 'companion', room: 'the-arena',
     advance: boutAdvance, mode: 'bout',
-    field: 2, vol: 0.20, daySd: 0.46, sigma: 0.53, houseRead: 0.35, leftBlind: 1.00, grudge: 0.50, bite: 6.0, pool: 100,
+    field: 2, vol: 0.20, daySd: 0.46, sigma: 0.53, houseRead: 0.85,
+    blind: 0.70, leftBlind: 0.76, stand: 0.92, rate: 0.06, grudge: 0.50, grudgeSd: 0.13,
+    bite: 6.0, pool: 100,
     terms: FIGHT_TERMS, hazards: FIGHT_HAZARDS,
     read: [{ key: 'crowd', at: 0.6, k: 0.02 }, { key: 'sand', at: 0.35, k: 0.02 }, { key: 'heat', at: 0.45, k: 0.02 }],
     take: 0.05,
@@ -577,7 +582,26 @@ export function blindnessOf(ground, { survive = 1 } = {}) {
     const sd = row.spread(ground) * (row.readable ? survive : 1);
     v += sd * sd;
   }
-  return Math.sqrt(v);
+  /* ── AND THE SUM IS SCALED TO WHAT IS ACTUALLY THERE ──────────────────
+   *
+   * Each row declares the spread of its OWN contribution and they are added
+   * in quadrature, which assumes they are independent and Gaussian. Two of
+   * them are neither — `heat` is one-sided (`min(0, …)`, a point mass at zero
+   * with a tail) and the hazard drag is a rate, not a draw — so the quadrature
+   * is an estimate of the thing and not the thing. Measured, over the book the
+   * window actually hands over, against the true within-race spread of
+   * `formStrength(hidden) − formStrength(public)`:
+   *
+   *     pods   declared 0.2145   actual 0.2400   ×1.12
+   *     Pit    declared 0.3518   actual 0.3176   ×0.90
+   *     Arena  declared 0.3042   actual 0.2129   ×0.70
+   *
+   * A board that is 30% flatter than its own blindness prices its outsiders
+   * long and its favourites short, which is money on the floor for anybody
+   * who never opens the form book. `blind` is that ratio, per skin, and it is
+   * MEASURED — `tools/checks/tote.mjs` re-derives it and fails if the board
+   * and the field have drifted apart. */
+  return Math.sqrt(v) * (S.blind ?? 1);
 }
 
 /**
@@ -613,13 +637,18 @@ const survivalFor = (S, who) => (who === 'read' ? S.leftBlind : 1 - S.houseRead 
  * number `recordResult` wrote into `hidden.grudge`, and a check settles the
  * two against each other race by race rather than taking that on trust.
  *
- * So this is the one hidden term a reader can recover EXACTLY rather than
- * infer — and it is the reason the Pit and the Arena have a reading room at
- * all. `readForm`'s going-splits are worth almost nothing there (measured: the
- * split reading correlates 0.03 with the truth in the Pit and −0.03 at the
- * Arena, against 0.34 on the pods), because a fighter's temper and footing are
- * nine tenths the same on every night and a split can only see the tenth that
- * moves with the going. The head-to-head is not a split at all.
+ * ── AND NOBODY PRICES IT, WHICH IS A MEASUREMENT AND NOT AN OVERSIGHT ────
+ *
+ * The obvious move is to hand the count to the punter as a term. It does not
+ * pay, and the reason is that being beaten is not independent of being
+ * beatable: the count is loaded with the weakness that produced it. Regressed
+ * against the term the board cannot see, the count on its own comes out
+ * NEGATIVE — −1.41 in the Pit, −0.83 at the Arena — and once `readForm`'s
+ * form-line reading is in the model it is worth 0.005 of R² on top of it,
+ * because the two columns are saying the same thing and the form line says it
+ * better. So the column is PRINTED, and the term it creates is carried as
+ * blindness (`grudgeSd`) by everybody who is not the sim. That is a decision
+ * with a number under it rather than an omission.
  */
 export const GRUDGE_STEP = 0.18;
 export const GRUDGE_CAP = 0.55;
@@ -654,14 +683,6 @@ export function grudgeCarried(card, { published = false } = {}) {
   });
 }
 
-/** The spread of that column across one field — what a house that does not
- * price WHICH grudge still knows it is carrying. */
-function grudgeSpread(g) {
-  if (!g.length) return 0;
-  const m = g.reduce((a, b) => a + b, 0) / g.length;
-  return Math.sqrt(g.reduce((a, b) => a + (b - m) * (b - m), 0) / g.length);
-}
-
 
 /**
  * What the sim would say (`hidden`), and what the board is allowed to say.
@@ -681,13 +702,10 @@ function grudgeSpread(g) {
  */
 export function winProbabilities(card, ground, { hidden = false } = {}) {
   const S = SKINS[ground.skin];
-  const g = grudgeCarried(card, { published: !hidden });
   const s = card.entrants.map((e, i) => formStrength(e, ground, { hidden }).total
-    + (hidden ? S.grudge * g[i]
-      : S.houseRead * (readForm(e, ground).bonus + S.grudge * g[i])));
+    + (hidden ? S.grudge * grudgeCarried(card)[i] : S.houseRead * readForm(e, ground).bonus));
   const p = fieldProbabilities(s, hidden ? S.sigma
-    : Math.hypot(S.sigma, blindnessOf(ground, { survive: survivalFor(S, 'board') }),
-      (1 - S.houseRead) * S.grudge * grudgeSpread(g)));
+    : Math.hypot(S.sigma, blindnessOf(ground, { survive: survivalFor(S, 'board') }), S.grudgeSd || 0));
   return card.entrants.map((e, i) => ({ id: e.id, p: p[i] }));
 }
 
@@ -702,15 +720,8 @@ export function winProbabilities(card, ground, { hidden = false } = {}) {
  */
 export function researchedProbabilities(card, ground) {
   const S = SKINS[ground.skin];
-  /* The head-to-head is not inferred, it is COUNTED, so the reader carries it
-   * whole where the board carries `houseRead` of it — and his σ is not widened
-   * for it, because a term you have read off a printed column is not a term
-   * that is still hiding. Where no room published the column the count is
-   * empty and this is the same reader it always was. */
-  const g = grudgeCarried(card, { published: true });
-  const s = card.entrants.map((e, i) => formStrength(e, ground, { hidden: false }).total
-    + readForm(e, ground).bonus + S.grudge * g[i]);
-  const p = fieldProbabilities(s, Math.hypot(S.sigma, blindnessOf(ground, { survive: survivalFor(S, 'read') })));
+  const s = card.entrants.map((e) => formStrength(e, ground, { hidden: false }).total + readForm(e, ground).bonus);
+  const p = fieldProbabilities(s, Math.hypot(S.sigma, blindnessOf(ground, { survive: survivalFor(S, 'read') }), S.grudgeSd || 0));
   return card.entrants.map((e, i) => ({ id: e.id, p: p[i] }));
 }
 
@@ -725,13 +736,33 @@ export function researchedProbabilities(card, ground) {
  */
 export function priceCard(card, ground) {
   const S = SKINS[ground.skin];
+  const byId = new Map(card.entrants.map((e) => [e.id, e]));
   const probs = winProbabilities(card, ground, { hidden: false });
-  return probs.map(({ id, p }) => ({
-    id,
-    /* The board's own opinion, which is what a punter compares against. */
-    marketP: round2(p * 1000) / 1000,
-    price: round2(Math.max(1.05, (1 / Math.max(p, 1e-4)) * (1 - S.take))),
-  }));
+  return probs.map(({ id, p }) => {
+    const price = round2(Math.max(1.05, (1 / Math.max(p, 1e-4)) * (1 - S.take)));
+    return {
+      id,
+      /**
+       * ── THE NAME, AND IT WAS MISSING ──────────────────────────────────
+       *
+       * A board row carried `{ id, marketP, price }` and nothing else, so
+       * every surface that printed one had to go back to `card.entrants` and
+       * join on the id to find out who the price was about. `Tote.js` does
+       * that join; the pit's own panel did not, and the screen where you
+       * decide whether to stake your animal's life printed two blank rows
+       * with a number beside them.
+       *
+       * A price is a statement ABOUT SOMEBODY. It carries who it is about.
+       */
+      name: byId.get(id)?.name || id,
+      /* The board's own opinion, which is what a punter compares against. */
+      marketP: round2(p * 1000) / 1000,
+      price,
+      /* The same number as a board prints it — two places, always, so a room
+       * never has to decide how to round the house's own figure. */
+      odds: price.toFixed(2),
+    };
+  });
 }
 
 export const favouriteOf = (board) => board.reduce((a, b) => (b.price < a.price ? b : a), board[0]);
@@ -966,7 +997,7 @@ export function readForm(e, ground) {
   const S = SKINS[ground.skin];
   const log = e.form.log || [];
   const mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : null);
-  let bonus = 0, confidence = 0, starts = 0, dims = 0;
+  let going = 0, standing = 0, confidence = 0, starts = 0, dims = 0;
   for (const d of S.read) {
     const hereHigh = (ground.conditions[d.key] || 0) >= d.at;
     const like = [], unlike = [];
@@ -983,12 +1014,52 @@ export function readForm(e, ground) {
      * not a split at all. */
     const n = Math.min(like.length, unlike.length);
     const shrink = n / (n + 4);
-    bonus += (mean(unlike) - mean(like)) * d.k * shrink;
+    going += (mean(unlike) - mean(like)) * d.k * shrink;
     confidence = Math.max(confidence, shrink);
     starts = Math.max(starts, like.length);
     dims++;
   }
-  return { bonus, confidence: round2(confidence), starts, dims };
+
+  /**
+   * ── AND THE FORM LINE ITSELF, WHICH NOTHING HERE USED TO READ ──────────
+   *
+   * The card prints a rating and the last starts. The board prices the RATING
+   * AND NOTHING ELSE — `formStrength`'s only `seen` term is `rating / 22` —
+   * so the whole finishing record was a public column that no reader in this
+   * tree, house or punter, ever looked at. That is the single biggest thing
+   * that was wrong with the reading room, and it is worse in the fight rooms
+   * than on the pods: a fighter's temper and footing are nine tenths the same
+   * on every night, so a going-SPLIT cannot see them at all (measured, the
+   * split reading correlates 0.03 with the truth in the Pit and −0.03 at the
+   * Arena, against 0.32 on the pods) while a fortnight of finishing positions
+   * sees them plainly.
+   *
+   * ── AND IT IS READ AGAINST THE RATING, WHICH IS THE WHOLE TRICK ────────
+   *
+   * A runner's mean finishing position measures its WHOLE ability, hidden and
+   * public together, so on its own it is mostly a noisy copy of the rating —
+   * measured, R² 0.025 on the pods and 0.19 in the Pit against the term the
+   * board cannot see. Read it NET of what the rating already claims and the
+   * same column is R² 0.26 and 0.58: a runner rated 90 that has been finishing
+   * fourth is carrying something, and the number that says so is on the card.
+   * `stand` and `rate` are the two halves of that reading and both were fitted
+   * by regression against `formStrength(hidden) − formStrength(public)` on the
+   * book the window actually prints — not on a saturated log, which is a form
+   * book no player is ever handed.
+   */
+  const runs = log.filter((r) => r.field > 1);
+  if (runs.length >= 2 && S.stand) {
+    let pos = 0;
+    for (const r of runs) pos += (r.position - 1) / (r.field - 1);
+    /* Shrunk by its own sample, exactly as the splits are: at the Arena a
+     * fortnight is eight starts and two of those is a rumour. */
+    const shrink = runs.length / (runs.length + 2);
+    standing = shrink * (S.stand * (0.5 - pos / runs.length) - S.rate * (e.form.rating / 22));
+    confidence = Math.max(confidence, shrink);
+    starts = Math.max(starts, runs.length);
+    dims++;
+  }
+  return { bonus: going + standing, going, standing, confidence: round2(confidence), starts, dims };
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

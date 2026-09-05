@@ -67,7 +67,7 @@
 import { makeRng, clamp } from '../engine/MathUtil.js';
 import {
   SKINS, groundById, dressGround, makeEntrant, entrantFromCompanion,
-  priceCard, runSpectacle, runMeeting, makeCard, recordResult, settle, announce,
+  priceCard, runSpectacle, runMeeting, makeCard, recordResult, settle, announce, MOMENTS,
 } from './Spectacle.js';
 import {
   COMPANION_KINDS, COMPANION_ORDER, holdsCompanion, rungOf, maturityOf, careOf,
@@ -418,31 +418,79 @@ export function matchFor(mine, handler, venue, seed = null) {
  *
  * `counters` is the whole minigame: an order lands against ONE intent, and the
  * intent is what the other corner telegraphed a second before it happened.
+ *
+ * ── `holds` IS WHAT THE ORDER IS IN THE FIELD. `licence` IS THE GATE ──────
+ *
+ * These were the same field and a fresh animal's first bout was unplayable
+ * because of it. `holds` mapped straight onto `COMPANION_RANKS`, so a STRANGE
+ * animal — which is every player's first one, on its first night — held
+ * exactly ONE of the five: BREAK OFF, whose caption is *"Takes the round
+ * off."* Driven, two of every three calls came back *"STRANGE does not hold
+ * GUARD yet"*, and the answer to *"a certain level of skill, a minigame in
+ * here"* was a screen with one button on it that declines to fight.
+ *
+ * A minigame you are not allowed to play on the night you arrive is not a
+ * progression curve, it is a locked door. So the two fields are separated:
+ *
+ *   `holds`    the duty this order IS out in the field, unchanged, so the
+ *              mapping between the wheel and the rail is still one table and
+ *              a reader can still see which is which.
+ *   `licence`  what the PIT refuses without, and it is null for three of the
+ *              five. The rail is two metres from the handler and its three
+ *              primitives are off, meet and go — a green animal already does
+ *              all three, and the field ladder's own reason for gating BREAK
+ *              OFF at no rung ("protection that needs a licence is not
+ *              protection") is the same reason GUARD is not gated either.
+ *
+ * WHAT THE LADDER STILL BUYS, and it is the half of the read that pays most:
+ * FLANK and HOLD are the two orders that send the animal to work AWAY from
+ * the handler — round him, or stand on ground while it is driven off it — and
+ * those are gated on the two duties the field ladder itself gates last,
+ * `verb` at TRUSTED and `hold` at SWORN. So a first-night animal holds three
+ * orders and answers two of the four intents; a SWORN one holds all five and
+ * answers every intent, which is when reading the telegraph pays in full.
  */
 export const PIT_ORDERS = Object.freeze([
   Object.freeze({
-    id: 'break', label: 'BREAK OFF', holds: 'away', counters: null,
+    id: 'break', label: 'BREAK OFF', holds: 'away', licence: null, counters: null,
     caption: 'Off him. Give ground and stay off him.',
     note: 'Takes the round off — half the exchanges, both ways. Always available.',
   }),
   Object.freeze({
-    id: 'guard', label: 'GUARD', holds: 'ward', counters: 'commit',
+    id: 'guard', label: 'GUARD', holds: 'ward', licence: null, counters: 'commit',
     caption: 'Meet it. Do not give him the first bite.',
+    note: 'The other half of the safety valve — never refused.',
   }),
   Object.freeze({
-    id: 'press', label: 'PRESS', holds: 'seek', counters: 'set',
+    id: 'press', label: 'PRESS', holds: 'seek', licence: null, counters: 'set',
     caption: 'Go at him now, before he is set.',
+    note: 'Going forward is not a taught duty. Never refused.',
   }),
   Object.freeze({
-    id: 'flank', label: 'FLANK', holds: 'verb', counters: 'break',
+    id: 'flank', label: 'FLANK', holds: 'verb', licence: 'verb', counters: 'break',
     caption: 'Round him. Take the angle he is giving you.',
+    note: 'It has to work away from you. Not until it is TRUSTED.',
   }),
   Object.freeze({
-    id: 'hold', label: 'HOLD', holds: 'hold', counters: 'circle',
+    id: 'hold', label: 'HOLD', holds: 'hold', licence: 'hold', counters: 'circle',
     caption: 'That ground is yours. Do not chase him off it.',
+    note: 'The last thing an animal learns. Not until it is SWORN.',
   }),
 ]);
 export const orderById = (id) => PIT_ORDERS.find((o) => o.id === id) || null;
+
+/**
+ * MAY THIS ANIMAL BE GIVEN THIS ORDER? One reader, so the wheel a surface
+ * draws and the gate `callOrder` applies cannot disagree — a greyed button
+ * that turns out to be legal, or a lit one that refuses, is the shape of thing
+ * `CompanionWheel` was written against.
+ */
+export function holdsOrder(rec, order) {
+  const O = typeof order === 'string' ? orderById(order) : order;
+  if (!O) return false;
+  if (!O.licence) return true;
+  return holdsCompanion(rec, O.licence);
+}
 
 /**
  * ── THE READ ──────────────────────────────────────────────────────────────
@@ -627,7 +675,7 @@ export function openBout(offer, { accept = null, wager = 0 } = {}) {
   if (!offer.open) throw new Error(`the pit is shut: ${offer.why}`);
   const mortal = !!(offer.stake.mortal && offer.stake.token && accept === offer.stake.token);
   const S = SKINS[offer.ground.skin];
-  return {
+  const bout = {
     venue: offer.venue,
     handler: offer.handler,
     /* THE RECORD'S ID AND NOT THE RECORD. `foldPit` re-reads the disk and
@@ -650,6 +698,9 @@ export function openBout(offer, { accept = null, wager = 0 } = {}) {
     bleed: 0,
     corner: null,
     events: [],
+    /* Where the current round's stream starts, so a surface can be handed the
+     * round it just watched rather than the whole night. */
+    mark: 0,
     history: [],
     stake: {
       mortal,
@@ -663,6 +714,21 @@ export function openBout(offer, { accept = null, wager = 0 } = {}) {
     over: false,
     outcome: null,
   };
+  /**
+   * THE FIRST THING THE ROOM SAYS, AND IT IS WHAT IS ON THE TABLE.
+   *
+   * *"the stake stated before you accept"* is `offerBout`'s job and it is done
+   * in words on the offer; this is the announcer reading the same fact out to
+   * the room the moment it is accepted, which is what an announcer at a real
+   * event does before a bell. It is also the first event in the stream, so a
+   * screen replaying a bout from `bout.events` opens on the stake rather than
+   * on somebody already being hit.
+   */
+  bout.events.push({
+    t: 0, type: 'stake', who: null,
+    mortal, wager: bout.stake.wager, purse: bout.stake.purse,
+  });
+  return bout;
 }
 
 /**
@@ -704,6 +770,11 @@ export function beginRound(bout) {
      * at both, which is why one order at the right time beats three. */
     commitAt: shown.at,
   };
+  /* THE BELL. `mark` moves with it, so `runRound` can hand back exactly the
+   * round that just happened — bell, orders and the engine's own stream in the
+   * order the room heard them. */
+  bout.mark = bout.events.length;
+  bout.events.push({ t: bout.round, type: 'bell', who: null, round: bout.round, of: bout.rounds });
   return bout.read;
 }
 
@@ -725,7 +796,7 @@ export function callOrder(bout, orderId, at, rec = null) {
   /* THE LICENCE, FROM THE LADDER THAT ALREADY EXISTS. `rec` is optional
    * because a bout that was opened from a record has already been matched to
    * one; a caller that has the live record hands it in and gets the gate. */
-  if (rec && !holdsCompanion(rec, O.holds)) {
+  if (rec && !holdsOrder(rec, O)) {
     return { refused: `${rungOf(rec).label} does not hold ${O.label} yet` };
   }
   const t = Math.max(0, Math.min(ORDER_WINDOW, Number(at) || 0));
@@ -733,6 +804,13 @@ export function callOrder(bout, orderId, at, rec = null) {
   const s = scoreOrder({ order: O, intent: bout.intent, at: t, commitAt });
   bout.orders.push({ id: O.id, at: round2(t), ...s });
   bout.swing += s.value;
+  /* THE ROOM HEARS IT. An order given at the rail is a thing the crowd can see
+   * happen, so it is an event like any other and the announcer reads it off
+   * the same stream — see §8. */
+  bout.events.push({
+    t: bout.round, type: 'order', who: bout.mine.id, round: bout.round,
+    order: O.id, label: O.label, at: round2(t), right: s.right,
+  });
   return { order: O.id, at: round2(t), ...s, landed: s.right && s.timing > 0 };
 }
 
@@ -790,7 +868,23 @@ export function runRound(bout) {
   for (const ev of result.events) {
     if (ev.type === 'wound' && ev.who === mine.id) bout.bleed++;
   }
-  const tagged = result.events.map((ev) => ({ ...ev, round: bout.round }));
+  /**
+   * THE ROUND'S STREAM, RE-TYPED WHERE THE SIM'S WORD IS THE WRONG WORD.
+   *
+   * A round IS a call of `runSpectacle` (see the header), so the sim opens
+   * every one of them with an `off` and closes every one of them with a
+   * `result` — and read literally that is a room announcing the start of the
+   * fight five times and the winner of the fight five times, four of which are
+   * lies. The bell is the room's own `off` and `finishBout` is the room's own
+   * `result`; what the sim's closing row actually names is who had the better
+   * of THAT ROUND, so it is said as that. `placed` is a finishing-order row
+   * with no line in either table and is not carried.
+   */
+  const tagged = [];
+  for (const ev of result.events) {
+    if (ev.type === 'off' || ev.type === 'placed') continue;
+    tagged.push({ ...ev, round: bout.round, type: ev.type === 'result' ? 'round' : ev.type });
+  }
   bout.events.push(...tagged);
   bout.history.push({
     round: bout.round,
@@ -823,7 +917,10 @@ export function runRound(bout) {
     return finishBout(bout, { by, how: 'decision' });
   }
   bout.phase = 'corner';
-  return { round: bout.round, over: false, state: pitState(bout), events: tagged };
+  /* THE ROUND AS THE ROOM HEARD IT — the bell and the orders included, not the
+   * engine's rows alone. A surface that read `tagged` was reading the sim and
+   * calling it the broadcast. */
+  return { round: bout.round, over: false, state: pitState(bout), events: bout.events.slice(bout.mark) };
 }
 
 /**
@@ -852,6 +949,7 @@ export function cornerAct(bout, actId) {
     bout.bleed = 0;
     did = `${was} closed`;
   }
+  bout.events.push({ t: bout.round, type: 'corner', who: bout.mine.id, round: bout.round, act: A.id, did });
   return { act: A.id, did, state: pitState(bout) };
 }
 
@@ -899,6 +997,20 @@ function finishBout(bout, stop) {
       dist: round2(won ? bout.dealt.theirs : bout.dealt.mine),
       condition: round2(Math.max(0, bout.pool - (won ? bout.taken.theirs : bout.taken.mine))) },
   ];
+  /**
+   * HOW IT ENDED, AND THE ROOM SAYS IT BEFORE THE RESULT.
+   *
+   * `stop.how` is already the word — 'stoppage', 'refusal' or 'decision' — and
+   * these are the two of the three the ENGINE cannot speak, because the engine
+   * has no round structure and therefore no distance to go and nobody at the
+   * rail to pull an animal off. A refusal is the engine's own event and is
+   * left to it.
+   */
+  if (stop.how === 'stoppage') {
+    bout.events.push({ t: bout.round, type: 'stoppage', who: order[1].id, round: bout.round });
+  } else if (stop.how === 'decision') {
+    bout.events.push({ t: bout.round, type: 'decision', who: order[0].id, round: bout.round });
+  }
   bout.events.push({ t: bout.round, type: 'result', who: order[0].id, margin: round2(Math.abs(bout.taken.mine - bout.taken.theirs)) });
   bout.result = {
     skin: bout.ground.skin, ground: bout.ground.id, conditions: bout.ground.conditions,
@@ -919,7 +1031,7 @@ function finishBout(bout, stop) {
   /* The form book grows on a bout exactly as it grows on a race, so a handler
    * you have fought before reads differently on the board next time. */
   recordResult(bout.card, bout.ground, bout.result);
-  return { round: bout.round, over: true, outcome: bout.outcome, events: bout.events };
+  return { round: bout.round, over: true, outcome: bout.outcome, events: bout.events.slice(bout.mark) };
 }
 
 /** Settle a wager against the bout, through the engine's own ledger. */
@@ -1108,43 +1220,118 @@ export function runPitCard(venue, opts = {}) {
   return { ...c, ...meeting };
 }
 
+/**
+ * SETTLE A SPECTATOR'S WAGERS AGAINST ONE BOUT OF TONIGHT'S CARD.
+ *
+ * *"you should be able to bet on other people's companion battles too even if
+ * you're not involved, you don't have to bet to watch."*
+ *
+ * The same three properties `settleBout` has, and for the same reasons: the
+ * stakes are handed IN, the ledger is the engine's own `settle`, and nothing
+ * here holds a balance. THE BOARD IS THE RUN'S OWN — `runMeeting` dresses a
+ * fresh ground for each bout and prices it, so a punter paid at `pitCard`'s
+ * board would be paid at a price for a ground the bout was not fought on.
+ * One board, read for the price and read again for the payout.
+ */
+export function settlePitCard(run, wagers = [], i = 0) {
+  const race = run?.races?.[i];
+  if (!race) return null;
+  return settle(wagers, race.result, race.board);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
- *  8. THE ANNOUNCER — the room's voice over the engine's stream
+ *  8. THE ANNOUNCER — the room's voice, and it is NOT the course's
  * ══════════════════════════════════════════════════════════════════════════
  *
  * *"actual announcer, like imagine real event fights."*
  *
- * `Spectacle.announce` is the announcer and it stays the announcer. What this
- * adds is lines for the four events the ENGINE DOES NOT EMIT because they are
- * the room's and not the fight's — a bell, a corner, a stake read out, a
- * stoppage. `announce` is asked FIRST for every event, and it wins every time
- * it has an answer, so nothing here can shadow a line the engine already
- * speaks. A check drives every event type the engine names and demands both
- * functions say the same words.
+ * ── WHAT THIS USED TO DO, AND WHY IT WAS THE WRONG WAY ROUND ─────────────
+ *
+ * `pitCall` asked `Spectacle.announce` FIRST and returned whatever it said,
+ * on the reasoning that "the room may not talk over the engine". But
+ * `Spectacle`'s `LINES` table is written for a PODRACE — it is the engine's
+ * own announcer, and the engine's own announcer calls a course. A two-animal
+ * death match in the Underlift came out, verbatim:
+ *
+ *     They're away — 2 on the card.
+ *     Yavk Ninefingers goes to the front, Tooth loses it at 2.
+ *     Yavk Ninefingers takes Tooth at gate 2.
+ *     And it's Tooth.
+ *
+ * Gates. A card. The front. Two animals trying to kill each other in a
+ * service gap on deck 44, called like a lap of Boonta Eve. And the six lines
+ * this file DID have — bell, stake, corner, order, stoppage, decision — were
+ * unreachable, because no code path anywhere pushed an event of any of those
+ * types: the bout forwarded the engine's stream and pushed one `result`.
+ *
+ * ── SO TWO THINGS CHANGED, AND THE SECOND IS THE REAL ONE ────────────────
+ *
+ *   1. THE BOUT NOW SPEAKS. `openBout` emits `stake`, `beginRound` emits
+ *      `bell`, `callOrder` emits `order`, `cornerAct` emits `corner` and
+ *      `finishBout` emits `stoppage` or `decision`. Those six lines are
+ *      reachable now because the six moments are events now.
+ *
+ *   2. THE ROOM IS ASKED FIRST. The engine's stream is TRANSLATED rather than
+ *      quoted: every event type the sim emits has a line below written for a
+ *      fight, and `announce` is the fallback for anything this table has no
+ *      word for. Nothing is silenced — an event neither table speaks to is
+ *      still null rather than a filler line, which is `announce`'s own rule.
+ *
+ * The engine is still the only thing that decides what HAPPENED. This table
+ * decides nothing; it says the same events in the room's own language, which
+ * is all an announcer has ever been.
+ *
+ * `tools/checks/pits.mjs` reads the static text out of `Spectacle`'s `LINES`
+ * and fails if any of it turns up in a pit line, so the course cannot creep
+ * back in — and it drives a whole bout to prove all six room events fire.
  */
 const PIT_LINES = {
-  bell: (n, ev) => `Round ${ev.round}. ${ev.of === ev.round ? 'Last one.' : ''}`.trim(),
+  /* ── the room's own six: the moments the sim has no concept of ───────── */
+  bell: (n, ev) => (ev.round === ev.of ? 'Last round. Hands off.' : `Round ${ev.round}. Hands off.`),
   stake: (n, ev) => (ev.mortal
     ? 'And they have taken the long odds. Nobody is stopping this one.'
     : 'Straight purse, and the doctor stays where she is.'),
-  corner: (n, ev) => `In the corner: ${ev.did}.`,
+  corner: (n, ev) => `In the corner, ${n} — ${ev.did}.`,
   order: (n, ev) => (ev.right
-    ? `That was called off the rail — ${n} answers it.`
+    ? `That was called off the rail, and ${n} answers it.`
     : `${n} is listening to the wrong thing.`),
-  stoppage: (n) => `That's it — they're pulling ${n} off.`,
-  decision: (n) => `It goes the distance, and it goes to ${n}.`,
+  stoppage: (n) => `That is enough. They are pulling ${n} out of it.`,
+  decision: (n) => `Nobody put anybody down, and the room gives it to ${n}.`,
+
+  /* ── the sim's own stream, said as a fight and not as a lap ──────────── */
+  off: () => 'Leads off, hands off, and they are into each other.',
+  lead: (n, ev, name) => `${n} is on top of it now, and ${name(ev.from)} is giving ground.`,
+  overtake: (n, ev, name) => `${n} has turned it round on ${name(ev.past)}.`,
+  wound: (n) => `${n} is opened up, and the room has seen the blood.`,
+  knockdown: (n, ev, name) => `${name(ev.by)} has ${n} down on the sand.`,
+  refusal: (n) => `${n} has turned its head away, and it will not go again.`,
+  beaten: (n, ev, name) => `${name(ev.by)} has finished ${n}.`,
+  retire: (n, ev) => `${n} is done — ${ev.cause}, and the handler is over the rail.`,
+  wall: (n) => `${n} is driven into the boards and stays up.`,
+  mechanical: (n) => `Something has gone in ${n}.`,
+  round: (n) => `${n} had the better of that.`,
+  result: (n) => `And it is ${n}. That is the fight.`,
 };
 
+/**
+ * ONE LINE FOR ONE EVENT, IN THE ROOM'S WORDS.
+ *
+ * The room first, the engine second, silence third. `card` is the bout's own
+ * card, so every name in a line is an animal that is actually in the pit.
+ */
 export function pitCall(ev, card) {
   if (!ev) return null;
-  /* THE ENGINE FIRST, ALWAYS. */
-  const said = announce(ev, card);
-  if (said) return said;
-  const fn = PIT_LINES[ev.type];
-  if (!fn) return null;
   const name = (id) => card?.entrants?.find((e) => e.id === id)?.name || 'the animal';
-  return fn(ev.who ? name(ev.who) : 'the field', ev, name);
+  const fn = PIT_LINES[ev.type];
+  if (fn) return fn(ev.who ? name(ev.who) : 'the field', ev, name);
+  /* ANYTHING THIS TABLE HAS NO WORD FOR IS STILL THE ENGINE'S TO SPEAK — a
+   * new event type is announced badly rather than not at all only if somebody
+   * adds one to the sim and not to the table above, and the check fails on
+   * exactly that. */
+  return announce(ev, card);
 }
 
-/** Every moment of a bout worth cutting to, the engine's list plus the bell. */
-export const PIT_MOMENTS = Object.freeze(['bell', 'stake', 'corner', 'stoppage', 'decision']);
+/** Every moment of a bout worth cutting to: the room's six and the sim's own. */
+export const PIT_MOMENTS = Object.freeze([
+  'bell', 'stake', 'order', 'corner', 'round', 'stoppage', 'decision', ...MOMENTS,
+]);

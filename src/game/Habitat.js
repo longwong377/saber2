@@ -64,6 +64,16 @@ import {
   COMPANION_KINDS, GROWTH_STAGES, GROWTH_MARKS, bodyScaleOf, careOf, careWordsOf,
   maturityOf, nextStage, rungOf, stageOf,
 } from './CompanionKinds.js';
+/**
+ * ── AND THE ONE THING THIS ROOM DECIDES ABOUT ANOTHER ROOM ────────────────
+ *
+ * V15 §1.3: *"a cabin gets a perch, a basket or a charge pad for one small
+ * companion, and which one is a choice you make at the habitat."* The choice
+ * is MADE here and the state lives in `Home.js`, which owns the record, the
+ * fixture and the single writer onto the station's fold. This file adds a
+ * door and keeps nothing.
+ */
+import { PADS, PAD_MASS, homePad, setPad, padSuit } from './Home.js';
 
 /** How many plaques the room has. The slab loop in StationKit.js is six. */
 export const PLAQUES = 6;
@@ -174,6 +184,15 @@ export function writePlaques(world) {
  * exactly the reason the write would have refused, and the reason is printed
  * beside it.
  */
+/**
+ * THE PAST TENSE OF EACH ACT, off the act's own key — a table and not a
+ * ternary. Written as `act === 'meals' ? 'fed' : 'groomed'` it answered
+ * "groomed" for every act that was not a meal, so the day the room grew a
+ * third control the disabled Play button said the animal had already been
+ * groomed. Two acts is the only size at which a ternary is a lookup.
+ */
+const PAST = Object.freeze({ meals: 'fed', grooms: 'groomed', plays: 'played' });
+
 export function habitatPanel(k = null) {
   const kn = k || loadKennel();
   const rec = kn.live;
@@ -182,6 +201,9 @@ export function habitatPanel(k = null) {
     fallen: (kn.fallen || []).slice(0, PLAQUES - 1),
     plaques: plaqueLines(kn),
     rec: null,
+    /** V15 §1.3 — which fixture the cabin gets. Present whether or not there
+     *  is an animal, because the three rows are the same three either way. */
+    pad: padChoice(kn),
   };
   if (!rec) return out;
   const K = COMPANION_KINDS[rec.kind];
@@ -221,13 +243,68 @@ export function habitatPanel(k = null) {
       /* WHY NOT, IN THE PLAYER'S TERMS. There is exactly one reason and it is
        * the only rule the door has: it has already been looked after for this
        * run, and the next one is bought by taking it out again. */
-      why: canCare(rec, act) ? null : `already ${words[act === 'meals' ? 'fed' : 'groomed']} since its last run`,
+      why: canCare(rec, act) ? null : `already ${words[PAST[act]] || 'looked after'} since its last run`,
     })),
   };
   out.tempers = (rec.tempers || []).map((id) => temperById(id)).filter(Boolean)
     .map((t) => ({ id: t.id, label: t.label, earn: t.earn, gain: t.gain, cost: t.cost }));
   out.story = (rec.story || []).slice();
   return out;
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  WHAT THE CABIN GETS — V15 §1.3, and the choice is made in this room
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * Three rows, always all three, with `fits` saying which one this animal is
+ * built for and `chosen` saying which one is standing in the cabin now. Both
+ * are answers and neither is a rule: the sentence gives the player the choice
+ * and names no condition, so a bird may be given a charge pad and the room
+ * will build one.
+ *
+ * `who` is the animal the cabin can hold, or null with a reason. Two different
+ * absences and they are not the same sentence — an empty roll is "take one
+ * out", and a blurrg is "this one lives here, in the straw, because it weighs
+ * 640 kg". A control that refuses without saying why is the shape this
+ * codebase keeps deleting.
+ */
+export function padChoice(k = null) {
+  const kn = k || loadKennel();
+  const rec = kn.live;
+  const K = rec ? COMPANION_KINDS[rec.kind] : null;
+  const suit = rec ? padSuit(rec.kind) : null;
+  const chosen = homePad();
+  const out = {
+    chosen,
+    who: null,
+    why: null,
+    rows: PADS.map((p) => ({
+      id: p.id, label: p.label, note: p.note, suits: p.suits,
+      fits: !!suit && p.suits === suit,
+      chosen: p.id === chosen,
+    })),
+  };
+  if (!rec) { out.why = 'no animal on the roll — take one out and bring it back'; return out; }
+  if (!suit) {
+    out.why = `${K?.label || 'this one'} lives here at the habitat — a cabin holds `
+      + `one small companion, under ${PAD_MASS} kg`;
+    return out;
+  }
+  out.who = { id: rec.id, name: rec.name || null, kind: rec.kind, label: K?.label || '', suit };
+  return out;
+}
+
+/**
+ * THE CHOICE, TAKEN. A pass-through onto `Home.setPad` — thin for `careAt`'s
+ * reason exactly, so there is one writer of the home record and the grep-pin
+ * on it means what it says. Hand it the live world and the cabin re-dresses on
+ * the same press; without one the fold is still written and the room builds
+ * what it says the next time it is dressed.
+ */
+export function choosePad(id, world = null) {
+  setPad(id, world);
+  return habitatPanel();
 }
 
 /**

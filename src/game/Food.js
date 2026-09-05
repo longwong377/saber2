@@ -26,7 +26,8 @@
  * function takes the rows and hands back new rows, so a check can drive a
  * week of shopping without a disk.
  *
- * IT IS NOT A CUTSCENE. See THE COOKING below.
+ * IT IS NOT A CUTSCENE, AND IT IS NOT A RENDERER EITHER. See THE COOKING
+ * below, and `cookPose` for the numbers a stall moves by.
  *
  * ── AND IT IS A PROVISION, WHICH IS A LOAD-BEARING WORD ───────────────────
  *
@@ -160,94 +161,111 @@ export function kitchens() { return COUNTERS.filter(isKitchen); }
  * it out. A check asserts it terminates and reads right, which is the whole
  * of what can be asserted about a cutscene.
  *
+ * ── AND `move` IS THE FIELD THAT MADE THAT TRUE OF A THING YOU CAN SEE ────
+ *
+ * The lane above promised *"one animation loop per stall"* and what shipped
+ * was five sentences in the banner: `Cook` said its lines, the counter pane
+ * held the world stopped behind it, and NO STALL MOVED. The player's own ask
+ * is *"you actually see them cook"*, and a line of prose saying a wok was
+ * tossed is not that however good the line is.
+ *
+ * So every step now names a MOVE as well as a line, and `cookPose` below turns
+ * (move, how far through) into numbers: where the pan is, how far the lid is
+ * off, where each of the cook's hands is, how big the flame is. It is still
+ * not a renderer — it holds no mesh, no material and no THREE — which is what
+ * lets `food.mjs` drive the whole of a cook in millimetres without a browser.
+ * `StationKit.CookSet` is what owns the geometry and reads these numbers, and
+ * because the move rides on the STEP, what you see is what the banner says:
+ * the wok goes up on `toss` and the bowl fills on `plate`, not near it.
+ *
  * `t` is seconds. Every prep totals between two and six, which is *"small"*.
  */
 export const PREP = {
   wok: {
     keeps: 4, note: 'A bowl off a burner is dead by the end of the watch.',
     steps: [
-      { id: 'order', t: 0.8, say: 'You point at the board. He does not write it down.' },
-      { id: 'fire', t: 0.9, say: 'The burner comes up under the wok and the whole counter goes orange.' },
-      { id: 'toss', t: 1.5, say: 'Three tosses, a splash off a tin, and it catches for a second.' },
-      { id: 'plate', t: 0.8, say: 'Into the bowl in one movement, and the burner is already down.' },
+      { id: 'order', t: 0.8, move: 'still', say: 'You point at the board. He does not write it down.' },
+      { id: 'fire', t: 0.9, move: 'heat', say: 'The burner comes up under the wok and the whole counter goes orange.' },
+      { id: 'toss', t: 1.5, move: 'toss', say: 'Three tosses, a splash off a tin, and it catches for a second.' },
+      { id: 'plate', t: 0.8, move: 'pour', say: 'Into the bowl in one movement, and the burner is already down.' },
     ],
   },
   fry: {
     keeps: 5, note: 'It was never going to be good cold. It is not good cold.',
     steps: [
-      { id: 'order', t: 0.8, say: 'You point. He nods at the oil.' },
-      { id: 'in', t: 0.9, say: 'It goes into the oil and the noise fills the counter.' },
-      { id: 'turn', t: 1.2, say: 'Turned once with a wire spider. Nobody times it; he knows.' },
-      { id: 'drain', t: 0.9, say: 'Out onto a rack, shaken twice, wrapped in paper.' },
+      { id: 'order', t: 0.8, move: 'still', say: 'You point. He nods at the oil.' },
+      { id: 'in', t: 0.9, move: 'dip', say: 'It goes into the oil and the noise fills the counter.' },
+      { id: 'turn', t: 1.2, move: 'turn', say: 'Turned once with a wire spider. Nobody times it; he knows.' },
+      { id: 'drain', t: 0.9, move: 'lift', say: 'Out onto a rack, shaken twice, wrapped in paper.' },
     ],
   },
   pot: {
     keeps: 8, note: 'A pot dish is better the next watch, right up until it is not.',
     steps: [
-      { id: 'order', t: 0.8, say: 'He lifts the lid and looks at you rather than at the pot.' },
-      { id: 'skim', t: 1.4, say: 'A skim off the top. Whatever comes off goes in a tin under the counter.' },
-      { id: 'ladle', t: 1.2, say: 'Two ladles. The second is the one with anything in it.' },
-      { id: 'salt', t: 0.8, say: 'Salt from a bowl, by hand, without measuring.' },
+      { id: 'order', t: 0.8, move: 'lidoff', say: 'He lifts the lid and looks at you rather than at the pot.' },
+      { id: 'skim', t: 1.4, move: 'stir', say: 'A skim off the top. Whatever comes off goes in a tin under the counter.' },
+      { id: 'ladle', t: 1.2, move: 'pour', say: 'Two ladles. The second is the one with anything in it.' },
+      { id: 'salt', t: 0.8, move: 'dust', say: 'Salt from a bowl, by hand, without measuring.' },
     ],
   },
   steam: {
     keeps: 4, note: 'Out of the basket it goes tough within the watch.',
     steps: [
-      { id: 'order', t: 0.7, say: 'He takes the top basket off a stack of six.' },
-      { id: 'lid', t: 1.3, say: 'The lid goes on and the steam finds the gap along one side.' },
-      { id: 'wait', t: 1.8, say: 'Nothing happens for a while. That is the whole method.' },
-      { id: 'off', t: 0.8, say: 'The basket comes off the stack and onto the counter, still in it.' },
+      { id: 'order', t: 0.7, move: 'take', say: 'He takes the top basket off a stack of six.' },
+      { id: 'lid', t: 1.3, move: 'lidon', say: 'The lid goes on and the steam finds the gap along one side.' },
+      { id: 'wait', t: 1.8, move: 'still', say: 'Nothing happens for a while. That is the whole method.' },
+      { id: 'off', t: 0.8, move: 'lift', say: 'The basket comes off the stack and onto the counter, still in it.' },
     ],
   },
   grill: {
     keeps: 6, note: 'Charred outside, so it travels better than it has any right to.',
     steps: [
-      { id: 'order', t: 0.7, say: 'He picks one out of the tray without looking at the tray.' },
-      { id: 'coals', t: 1.0, say: 'Onto the bars. The fat goes into the coals and comes back as smoke.' },
-      { id: 'turn', t: 1.4, say: 'Turned twice, brushed once, from a jar nobody else is allowed to touch.' },
-      { id: 'rest', t: 1.0, say: 'Off the heat and left alone a moment, which is the part people skip.' },
+      { id: 'order', t: 0.7, move: 'take', say: 'He picks one out of the tray without looking at the tray.' },
+      { id: 'coals', t: 1.0, move: 'heat', say: 'Onto the bars. The fat goes into the coals and comes back as smoke.' },
+      { id: 'turn', t: 1.4, move: 'turn', say: 'Turned twice, brushed once, from a jar nobody else is allowed to touch.' },
+      { id: 'rest', t: 1.0, move: 'still', say: 'Off the heat and left alone a moment, which is the part people skip.' },
     ],
   },
   pass: {
     keeps: 6, note: 'A kitchen dish, boxed at the pass by somebody who disapproves.',
     steps: [
-      { id: 'order', t: 0.9, say: 'The order goes through the pass on a paper. Somebody behind it repeats it back.' },
-      { id: 'wait', t: 1.8, say: 'You can hear more of it than you can see.' },
-      { id: 'ring', t: 0.9, say: 'The bell on the pass goes once.' },
-      { id: 'carry', t: 1.0, say: 'It is carried out and set down square to the edge of the table.' },
+      { id: 'order', t: 0.9, move: 'take', say: 'The order goes through the pass on a paper. Somebody behind it repeats it back.' },
+      { id: 'wait', t: 1.8, move: 'still', say: 'You can hear more of it than you can see.' },
+      { id: 'ring', t: 0.9, move: 'ring', say: 'The bell on the pass goes once.' },
+      { id: 'carry', t: 1.0, move: 'serve', say: 'It is carried out and set down square to the edge of the table.' },
     ],
   },
   poured: {
     keeps: 2, note: 'A poured glass is drunk where it was poured. Carrying one home is a decision you will regret.',
     steps: [
-      { id: 'order', t: 0.6, say: 'He has the bottle in his hand before you have finished asking.' },
-      { id: 'pour', t: 1.2, say: 'Poured with the glass tipped over, and straightened at the end.' },
-      { id: 'set', t: 0.6, say: 'Set down in front of you, on a mat, turned the right way round.' },
+      { id: 'order', t: 0.6, move: 'take', say: 'He has the bottle in his hand before you have finished asking.' },
+      { id: 'pour', t: 1.2, move: 'pour', say: 'Poured with the glass tipped over, and straightened at the end.' },
+      { id: 'set', t: 0.6, move: 'serve', say: 'Set down in front of you, on a mat, turned the right way round.' },
     ],
   },
   cold: {
     keeps: 10, note: 'Nothing was done to it, so nothing can undo it in a hurry.',
     steps: [
-      { id: 'order', t: 0.6, say: 'He does not cook it, and he would like you to know that.' },
-      { id: 'cut', t: 1.1, say: 'Cut on a board that has never been used for anything else.' },
-      { id: 'plate', t: 0.7, say: 'Onto a plate. There is not any more to it than that.' },
+      { id: 'order', t: 0.6, move: 'still', say: 'He does not cook it, and he would like you to know that.' },
+      { id: 'cut', t: 1.1, move: 'cut', say: 'Cut on a board that has never been used for anything else.' },
+      { id: 'plate', t: 0.7, move: 'serve', say: 'Onto a plate. There is not any more to it than that.' },
     ],
   },
   sealed: {
     keeps: 72, note: 'THREE DAYS, and it is the only thing on the station worth stocking a larder with.',
     steps: [
-      { id: 'order', t: 0.6, say: 'He reaches under the counter without breaking eye contact.' },
-      { id: 'check', t: 1.0, say: 'The seal is turned to the light and looked at, twice.' },
-      { id: 'hand', t: 0.7, say: 'Handed over still sealed. Do not open it in here.' },
+      { id: 'order', t: 0.6, move: 'take', say: 'He reaches under the counter without breaking eye contact.' },
+      { id: 'check', t: 1.0, move: 'check', say: 'The seal is turned to the light and looked at, twice.' },
+      { id: 'hand', t: 0.7, move: 'serve', say: 'Handed over still sealed. Do not open it in here.' },
     ],
   },
   live: {
     keeps: 3, note: 'It was alive when you ordered it. That is the shelf life.',
     steps: [
-      { id: 'order', t: 0.8, say: 'He asks once whether you are sure.' },
-      { id: 'lift', t: 1.1, say: 'The lid comes off the tank and the noise out of it changes.' },
-      { id: 'still', t: 1.6, say: 'It is better if you do not watch this part. He does not hurry it.' },
-      { id: 'done', t: 0.9, say: 'It stops moving. He waits a moment longer than he needs to.' },
+      { id: 'order', t: 0.8, move: 'still', say: 'He asks once whether you are sure.' },
+      { id: 'lift', t: 1.1, move: 'lidoff', say: 'The lid comes off the tank and the noise out of it changes.' },
+      { id: 'still', t: 1.6, move: 'shudder', say: 'It is better if you do not watch this part. He does not hurry it.' },
+      { id: 'done', t: 0.9, move: 'lift', say: 'It stops moving. He waits a moment longer than he needs to.' },
     ],
   },
   /**
@@ -263,13 +281,53 @@ export const PREP = {
   charge: {
     keeps: 0, note: 'Current is not something you take home in a box.',
     steps: [
-      { id: 'plug', t: 0.9, say: 'The cable goes in. Nothing about this is a meal.' },
-      { id: 'hand', t: 1.6, say: 'A handshake with the station bus. It is refused once, then allowed.' },
-      { id: 'draw', t: 2.4, say: 'Current. The status ring cycles and it takes exactly as long as it takes.' },
-      { id: 'seat', t: 0.9, say: 'Full. The cable is stowed and the hatch shuts itself.' },
+      { id: 'plug', t: 0.9, move: 'plug', say: 'The cable goes in. Nothing about this is a meal.' },
+      { id: 'hand', t: 1.6, move: 'still', say: 'A handshake with the station bus. It is refused once, then allowed.' },
+      { id: 'draw', t: 2.4, move: 'charge', say: 'Current. The status ring cycles and it takes exactly as long as it takes.' },
+      { id: 'seat', t: 0.9, move: 'lift', say: 'Full. The cable is stowed and the hatch shuts itself.' },
     ],
   },
 };
+
+/**
+ * ══ WHAT STANDS ON THE STALL, PER PREP ════════════════════════════════════
+ *
+ * Eleven preps, eleven fit-outs, and the words are the only thing this file
+ * holds about them: `StationKit.CookSet` turns `vessel: 'wok'` into a lathe of
+ * a given radius in the deck's own materials, and nothing here knows what a
+ * material is. It is on the PREP for the reason `steps` and `keeps` are on it
+ * — a dish that is made in a basket keeps like a basket and LOOKS like a
+ * basket, and three tables would let those three drift apart.
+ *
+ *   vessel  the thing the food is in — the one piece a move can lift, tip,
+ *           shake or take a lid off.
+ *   tool    what is in his hand: a ladle, a wire spider, a knife, a cable.
+ *           `null` for the preps where both hands are on the vessel.
+ *   lid     whether there is one to come off, which is a move of its own.
+ *   fire    'burner' (a ring of flame under the vessel), 'coals' (a bed of
+ *           them, which glows rather than flickers), 'ring' (a status ring,
+ *           for the droid, which is the one that is not heat at all), or
+ *           null — a cold prep has nothing to light.
+ */
+export const GEAR = {
+  wok: { vessel: 'wok', tool: 'ladle', lid: false, fire: 'burner' },
+  fry: { vessel: 'vat', tool: 'spider', lid: false, fire: 'burner' },
+  pot: { vessel: 'pot', tool: 'ladle', lid: true, fire: 'burner' },
+  steam: { vessel: 'basket', tool: null, lid: true, fire: 'burner' },
+  grill: { vessel: 'grate', tool: 'brush', lid: false, fire: 'coals' },
+  pass: { vessel: null, tool: 'paper', lid: false, fire: null },
+  poured: { vessel: 'bottle', tool: null, lid: false, fire: null },
+  cold: { vessel: 'board', tool: 'knife', lid: false, fire: null },
+  sealed: { vessel: 'jar', tool: null, lid: false, fire: null },
+  live: { vessel: 'tank', tool: null, lid: true, fire: null },
+  charge: { vessel: 'post', tool: 'cable', lid: false, fire: 'ring' },
+};
+
+/** The fit-out for a dish, or null if nobody has said how it is made. */
+export function gearFor(dish) {
+  const p = prepOf(dish);
+  return p ? GEAR[p.id] || null : null;
+}
 
 /**
  * WHICH DISH IS MADE WHICH WAY — one word each, and there is no default.
@@ -392,7 +450,12 @@ export function cookFor(dish) {
     prep: p.id,
     steps: [
       ...p.steps.map((s) => ({ ...s })),
-      { id: 'over', t: HANDOVER, say: `${d.name}. ${d.blurb}` },
+      /* AND THE HAND-OVER IS A MOVE TOO. `serve` is the one step in every
+       * sequence that crosses the middle of the counter: the dish is set down
+       * on YOUR side of the top and his hands come back empty. Without it the
+       * last thing a cook did was tip a pan, and the thing the player paid for
+       * arrived in a banner line. */
+      { id: 'over', t: HANDOVER, move: 'serve', say: `${d.name}. ${d.blurb}` },
     ],
   };
 }
@@ -404,6 +467,310 @@ export function cookSeconds(dish) {
 }
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  WHAT IT LOOKS LIKE — the numbers a stall moves by                         */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ THE MOVES, AND WHY THERE ARE NINETEEN OF THEM AND NOT ELEVEN ══════════
+ *
+ * A move per PREP would be eleven loops that share nothing, and the second
+ * time somebody adds a prep they would write a twelfth from scratch. A move
+ * per VERB is a vocabulary: forty-one steps across eleven preps draw on
+ * nineteen of these, the wok and the pot both `pour`, and a new prep is
+ * assembled out of moves that already read right rather than authored.
+ *
+ * Each is a pure function of how far through its own step you are, so the
+ * whole of a cook is drivable — and measurable — without a mesh.
+ */
+export const MOVES = [
+  'still', 'take', 'heat', 'toss', 'stir', 'dip', 'turn', 'lift', 'lidon', 'lidoff',
+  'cut', 'pour', 'check', 'ring', 'dust', 'serve', 'plug', 'charge', 'shudder',
+];
+
+/**
+ * ══ THE STALL'S OWN FRAME ═════════════════════════════════════════════════
+ *
+ * Every number `cookPose` returns is METRES in one frame and one only: the
+ * origin is the middle of the counter's TOP, +Y is up, +Z points at the
+ * customer and +X is the cook's right hand. `StationKit.counter()` already
+ * records the two world points that frame is built from — `at` and `front` —
+ * so nothing here has to know a room's yaw, a deck's height or how deep the
+ * push stack was when the desk was emitted, and the same numbers land on a
+ * 0.7 m pass at #15 and a 1.1 m stall at #17.
+ *
+ * NEGATIVE Z IS THE COOK'S SIDE. He stands at about z = −1, his hands work
+ * over the near half of the top, and the one thing that crosses the middle is
+ * the dish — which is the whole point of the last move.
+ */
+export const WORK = { x: -0.10, z: -0.16 };
+export const PLATE = { x: 0.20, z: 0.26 };
+/** Where the vessel comes up from, and where a lid is set aside. */
+const UNDER = -0.62;
+
+const smooth = (x) => { const k = clamp01(x); return k * k * (3 - 2 * k); };
+const mix = (a, b, k) => a + (b - a) * k;
+
+/**
+ * ONE FRAME OF ONE COOK.
+ *
+ * @param prep  a `PREP` key — 'wok', 'grill', 'charge' …
+ * @param move  the step's own `move` (see MOVES); anything else stands still
+ * @param u     how far through THIS step, 0..1
+ * @param t     seconds since the cook started, for the things that breathe
+ * @returns every piece's place in the stall's frame, and both of his hands
+ *
+ * ── IT RETURNS A FRESH OBJECT AND THAT IS DELIBERATE ─────────────────────
+ *
+ * A pooled record would be the cheaper shape and the wrong one: `food.mjs`
+ * holds two poses from different moments of the same cook side by side and
+ * subtracts them, which is how the check can say a wok travelled 31 cm rather
+ * than that a flag was set. One allocation per cook per frame, for the four
+ * seconds a cook lasts, against a station that allocates a body a second.
+ */
+export function cookPose(prep, move, u = 0, t = 0) {
+  const g = GEAR[prep] || GEAR.cold;
+  const k = clamp01(u);
+  /* THE REST POSE, and every move below is a departure from it. The sway is
+   * the one thing that never stops: a man standing at a counter with his
+   * hands still is a photograph, and this is the cheapest thing that is not
+   * one. */
+  const sway = 0.012 * Math.sin(t * 1.7);
+  const p = {
+    vessel: { x: WORK.x, y: 0.055, z: WORK.z, tilt: 0, spin: 0 },
+    lid: { x: WORK.x, y: 0.125, z: WORK.z, off: 0 },
+    tool: { x: WORK.x + 0.17, y: 0.10, z: WORK.z - 0.10, tilt: 0.4, roll: 0 },
+    dish: { x: WORK.x, y: 0.02, z: WORK.z + 0.06, size: 0 },
+    hand: {
+      L: { x: -0.30 + sway, y: 0.05, z: -0.34 },
+      R: { x: 0.30 + sway, y: 0.05, z: -0.34 },
+    },
+    fire: g.fire ? 0.16 : 0,
+    steam: 0,
+    lean: 0.06, bow: 0.14, sway,
+  };
+  /* The hand that holds the tool holds it wherever the tool is, unless the
+   * move says otherwise — one line here rather than in nine moves. */
+  const grip = (o, dx = 0.10, dy = 0.14, dz = -0.13) => {
+    p.hand.R.x = o.x + dx; p.hand.R.y = o.y + dy; p.hand.R.z = o.z + dz;
+  };
+  const bothOn = (o, dy = 0.03) => {
+    p.hand.L.x = o.x - 0.15; p.hand.L.y = o.y + dy; p.hand.L.z = o.z - 0.09;
+    p.hand.R.x = o.x + 0.15; p.hand.R.y = o.y + dy; p.hand.R.z = o.z - 0.09;
+  };
+
+  switch (move) {
+    /* Nothing but the sway, and the fire ticking over if there is one. A
+     * quarter of the steps in the table are this on purpose — "nothing
+     * happens for a while, that is the whole method" is a line about a
+     * basket, and a basket that jiggled through it would be a lie. */
+    case 'still':
+      p.steam = g.fire ? 0.25 : 0;
+      p.vessel.y += 0.004 * Math.sin(t * 2.3);
+      break;
+
+    /* He reaches under the counter, or into the tray, and comes up with it. */
+    case 'take': {
+      const a = smooth(k);
+      p.vessel.y = mix(UNDER, 0.055, a);
+      p.tool.y = mix(UNDER, 0.10, a);
+      grip(g.vessel ? p.vessel : p.tool, 0.11, 0.05, -0.08);
+      p.lean = 0.06 + 0.40 * (1 - a);
+      p.bow = 0.14 + 0.34 * (1 - a);
+      break;
+    }
+
+    /* The burner comes up. A flare on the way, because a ring lighting is not
+     * a ramp, and the vessel shivers on it once it is hot. */
+    case 'heat': {
+      const a = smooth(k);
+      p.fire = 0.2 + 0.8 * a + 0.14 * Math.sin(k * 29) * a;
+      p.steam = 0.35 * a;
+      p.vessel.tilt = 0.05 * a * Math.sin(t * 9);
+      p.hand.L.x = p.vessel.x - 0.16; p.hand.L.y = 0.10; p.hand.L.z = p.vessel.z;
+      break;
+    }
+
+    /* Three tosses. The pan leaves the burner every time, which is the one
+     * motion in the whole file a player would notice missing. */
+    case 'toss': {
+      const n = 3, ph = k * n, fr = ph - Math.floor(ph);
+      const arc = Math.sin(Math.PI * fr);
+      p.vessel.y = 0.055 + 0.34 * arc;
+      p.vessel.tilt = 0.85 * Math.sin(2 * Math.PI * fr);
+      p.fire = 1;
+      p.steam = 0.35 + 0.65 * arc;
+      bothOn(p.vessel, 0.02);
+      p.lean = 0.18;
+      break;
+    }
+
+    /* A circle in the pot, three times round. */
+    case 'stir': {
+      const a = 2 * Math.PI * k * 3;
+      p.tool.x = WORK.x + 0.09 * Math.cos(a);
+      p.tool.z = WORK.z + 0.07 * Math.sin(a);
+      p.tool.y = 0.04;
+      p.tool.tilt = 0.55;
+      grip(p.tool, 0.13, 0.19, -0.15);
+      p.fire = g.fire ? 0.8 : 0;
+      p.steam = 0.75;
+      break;
+    }
+
+    /* Into the oil, and it stays in. */
+    case 'dip': {
+      const a = smooth(Math.min(1, k * 1.6));
+      const it = g.tool ? p.tool : p.vessel;
+      it.y = mix(0.16, -0.06, a);
+      grip(it, 0.12, 0.17, -0.14);
+      p.fire = g.fire ? 1 : 0;
+      p.steam = a;
+      p.lean = 0.16;
+      break;
+    }
+
+    /* Turned once, with the wrist. */
+    case 'turn': {
+      const a = smooth(k);
+      const it = g.tool ? p.tool : p.vessel;
+      it.y = 0.02 + 0.22 * Math.sin(Math.PI * a);
+      it.roll = Math.PI * a;
+      grip(it, 0.12, 0.16, -0.14);
+      p.fire = g.fire ? 0.9 : 0;
+      p.steam = 0.6;
+      break;
+    }
+
+    /* Up and out, and shaken twice on the way. */
+    case 'lift': {
+      const a = smooth(k);
+      const it = g.tool ? p.tool : p.vessel;
+      it.y = mix(-0.10, 0.30, a);
+      it.x += 0.022 * Math.sin(k * 38) * a;
+      grip(it, 0.12, 0.14, -0.13);
+      if (!g.tool) bothOn(it, 0.02);
+      p.fire = g.fire ? 0.5 * (1 - a) : 0;
+      p.steam = 0.8 * (1 - a);
+      break;
+    }
+
+    /* The lid, on and off. Both are one arc and a slide, and the steam does
+     * the opposite thing on each. */
+    case 'lidon': case 'lidoff': {
+      const a = smooth(k), off = move === 'lidoff' ? a : 1 - a;
+      p.lid.off = off;
+      p.lid.y = 0.125 + 0.17 * Math.sin(Math.PI * a);
+      p.lid.x = WORK.x + 0.36 * off;
+      p.steam = move === 'lidoff' ? mix(1, 0.45, a) : mix(0.15, 0.9, a);
+      grip(p.lid, 0.02, 0.09, -0.10);
+      p.fire = g.fire ? 0.6 : 0;
+      break;
+    }
+
+    /* Five chops down a board, working along it. */
+    case 'cut': {
+      const n = 5, ph = k * n, fr = ph - Math.floor(ph);
+      p.tool.x = WORK.x - 0.10 + 0.20 * k;
+      p.tool.z = WORK.z + 0.02;
+      p.tool.y = 0.02 + 0.13 * (1 - Math.cos(2 * Math.PI * fr)) / 2;
+      p.tool.tilt = 0.08;
+      grip(p.tool, 0.09, 0.13, -0.11);
+      p.hand.L.x = p.tool.x - 0.13; p.hand.L.y = 0.06; p.hand.L.z = p.tool.z - 0.02;
+      p.lean = 0.20; p.bow = 0.30;
+      break;
+    }
+
+    /* Tipped over the bowl, and the bowl fills as it goes. */
+    case 'pour': {
+      const a = smooth(k);
+      p.vessel.tilt = 1.15 * Math.sin(Math.PI * a);
+      p.vessel.x = mix(WORK.x, PLATE.x, 0.55 * a);
+      p.vessel.z = mix(WORK.z, PLATE.z, 0.55 * a);
+      p.vessel.y = 0.055 + 0.13 * Math.sin(Math.PI * a);
+      p.dish.x = mix(WORK.x, PLATE.x, 0.5);
+      p.dish.z = mix(WORK.z, PLATE.z, 0.5);
+      p.dish.size = smooth((k - 0.2) / 0.8);
+      bothOn(p.vessel, 0.04);
+      p.fire = g.fire ? 0.3 * (1 - a) : 0;
+      p.steam = 0.55;
+      break;
+    }
+
+    /* Held up to the light and turned. The one move where he looks up. */
+    case 'check': {
+      const a = smooth(k);
+      p.vessel.y = 0.055 + 0.44 * Math.sin(Math.PI * a);
+      p.vessel.spin = 2 * Math.PI * a;
+      bothOn(p.vessel, 0.02);
+      p.bow = -0.12; p.lean = -0.04;
+      break;
+    }
+
+    /* The bell on the pass, twice. */
+    case 'ring': {
+      const ph = k * 2, fr = ph - Math.floor(ph);
+      p.hand.R.x = 0.26; p.hand.R.z = -0.06;
+      p.hand.R.y = 0.05 + 0.20 * Math.sin(Math.PI * fr);
+      break;
+    }
+
+    /* Salt, by hand, from above. */
+    case 'dust': {
+      p.hand.R.x = WORK.x + 0.03; p.hand.R.z = WORK.z + 0.02;
+      p.hand.R.y = 0.34 + 0.028 * Math.sin(k * 44);
+      p.steam = 0.5;
+      p.fire = g.fire ? 0.3 : 0;
+      break;
+    }
+
+    /* Over the counter to you — the only thing in the file that crosses the
+     * middle of the top, and the hands come back without it. */
+    case 'serve': {
+      const a = smooth(k);
+      p.dish.size = smooth(k * 1.8);
+      p.dish.x = mix(WORK.x, PLATE.x, a);
+      p.dish.z = mix(WORK.z + 0.06, PLATE.z, a);
+      p.dish.y = 0.02;
+      const back = smooth((k - 0.7) / 0.3);
+      p.hand.R.x = mix(p.dish.x + 0.11, 0.30, back);
+      p.hand.R.y = 0.06;
+      p.hand.R.z = mix(p.dish.z - 0.12, -0.34, back);
+      p.fire = g.fire ? 0.16 * (1 - a) : 0;
+      p.steam = 0.4 * (1 - a);
+      p.lean = 0.10 * (1 - back);
+      break;
+    }
+
+    /* The droid's, and both of its moves are deliberately the dullest here. */
+    case 'plug': {
+      const a = smooth(k);
+      p.tool.x = mix(WORK.x, PLATE.x, a);
+      p.tool.z = mix(WORK.z, PLATE.z + 0.34, a);
+      p.tool.y = 0.06 + 0.11 * Math.sin(Math.PI * a);
+      grip(p.tool, 0.09, 0.12, -0.12);
+      break;
+    }
+    case 'charge':
+      p.tool.x = PLATE.x; p.tool.z = PLATE.z + 0.34; p.tool.y = 0.06;
+      p.fire = 0.5 + 0.5 * Math.sin(k * 8 * Math.PI);
+      break;
+
+    /* It stops moving, and he waits a moment longer than he needs to. */
+    case 'shudder': {
+      const a = Math.exp(-2.4 * k);
+      p.vessel.x = WORK.x + 0.024 * a * Math.sin(k * 57);
+      p.vessel.z = WORK.z + 0.019 * a * Math.sin(k * 41 + 1.3);
+      p.vessel.tilt = 0.11 * a * Math.sin(k * 33);
+      bothOn(p.vessel, 0.05);
+      p.lean = 0.26;
+      break;
+    }
+    default: break;
+  }
+  return p;
+}
 
 /**
  * ══ ONE COOKING, IN PROGRESS ══════════════════════════════════════════════
@@ -427,6 +794,10 @@ export class Cook {
     this.sink = sink;
     this.i = 0;
     this.t = 0;
+    /* Since the whole thing started, for the parts of a pose that breathe
+     * rather than progress — see `cookPose`'s `t`. `this.t` cannot serve: it
+     * is reset at every step boundary, so a sway driven off it would snap. */
+    this.elapsed = 0;
     this.done = this.steps.length === 0;
     this._said = -1;
     this.seconds = this.steps.reduce((a, s) => a + s.t, 0);
@@ -437,6 +808,26 @@ export class Cook {
 
   /** The line on screen right now, or null. */
   get line() { return this.done ? null : this.steps[this.i].say; }
+
+  /**
+   * WHAT HIS HANDS ARE DOING RIGHT NOW, and how far into doing it.
+   *
+   * Two getters and not a second clock: a surface that kept its own idea of
+   * which step was running would be the twin this file's header spends a
+   * paragraph refusing, and it would drift on exactly the frame a big `dt`
+   * carried the sequence over two steps at once. `move` is null on a step
+   * nobody has given one to, which reads as "stand still" rather than as an
+   * error — the geometry is a consequence of the table, never a second copy
+   * of it.
+   */
+  get move() { return this.done ? 'serve' : (this.steps[this.i].move || null); }
+
+  /** How far through THIS step, 0..1. One when the thing is over the counter. */
+  get within() {
+    if (this.done) return 1;
+    const s = this.steps[this.i];
+    return s.t > 0 ? clamp01(this.t / s.t) : 1;
+  }
 
   /** How far through, 0..1 — for a bar, if a surface wants one. */
   get progress() {
@@ -457,7 +848,9 @@ export class Cook {
    */
   step(dt) {
     if (this.done) return 'done';
-    this.t += Number(dt) || 0;
+    const d = Number(dt) || 0;
+    this.t += d;
+    this.elapsed += d;
     for (;;) {
       if (this._said !== this.i) {
         this._said = this.i;

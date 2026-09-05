@@ -339,10 +339,22 @@ export const COMPANION_LOOK = {
  * limits them is how many runs the animal has actually been out on.
  */
 export const CARE_WORDS = Object.freeze({
-  creature: { meals: 'Feed', grooms: 'Groom', fed: 'fed', groomed: 'groomed', at: 'the trough' },
-  mount: { meals: 'Feed', grooms: 'Brush down', fed: 'fed', groomed: 'brushed down', at: 'the trough' },
-  wookiee: { meals: 'Share a meal', grooms: 'Comb out', fed: 'fed', groomed: 'combed out', at: 'the galley hatch' },
-  droid: { meals: 'Charge', grooms: 'Service', fed: 'charged', groomed: 'serviced', at: 'the charging post' },
+  creature: {
+    meals: 'Feed', grooms: 'Groom', plays: 'Play with it',
+    fed: 'fed', groomed: 'groomed', played: 'played with', at: 'the trough',
+  },
+  mount: {
+    meals: 'Feed', grooms: 'Brush down', plays: 'Work it out',
+    fed: 'fed', groomed: 'brushed down', played: 'worked out', at: 'the trough',
+  },
+  wookiee: {
+    meals: 'Share a meal', grooms: 'Comb out', plays: 'Wrestle',
+    fed: 'fed', groomed: 'combed out', played: 'wrestled with', at: 'the galley hatch',
+  },
+  droid: {
+    meals: 'Charge', grooms: 'Service', plays: 'Run a drill',
+    fed: 'charged', groomed: 'serviced', played: 'drilled', at: 'the charging post',
+  },
 });
 
 /** The care vocabulary this kind's chassis uses. Never a switch on a kind. */
@@ -620,6 +632,35 @@ export function paceOf(kind) {
 }
 
 /**
+ * ── HOW WIDE THE RING ROUND YOU IS, AFTER EVERY TEMPER IT WEARS ───────────
+ *
+ * `K.ward` is the kind's own metres — "meet anything that gets within this of
+ * ME" — and `TEMPER_AXES.ward` is the axis two tempers move: RANGING buys
+ * 4.5 m of it and KEPT sells 4.5 m of it. Until this reader existed the swing
+ * was computed and thrown away, so KEPT's whole printed cost ("will not stand
+ * a ward as wide as it once did") was a sentence on a screen and nothing else.
+ *
+ * THIS LIVES HERE AND NOT BESIDE `leashOf`, WHICH IS WHERE IT BELONGS, FOR
+ * ONE REASON: three files need it and one of them cannot import the file it
+ * belongs in. `Companions.js` imports `CompanionLife.js`, so the life layer's
+ * gaze — which watches the ward ring — cannot import back without a cycle,
+ * and `HUD.js` prints the same number on the wheel. Both of them already
+ * import THIS file. One reader, three callers, no cycle; a second spelling of
+ * `K.ward + swing` in any of the three is a ring that is drawn at one radius
+ * and defended at another.
+ *
+ * A KIND WITH NO WARD STAYS AT ZERO. `ward: 0` is how the table says "this one
+ * does not do that", and a temper must not hand a tooka a tripwire it was
+ * never given — so the swing is only ever applied to a ring that already
+ * exists, and the result is floored at zero either way.
+ */
+export function wardOf(e) {
+  const base = Math.max(0, Number(COMPANION_KINDS[e?._cmpKind]?.ward) || 0);
+  if (base <= 0) return 0;
+  return Math.max(0, base + (Number(e?._cmpSwing?.ward) || 0));
+}
+
+/**
  * ══════════════════════════════════════════════════════════════════════════
  *  HOW LONG IT HAS BEEN ALIVE — THE FOUR STAGES
  * ══════════════════════════════════════════════════════════════════════════
@@ -677,14 +718,31 @@ export const GROWTH_STAGES = Object.freeze([
 ]);
 
 /**
- * WHAT HAS BEEN DONE FOR IT, as one number. Meals and grooms are two acts and
- * one tally, because the stage gates ask "was this animal looked after" and
- * not "was it fed rather than brushed" — and a droid takes a cell where an
- * animal takes a meal, which is the same act with the noun the kind's own row
- * supplies. See `fareOf`.
+ * THE THREE FIELDS `careOf` ADDS UP, AND WHY THE LIST IS HERE AND NOT IN
+ * `Kennel.CARE_ACTS`.
+ *
+ * They are the same three words and they are deliberately not the same
+ * constant: `CARE_ACTS` is a WRITE WHITELIST on a door a screen presses, and
+ * this is a READ over fields on a record. Kennel.js imports this file, so a
+ * constant living there and read here would be a cycle — and the pin on
+ * `careFor` (`companion: the care door has its own pin`) asserts the two
+ * lists are the same three words, which is the check doing the joining rather
+ * than an import that cannot exist.
+ */
+export const CARE_TALLIES = Object.freeze(['meals', 'grooms', 'plays']);
+
+/**
+ * WHAT HAS BEEN DONE FOR IT, as one number. Three acts and ONE tally, because
+ * the stage gates ask "was this animal looked after" and not "was it fed
+ * rather than brushed rather than played with" — and a droid takes a cell
+ * where an animal takes a meal and runs a drill where an animal chases a rope,
+ * which is the same act with the noun the kind's own row supplies. See
+ * `CARE_WORDS`.
  */
 export function careOf(rec) {
-  return Math.max(0, (Number(rec?.meals) || 0) | 0) + Math.max(0, (Number(rec?.grooms) || 0) | 0);
+  let n = 0;
+  for (const act of CARE_TALLIES) n += Math.max(0, (Number(rec?.[act]) || 0) | 0);
+  return n;
 }
 
 /**

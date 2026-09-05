@@ -1255,4 +1255,110 @@ export async function run({ check, assert, near, THREE: T }) {
     return `bore against aim: ${rows.join(', ')}`;
   });
 
+  check('characters: off duty is not the Order’s robe repainted', async () => {
+    /**
+     * V15, about the station's cast: *"not in jedi clothes obviously, they
+     * would have to have unique non jedi clothing."*
+     *
+     * ── WHAT WAS SHIPPING WHEN THIS WAS WRITTEN ──────────────────────────
+     *
+     * `StationCast.js` built every humanoid Borz resident with
+     * `buildJedi({ species, robe: R.robe, hood: false })` — one archetype per
+     * row, one palette per archetype. Measured: `res_borz_crew` and a bare
+     * `buildJedi()` each built **62 meshes in a byte-identical order**, both
+     * with `robeSkirt` handed out, and the only difference between a clone
+     * crewman drinking off duty and a Jedi was `#8e9b80` where `#dfcfad` had
+     * been. Eight roles, one garment, eight paint jobs. Same again for the
+     * fifteen species rows: the human resident WAS the reference figure.
+     *
+     * ── WHY THIS IS A SHAPE TEST AND NOT A COLOUR TEST ───────────────────
+     *
+     * Because a colour test is what a repaint passes. The signature below is
+     * derived from the built body and carries nothing a palette can move —
+     * every mesh under the rig as its geometry type and vertex count, sorted,
+     * with no material, no colour and no name in it. A row that answers this
+     * has to have changed what is drawn.
+     *
+     * Nor is it a count. `assert(meshes !== 62)` would pass the moment
+     * somebody hung a pouch on the robe, and it would go red on a legitimate
+     * cut that happened to land on 62. The comparison is against the figure
+     * the builder actually produces today, re-derived every run, so it cannot
+     * drift away from what it is guarding.
+     *
+     * ── AND THE SECOND HALF, WHICH IS THE ONE THAT CATCHES THE NEXT ONE ──
+     *
+     * A row declares its dress — `wear` names a `TOP_CUTS` id and `hood` a
+     * `HOOD_CUTS` id. Two rows that declare DIFFERENT dress must build
+     * different bodies, and two that declare the same must build the same. A
+     * `wear` the builder forgets to pass is then a failure and not a comment:
+     * eight rows declaring eight cuts and building one body is precisely the
+     * shape the original defect had, in a tree where the table looks correct.
+     */
+    const { residents, BORZ_RESIDENTS, borzArchetype, SPECIES_KEYS } =
+      await import('../../src/game/StationCast.js');
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+
+    /** What a body is, with every colour taken out of it. */
+    const wardrobe = (root) => {
+      const out = [];
+      root.updateMatrixWorld(true);
+      root.traverse((o) => {
+        const pos = o.isMesh && o.geometry && o.geometry.attributes
+          && o.geometry.attributes.position;
+        if (pos) out.push(`${o.geometry.type}[${pos.count}]`);
+      });
+      return out.sort().join(' ');
+    };
+    const rootOf = (b) => (b.rig ? b.rig.root : b.group);
+
+    const jedi = wardrobe(rootOf(B.buildJedi({})));
+    const jediN = jedi.split(' ').length;
+    /* THE INSTRUMENT'S OWN GUARD. A signature derived off a body that failed
+     * to build is the empty string, and every comparison below would pass
+     * against it — the check would go green on a tree where nothing is
+     * dressed at all. */
+    assert(jediN > 40, `the reference figure built ${jediN} meshes — this check is measuring nothing`);
+
+    const sigs = new Map();
+    for (const r of residents()) {
+      if (sigs.has(r.builder)) continue;
+      const A = ARCHETYPES[r.builder];
+      assert(A && typeof A.build === 'function',
+        `the resident manifest names "${r.builder}" and nothing registers it`);
+      const sig = wardrobe(rootOf(A.build({})));
+      assert(sig && sig !== jedi,
+        `${r.builder} builds a default buildJedi() mesh for mesh — an off-duty resident in the `
+        + 'Order’s own robe with the palette moved is exactly the defect this check exists for');
+      sigs.set(r.builder, sig);
+    }
+    /* AND THE LOOP RAN. An empty manifest is a green check about nothing. */
+    assert(sigs.size >= SPECIES_KEYS.length + 8,
+      `only ${sigs.size} resident bodies were built; the station has ${SPECIES_KEYS.length} species `
+      + 'and eight humanoid Borz roles before any mode contributes one');
+
+    /* ── the declared dress against the built dress ── */
+    const byDress = new Map(), bySig = new Map(), worn = [];
+    for (const R of BORZ_RESIDENTS) {
+      if (R.resident === false || R.own) continue;
+      const dress = `${R.wear || 'tunic'}+${R.hood || 'bare-headed'}`;
+      const sig = sigs.get(borzArchetype(R));
+      assert(sig, `${R.id} is a humanoid Borz row with no body built for it`);
+      const same = byDress.get(dress);
+      assert(!same || same[1] === sig,
+        `${R.id} and ${same && same[0]} both declare "${dress}" and build different bodies`);
+      const clash = bySig.get(sig);
+      assert(!clash || clash[1] === dress,
+        `${R.id} declares "${dress}" and ${clash && clash[0]} declares "${clash && clash[1]}", and the `
+        + 'two build the same body mesh for mesh — one of those two fields is not being read');
+      byDress.set(dress, [R.id, sig]);
+      bySig.set(sig, [R.id, dress]);
+      worn.push(`${R.id} ${dress} ${sig.split(' ').length}`);
+    }
+    assert(bySig.size >= 8,
+      `the eight off-duty roles build only ${bySig.size} distinct bodies between them`);
+
+    return `${sigs.size} residents, none of them a default buildJedi (${jediN} meshes); `
+      + `${bySig.size} distinct off-duty silhouettes — ${worn.join(', ')}`;
+  });
+
 }

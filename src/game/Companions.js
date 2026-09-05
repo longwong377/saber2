@@ -87,9 +87,9 @@
 import { TAU } from '../engine/MathUtil.js';
 import * as THREE from '../../vendor/three/three.module.js';
 import { ARCHETYPES } from './Enemy.js';
-import { COMPANION_KINDS, COMPANION_RANKS, holdsCompanion, kindHasDuty, paceOf, rungOf, bodyScaleOf, growthOptsFrom } from './CompanionKinds.js';
+import { COMPANION_KINDS, COMPANION_RANKS, holdsCompanion, kindHasDuty, paceOf, rungOf, bodyScaleOf, growthOptsFrom, wardOf } from './CompanionKinds.js';
 import { spawnClear } from './Spawn.js';
-import { award, RANGED_MARK, rangedRun, readOne, temperSwing } from './Kennel.js';
+import { award, RANGED_MARK, rangedRun, readOne, shyTemper, temperSwing } from './Kennel.js';
 /* The cruise/stoop model, for the one kind that never lands — see `adopt`. */
 import { installFlight } from './Flight.js';
 /* The friendly-fire scaling every ally in the game already gets — see
@@ -596,6 +596,22 @@ export function orderLanded(e) {
  */
 export function stationFor(e, out) {
   const D = e._cmpDuty;
+  /**
+   * A FRIGHTENED ANIMAL COMES TO YOU, AND IT COMES BEFORE ANYTHING ELSE IS
+   * ASKED — see `stepShy`. This is the whole of "a bonded one panics when it
+   * is hurt": for `SHY.run` seconds the station is your heel whatever it was
+   * standing on, so a KEPT animal breaks off the ground you gave it, breaks
+   * off its verb, and runs back.
+   *
+   * IT DOES NOT CANCEL THE ORDER, and the difference matters. `panicRun` — the
+   * mount's buck, one screen down — ENDS the duty, because a thrown rider is a
+   * thing you have to deal with and a tauntaun that bolts is out of the fight.
+   * A frightened dog is not: it wants you for three seconds and then it is
+   * still under the order you gave it. Cancelling would have made every hit a
+   * KEPT animal took into a silent wheel press the player has to notice and
+   * undo, which is a worse drawback than the one the design asked for.
+   */
+  if (e._cmpShy > 0 && e._cmpOwner?.position) return heelStation(e, out);
   if (D?.id === 'hold' && e._cmpPoint) return out.copy(e._cmpPoint);
   /**
    * AND FIVE OF THE TWELVE VERBS MOVE IT SOMEWHERE ELSE ENTIRELY — in front of
@@ -615,6 +631,19 @@ export function stationFor(e, out) {
     const W = verbWork(e);
     if (W?.station && W.station(e, out)) return out;
   }
+  return heelStation(e, out);
+}
+
+/**
+ * THE HEEL MARK ITSELF — the station when no order has moved it, and the one
+ * a frightened animal runs to whatever order it was under.
+ *
+ * Split out of `stationFor` rather than copied, for that function's own stated
+ * reason: two readers with two ideas of where the animal is supposed to be
+ * standing is a companion that hunts round one place and walks to another.
+ */
+function heelStation(e, out) {
+  const D = e._cmpDuty;
   const p = e._cmpOwner;
   if (!p?.position) return out.copy(e._cmpHome || e.position);
   /**
@@ -629,6 +658,13 @@ export function stationFor(e, out) {
    *
    * This is what `DEEDS.reached` and the SWORN rung are both measured against
    * — see the move wrap, which is the half that actually walks it there.
+   *
+   * AND THE STANDOFF DOES NOT APPLY TO IT EITHER. An exposed animal stands
+   * four metres further off a man who is on his feet; over a man who is down
+   * it stands on him, exactly as every other companion does, because the one
+   * thing that branch exists for is `DEEDS.reached` and the SWORN rung — and a
+   * temper that quietly moved a body out of `DOWN_HELP` would be deleting the
+   * last rung's second half from one row of a different table.
    */
   if (p.alive === false || p.dead) return out.copy(p.position);
   const yaw = p.aimDir ? Math.atan2(p.aimDir.x, p.aimDir.z) : (p.facing || 0);
@@ -636,7 +672,10 @@ export function stationFor(e, out) {
    * an ordinary heel out from under your feet; a companion told to break off
    * is a companion you want between you and nothing at all. */
   const side = D?.id === 'away' ? 0 : HEEL.side * (e._cmpSide ?? 1);
-  const back = HEEL.back * (D?.id === 'away' ? 1.35 : 1);
+  /* AND HOW MUCH FURTHER OFF YOU IT STANDS THAN IT SHOULD — `standoffOf`, the
+   * one reader of the `exposure` axis. Zero for every animal that has not
+   * earned KEEN, which is what makes this line free. */
+  const back = HEEL.back * (D?.id === 'away' ? 1.35 : 1) + standoffOf(e);
   return out.set(
     p.position.x - Math.sin(yaw) * back - Math.cos(yaw) * side,
     p.position.y,
@@ -673,6 +712,69 @@ export function leashOf(e) {
  *  because a tuk'ata ranges and a tooka clings — one slack, one row. */
 export function settledBand(e) {
   return SETTLED * HEEL.slack * (COMPANION_KINDS[e?._cmpKind]?.heel ?? 1);
+}
+
+/**
+ * ── HOW LONG AN ORDER SURVIVES YOU WALKING AWAY ───────────────────────────
+ *
+ * `TEMPER_AXES.hold` is "seconds an order survives you walking away", span
+ * 8 s, and until this reader existed NOTHING in the tree read it: HEAVY's
+ * whole gain — "holds a spot longer once you have given it one" — and
+ * SCARRED's were both printed in the habitat and both did nothing, so two of
+ * the five axes bought a sentence and the third one bought a metre.
+ *
+ * WHAT IT BUYS IS A GRACE ON THE LEASH AND NOT A LONGER LEASH, which is the
+ * distinction that keeps it off `reach`'s axis. The rope is the same length;
+ * what changes is what happens the moment it goes taut. An animal with no
+ * hold is pulled off whatever it is doing on the frame you drag it past the
+ * end — that is the shipped behaviour and it is what a base of ZERO preserves
+ * exactly. An animal with hold plants itself and goes on doing the thing for
+ * this many seconds first.
+ *
+ * BASE ZERO, DELIBERATELY. Every kind on the roster keeps the behaviour it
+ * shipped with; the seconds are earned, and only two rows on the temper table
+ * earn any. That is also what makes the mutation measurable in one number: the
+ * frame the animal starts walking home moves by exactly this many seconds.
+ */
+export function holdOf(e) {
+  const sw = e?._cmpSwing;
+  return Math.max(0, sw ? sw.hold : 0);
+}
+
+/**
+ * ── HOW MUCH FURTHER OFF YOU IT STANDS THAN IT SHOULD ─────────────────────
+ *
+ * `TEMPER_AXES.exposure` is "metres of extra distance-from-you, as a
+ * liability", and KEEN is the one row that carries it: `down: { exposure: 4 }`
+ * — *"which is exactly how it gets killed"*. That sentence was priced, printed
+ * in the habitat, and inert: KEEN's `up: { reach: 4 }` landed in `leashOf` and
+ * its cost landed nowhere, so the temper was a free four metres of rope.
+ *
+ * ── THE SIGN, WHICH IS THE ONE THING TO GET RIGHT HERE ────────────────────
+ *
+ * `temperSwing` signs a `down` NEGATIVE, because on the other four axes `up`
+ * is the good direction and a cost is a subtraction. `exposure` is the one
+ * axis whose own positive direction is a LIABILITY — the table says so in as
+ * many words — so a temper that costs 4 m of exposure has bought 4 m of the
+ * bad thing, and the swing arrives here as −4. It is negated once, in this
+ * one function, with that stated: a second reader that forgot would put the
+ * animal four metres CLOSER to you as its punishment.
+ *
+ * WHAT IT ACTUALLY DOES is move the heel mark further off your back. A brave
+ * animal does not stand at your shoulder; it stands out in front of your
+ * cover, in everybody's line, four metres further from the one man on the
+ * field who can do anything about it. That is the liability the axis names,
+ * and it is exactly the metres KEEN's reach bought — the same four, read from
+ * the two ends, which is the temper's own note.
+ *
+ * IT IS THE HEEL AND NOT THE VERB STATIONS. BLOCK stands it in front of you at
+ * `BLOCK.hold`, SLICE at a door, BOLT seventy metres away; none of those is
+ * "distance from you at rest" and adding to them would be this axis buying its
+ * way into five verbs it has nothing to say about.
+ */
+export function standoffOf(e) {
+  const sw = e?._cmpSwing;
+  return Math.max(0, sw ? -sw.exposure : 0);
 }
 
 /** How far it is standing from where it is supposed to be, on the ground. */
@@ -788,6 +890,11 @@ export function ownerUp(e) {
  */
 export function dutyAllows(e, foe, home, leash) {
   const D = e._cmpDuty;
+  /* A FRIGHTENED ANIMAL DOES NOT FIGHT — the other half of `stepShy`, and it
+   * is here for AWAY's reason: a refusal to fight is a property of the animal
+   * and not of a position, so it is unconditional and there is no hostile
+   * close enough to override it. Three seconds, on a KEPT record only. */
+  if (e._cmpShy > 0) return false;
   /* AWAY IS A REFUSAL TO FIGHT, HELD UNTIL CANCELLED. Not a position — the
    * station moves too, but this is the half that makes it different from
    * HEEL, and it is unconditional: there is no hostile close enough to
@@ -800,7 +907,13 @@ export function dutyAllows(e, foe, home, leash) {
    * within a certain range of you" said precisely. */
   if (D?.id === 'ward') {
     const p = e._cmpOwner;
-    const r = COMPANION_KINDS[e._cmpKind]?.ward || 0;
+    /* AND THE RING IS THE KIND'S OWN PLUS EVERY TEMPER IT WEARS — `wardOf`,
+     * the one reader, which is also what the wheel prints and what the gaze
+     * layer watches. Read as `K.ward` here for four rounds, which is why
+     * RANGING's "its ward reaches half again as far" and KEPT's "will not
+     * stand a ward as wide as it once did" were both printed and neither
+     * happened. */
+    const r = wardOf(e);
     if (!p?.position || r <= 0) return false;
     return foe.position.distanceToSquared(p.position) <= r * r;
   }
@@ -1506,6 +1619,71 @@ export const BOLT = { run: 4.5, far: 70, pull: 30 };
  * pace it deliberately does not raise — is what a panicking tauntaun does.
  */
 export const PANIC = { near: 15, hit: 0.06, ease: 1.4, calm: 3 };
+
+/** ── THE SHY ────────────────────────────────────────────────────────────
+ *
+ * *"a companion that only ever helps is a stat. A big one is slow and loud; A
+ *  BONDED ONE PANICS WHEN IT IS HURT."* — V15 §4, and the second half of that
+ * sentence had no mechanic behind it. HEAVY carried the first half from the
+ * day it landed (`hold` up, `recall` down, and the reader for `hold` arrived
+ * on this pass); KEPT carried a bond that bought four metres of recall and
+ * sold a ring, which is a trade. This is the panic.
+ *
+ * WHAT IT IS: on any frame a KEPT animal LOSES HEALTH it breaks off, refuses
+ * every target for `run` seconds, and its station becomes your heel whatever
+ * order it was under. It is the same three things a frightened dog does — stop
+ * fighting, leave the spot, come to the person — and it costs the player the
+ * animal's contribution for exactly as long as it lasts.
+ *
+ * `calm` IS WHAT KEEPS IT A DRAWBACK RATHER THAN A DELETION. Without it, one
+ * hostile firing at a rate of more than one bolt every three seconds keeps a
+ * KEPT animal permanently out of every fight, which is not a drawback, it is
+ * "this temper removes your companion". Six seconds of nerve after a panic
+ * ends means the worst case is roughly two seconds shy in every five — felt on
+ * every exchange, fatal to none of them.
+ *
+ * IT IS NOT `PANIC`, AND THE TWO ARE DELIBERATELY NOT MERGED. `PANIC` is the
+ * SADDLE's — a threshold in hostile-seconds that throws a rider and starts the
+ * kind's own verb, scoped to a mount with a `panic` row and to a frame
+ * somebody is on it. This is a temper, on any kind, unridden, with no
+ * threshold and no verb: the trigger is one subtraction and the effect is
+ * three seconds of a station. Sharing a clock between them would have made the
+ * tauntaun's buck depend on what the tauntaun had been fed.
+ */
+export const SHY = { run: 3.0, calm: 6.0 };
+
+/**
+ * ONE FRAME OF BEING FRIGHTENED BY A WOUND, for a record that wears the
+ * temper that does that.
+ *
+ * The gate is FIRST and it is the cheap one: no `shy` temper, no field
+ * written, no clock, nothing. `shyTemper` reads a flag on the temper row
+ * rather than a temper id spelled out here — see Kennel.js — so a second
+ * temper that panics is a row and not a branch.
+ */
+function stepShy(e, dt) {
+  if (!shyTemper(e._cmpRec)) return;
+  const hp = e.hp ?? 0;
+  if (e._cmpShy > 0) {
+    /* IT DOES NOT BANK THE HITS IT TAKES WHILE IT IS RUNNING. The wound that
+     * started the panic is the one being answered; counting the next one would
+     * make a burst into a panic per bolt and the clock would never end. */
+    e._cmpShyHp = hp;
+    e._cmpShy -= dt;
+    if (e._cmpShy <= 0) { e._cmpShy = 0; e._cmpShyCalm = SHY.calm; }
+    return;
+  }
+  if (e._cmpShyCalm > 0) e._cmpShyCalm = Math.max(0, e._cmpShyCalm - dt);
+  const lost = Math.max(0, (e._cmpShyHp ?? hp) - hp);
+  e._cmpShyHp = hp;
+  if (lost <= 0 || e._cmpShyCalm > 0) return;
+  e._cmpShy = SHY.run;
+  e._cmpShies = (e._cmpShies || 0) + 1;
+  /* AND THE BODY IT WAS ON GOES WITH IT, for `orderCompanion`'s own reason:
+   * `_think` may not run for a third of a second while a reaction owns the
+   * body, and a target written before the panic would survive into it. */
+  e.target = null;
+}
 
 /**
  * ONE FRAME OF BEING FRIGHTENED, for a kind that can be.
@@ -2348,8 +2526,37 @@ function installCompanionMove(e) {
        * up; the wrap that walks the animal home and the ledger that decides it
        * crossed an area "inside the leash" must be reading the same rope. */
       const leashNow = leashOf(e);
-      const dragged = d > leashNow;
-      if (dragged || !busy) {
+      /**
+       * ── AND HOW LONG IT KEEPS DOING WHAT IT IS DOING ONCE THE ROPE GOES
+       *    TAUT — `holdOf`, the one reader of the `hold` axis.
+       *
+       * The rope is the same length either way; this is the grace on the
+       * moment it snaps. `_cmpHeld` is how many seconds it has been past the
+       * end of it, reset the frame it is back inside — so an animal with no
+       * hold is `dragged` on the first frame past the leash, which is the
+       * shipped behaviour to the frame, and an animal with HEAVY's two seconds
+       * plants itself and finishes what it was doing first.
+       *
+       * `holding` SUPPRESSES THE WALK HOME AS WELL AS THE DRAG, which is what
+       * makes it "holds a spot longer" rather than "comes back slower". An
+       * animal in its grace window is not walking anywhere: it is standing on
+       * the ground you left it on, doing the thing you left it doing.
+       */
+      const over = d > leashNow;
+      e._cmpHeld = over ? (e._cmpHeld || 0) + dt : 0;
+      const holding = over && e._cmpHeld <= holdOf(e);
+      const dragged = over && !holding;
+      /* AND WHILE IT IS HOLDING IT IS STANDING STILL, which is the half a
+       * skipped branch does not give you. `wish` and `toTarget` survive the
+       * frame that wrote them — `_move` keeps swinging the body toward a
+       * vector nobody has cleared — so an animal that simply stopped being
+       * walked home coasted a metre and a half into the walk it was not
+       * making. Cleared only when it has nothing to do: an animal holding its
+       * ground THROUGH a fight is still fighting, and its steering is the
+       * brain's. */
+      if (holding) {
+        if (!busy) { e.wish = null; e.toTarget = null; }
+      } else if (dragged || !busy) {
         if (d > settledBand(e)) {
           e.wish = (e.wish || new THREE.Vector3()).set(dx / d, 0, dz / d);
           if (!e.toTarget) e.toTarget = new THREE.Vector3();
@@ -2670,6 +2877,15 @@ export class CompanionPack {
     e._cmpKind = K?.id || null;
     e._cmpRec = opts.rec || null;
     e._cmpSwing = temperSwing(opts.rec);
+    /* THE THREE CLOCKS THE TEMPERS DRIVE, ZEROED AT THE ONE DOOR EVERY
+     * COMPANION COMES THROUGH. `_cmpHeld` is seconds past the end of the leash
+     * (see the move wrap and `holdOf`), `_cmpShy`/`_cmpShyCalm` the panic and
+     * its nerve (see `stepShy`). Written here rather than left undefined
+     * because `undefined > 0` is false but `undefined + dt` is NaN, and a NaN
+     * clock is a grace that never ends. */
+    e._cmpHeld = 0;
+    e._cmpShy = 0;
+    e._cmpShyCalm = 0;
     const R = rungOf(opts.rec);
     e._cmpLeash = opts.leash ?? R.leash;
     /**
@@ -3111,6 +3327,9 @@ export class CompanionPack {
        * AFTER the verb tick, so the BOLT a panic starts gets its first frame on
        * the next one rather than being ticked by the clock that started it. */
       stepPanic(e, dt);
+      /* AND IT IS FRIGHTENED BY ITS OWN WOUNDS, if it wears the temper that
+       * does that. Beside the mount's panic and not inside it — see `SHY`. */
+      stepShy(e, dt);
       if (!e.target || e.target.dead) {
         const st = e.stateTime || 0;
         if (e.state === 'winded') { if (st > WIND_OPEN) e.state = 'approach'; }

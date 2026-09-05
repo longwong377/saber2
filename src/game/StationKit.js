@@ -253,7 +253,13 @@ function counter(kit, M, w, d, x, z, ry = 0, h = 1.08) {
    */
   kit.after(new THREE.Vector3(0, 0, 0), (world, q) => {
     (kit.counters || (kit.counters = [])).push({
-      at: { x: q.x, y: q.y, z: q.z }, front: null, behind: null, w, d,
+      /* `h` IS THE TOP, AND IT IS RECORDED BECAUSE SOMETHING NOW STANDS ON IT.
+       * `at` is on the FLOOR — the frame's origin — so every reader that only
+       * wanted a distance never needed the height and never asked. A wok does:
+       * a pan placed at `at.y` is a pan on the floor behind the desk, and the
+       * three kitchens on the station do not share a top (#15's pass is 1.15,
+       * #17's stalls 1.15, a plain desk 1.08). See `CookSet`. */
+      at: { x: q.x, y: q.y, z: q.z }, front: null, behind: null, w, d, h,
     });
   });
   kit.after(new THREE.Vector3(0, 0, -d / 2 - 1), (world, q) => {
@@ -264,6 +270,55 @@ function counter(kit, M, w, d, x, z, ry = 0, h = 1.08) {
     const rec = kit.counters?.[kit.counters.length - 1];
     if (rec) rec.behind = { x: q.x, y: q.y, z: q.z };
   });
+  kit.pop();
+}
+
+/**
+ * ══ A RANGE BEHIND A COUNTER — the thing that makes a desk a kitchen ══════
+ *
+ * The three counters in #17 were a desk, a sign and a steam vent in the
+ * ceiling. Nothing on any of them said food had ever been made there, and a
+ * stall with a hood over an empty top is a stall nobody works at.
+ *
+ * `kind` picks which trade, and no two of the three are the same: a burner
+ * ring with a rail of ladles over it, a bar grill over a bed of coals, and a
+ * stack of baskets over a boiler. That is §3.1 rule 4 one scale down — the
+ * room already differs from every other room, and this is what stops the
+ * three stalls IN it being one stall drawn three times.
+ *
+ * It is STATIC, merged into the place's own kit like every other surface, and
+ * costs nothing per frame. What moves during a cook is `CookSet`'s, built at
+ * the moment somebody orders and taken down when they are handed the bowl —
+ * a wok that lives on the burner would be a wok nobody could ever lift.
+ *
+ * Frame: `x`,`z` is the middle of the counter's TOP on the cook's side and
+ * `top` is its height, so a range sits on the desk it belongs to.
+ */
+function cookRange(kit, M, kind, x, z, top) {
+  kit.push(x, 0, z, 0);
+  if (kind === 0) {
+    /* A burner: a black plate let into the top, a ring above it, and a rail
+     * of tools over the lot. */
+    kit.slab(M.dark, 0.86, 0.06, 0.62, 0, top + 0.03, 0, { collide: false, bevel: 0.02 });
+    kit.post(M.status, 0.24, 0.26, 0.04, 0, top + 0.08, 0, { radial: 10 });
+    for (const s of [-1, 1]) kit.post(M.wing, 0.03, 0.03, 0.9, s * 0.5, top + 0.55, -0.1, { radial: 5 });
+    kit.post(M.wing, 0.025, 0.025, 1.0, 0, top + 1.0, -0.1, { rz: Math.PI / 2, radial: 5 });
+    for (let i = 0; i < 3; i++) kit.slab(M.wing, 0.05, 0.28, 0.04, -0.22 + i * 0.22, top + 0.84, -0.1, { collide: false, bevel: 0 });
+  } else if (kind === 1) {
+    /* A grill: a tray of coals with the bars across it. */
+    kit.slab(M.dark, 1.0, 0.16, 0.56, 0, top + 0.08, 0, { collide: false, bevel: 0.02 });
+    kit.slab(M.status, 0.88, 0.04, 0.46, 0, top + 0.13, 0, { collide: false, bevel: 0 });
+    for (let i = 0; i < 7; i++) {
+      kit.post(M.wing, 0.018, 0.018, 0.5, -0.42 + i * 0.14, top + 0.18, 0, { rx: Math.PI / 2, radial: 4 });
+    }
+  } else {
+    /* A steamer: a boiler under a stack of three baskets, and it is always on. */
+    kit.post(M.dark, 0.28, 0.3, 0.24, -0.24, top + 0.12, 0, { radial: 10 });
+    for (let i = 0; i < 3; i++) {
+      kit.post(M.mark, 0.26, 0.26, 0.11, 0.26, top + 0.06 + i * 0.115, 0, { radial: 10, open: true });
+    }
+    kit.post(M.strip, 0.06, 0.06, 0.34, -0.24, top + 0.41, 0, { radial: 5 });
+  }
   kit.pop();
 }
 
@@ -789,12 +844,156 @@ export const SHAPES = {
     kit.slab(M.hull, w, h - 1.4, 0.4, 0, (h - 1.4) / 2 + 1.4, d / 2 - 0.3, { collide: true, bevel: 0 });
     counter(kit, M, w - 4, 0.7, 0, d / 2 - 0.7, 0, 1.15);
     kit.slab(M.strip, w - 4.4, 0.09, 0.1, 0, 1.45, d / 2 - 1.1, { collide: false, bevel: 0 });
+    /* WHAT IS ON THE PASS. #15's own gazetteer line is "a kitchen seen through
+     * the pass", and until this there was nothing on it: no lamp, no plates,
+     * no bell — a hatch in a wall. The dishes here are cooked out of sight and
+     * carried out, which is why the pass gets the heat lamp and the stack and
+     * not a range: see PREP.pass, whose whole point is that you hear more of
+     * it than you see. */
+    kit.post(M.status, 0.13, 0.13, 0.5, -1.6, 1.62, d / 2 - 0.9, { rz: Math.PI / 2, radial: 8 });
+    for (let i = 0; i < 5; i++) kit.post(M.wing, 0.16, 0.16, 0.025, 2.2, 1.17 + i * 0.028, d / 2 - 0.8, { radial: 10 });
+    kit.post(M.wing, 0.07, 0.06, 0.09, 2.9, 1.19, d / 2 - 0.8, { radial: 9 });
     for (let i = 0; i < 6; i++) {
       const x = ((i % 3) - 1) * 5, z = (i < 3 ? -2.2 : 1.4);
       loose(kit, x, 0, z, (world, q) => tableBody(world, q, M, 1.3, 1.3, 0.76));
       loose(kit, x + 0.9, 0, z, (world, q) => chairBody(world, q, M));
       loose(kit, x - 0.9, 0, z, (world, q) => chairBody(world, q, M));
     }
+  },
+
+  /**
+   * ══ #59 THE ASCENDANT: A ROOM THAT STEPS DOWN TO A WINDOW ═══════════════
+   *
+   * Rule 4 asks that a place read differently FROM ITS OWN DOOR, and the whole
+   * of this room's silhouette is one idea the station has nowhere else: THE
+   * FLOOR IS NOT FLAT AND THE FRONT WALL IS NOT A WALL. Three carpeted
+   * terraces fall away from you toward a glazed front and a glass rail over
+   * the atrium void, so from the portal you are looking DOWN a room and
+   * THROUGH it at the drum. Every other bar on this station faces inward:
+   * `#14` is a bar in the round sunk below the concourse, `#18` is a low den
+   * with one exit, `#60` is a deep hall with a wheel at the end of it.
+   *
+   * ── WHAT MAKES IT READ AS EXPENSIVE, MEASURED IN MATERIALS ────────────
+   *
+   * There is no gold in `stationMats` and there must not be — the palette is
+   * per DECK and a room with its own colours is a room that has left the
+   * station. So "upscale" is spent in the four materials every room has:
+   *
+   *   CARPET INSTEAD OF DECK PLATE. `M.mark` is the one matte, non-metallic
+   *     material in the set (roughness 0.9, metalness 0.04) and it is the
+   *     floor here. The grimy rooms are `M.dark` and `M.deep` — deck plate.
+   *   ONYX AND BRASS. `M.deep` for the bar's mass and `M.wing` — the only
+   *     properly metallic material, 0.42 — for every edge, rail and lamp.
+   *     Grubby rooms in this kit use `M.wing` for a shelf; this room uses it
+   *     for trim on everything.
+   *   LAMPS, NOT STRIPS. `ceiling(strips:false)` — no lit soffit run at all —
+   *     and the light comes from eight small hanging fittings instead. That
+   *     is the one change a person actually feels walking in: the room is
+   *     dimmer and warmer than the corridor it opens off.
+   *   AIR. Eighteen heads in 16 × 12 with two tables to a terrace, against
+   *     twenty-six in `#14`'s twenty-six seats. The expensive thing on a
+   *     space station is the space, so the room is deliberately underfilled.
+   *
+   * Local −Z is the void side (the door and the balcony beyond it) and +Z is
+   * the back — `terrace` one room over on the same band sets that convention.
+   */
+  balconysalon(kit, M, p) {
+    const { w, d, h } = p;
+    /* CARPET. The floor slab itself, in the matte material — you can see it
+     * from the portal before you see anything on it. */
+    floor(kit, M, w, d, 0, M.mark);
+    walls(kit, M, w, d, h, { open: ['front'] });
+    /* NO LIT SOFFIT RUN. See the note: the lamps below are the whole light. */
+    ceiling(kit, M, w, d, h, { ribs: 5, strips: false });
+
+    /* ── THE FRONT: A NARROW LIT PORTAL BETWEEN TWO SHEETS OF GLASS ──────
+     *
+     * Built by hand rather than through `walls`, because this face has to do
+     * two things that helper cannot do at once — hold a 2.2 m door somebody
+     * stands under, and be transparent either side of it so the room keeps
+     * the view it is entirely about. */
+    const gap = 2.2, pier = (w - gap) / 2;
+    for (const sgn of [-1, 1]) {
+      const x = sgn * (gap + pier) / 2;
+      /* The pier: solid to waist height, glass above, so the rail line runs
+       * unbroken across the whole front and the glass sits on it. */
+      kit.slab(M.deep, pier, 1.0, 0.4, x, 0.5, -d / 2 - 0.2, { collide: true, bevel: 0 });
+      kit.slab(M.glass, pier, h - 1.6, 0.16, x, 1.0 + (h - 1.6) / 2, -d / 2 - 0.2, { collide: true, bevel: 0 });
+      kit.slab(M.wing, pier + 0.1, 0.12, 0.5, x, 1.06, -d / 2 - 0.2, { collide: false, bevel: 0.02 });
+    }
+    /* The portal's own head and the light in its reveal — the "lit portal in
+     * the balcony wall" you see from the walkway before anything else. */
+    kit.slab(M.deep, gap + 0.6, h - 2.8, 0.5, 0, 2.8 + (h - 2.8) / 2, -d / 2 - 0.2, { collide: true, bevel: 0 });
+    kit.slab(M.strip, gap - 0.2, 0.08, 0.14, 0, 2.68, -d / 2 - 0.05, { collide: false, bevel: 0 });
+    kit.slab(M.wing, gap + 0.7, 0.14, 0.6, 0, h - 0.4, -d / 2 - 0.2, { collide: false, bevel: 0.03 });
+
+    /* ── THE THREE TERRACES, rising AWAY from the window so every table on
+     * every level sees over the one in front of it. Two steps and the floor
+     * itself is the third. */
+    for (let i = 0; i < 2; i++) {
+      const rise = 0.42, y = (i + 1) * rise;
+      const zFar = d / 2, zNear = d / 2 - (i + 1) * 3.4;
+      kit.slab(M.mark, w, y, zFar - zNear, 0, y / 2, (zFar + zNear) / 2, { collide: true, bevel: 0 });
+      /* A brass nosing on the step, which is the one line that tells you the
+       * floor changes height before you walk off it. */
+      kit.slab(M.wing, w, 0.06, 0.1, 0, y + 0.02, zNear, { collide: false, bevel: 0.02 });
+    }
+
+    /* ── THE BAR: ONYX, THE FULL INNER WALL, on the top terrace. `counter`
+     * puts its customer side at local −Z, which is the room. */
+    counter(kit, M, w - 3.2, 0.8, 0, d / 2 - 1.3, 0, 1.12);
+    kit.slab(M.deep, w - 2.6, h - 1.6, 0.3, 0, 0.84 + (h - 1.6) / 2, d / 2 - 0.32, { collide: true, bevel: 0 });
+    /* The bottle shelf, lit from under, and its brass rail. */
+    for (let i = 0; i < 3; i++) {
+      kit.slab(M.wing, w - 3.6, 0.06, 0.34, 0, 1.7 + i * 0.55, d / 2 - 0.5, { collide: false, bevel: 0 });
+      kit.slab(M.strip, w - 4.2, 0.04, 0.06, 0, 1.66 + i * 0.55, d / 2 - 0.72, { collide: false, bevel: 0 });
+    }
+
+    /* ── THE PIANO, on the middle terrace, off to one side. A body, a lid on
+     * the prop, and three legs: the one object in the room that is neither
+     * furniture nor fitting, and the reason `idle` says it runs all evening. */
+    kit.push(-w / 2 + 3.2, 0.42, 0.4, 0.5);
+    kit.slab(M.deep, 2.4, 0.34, 1.5, 0, 0.78, 0, { collide: true, bevel: 0.06 });
+    kit.slab(M.dark, 2.3, 0.06, 1.4, 0, 0.98, 0.34, { ry: 0, rx: -0.34, collide: false, bevel: 0.02 });
+    kit.slab(M.wing, 1.1, 0.05, 0.16, -0.5, 0.96, -0.7, { collide: false, bevel: 0 });
+    for (const q of [[-1, -0.6], [1, -0.6], [0, 0.62]]) {
+      kit.post(M.dark, 0.07, 0.07, 0.6, q[0] * 1.0, 0.3, q[1], { radial: 6, collide: false });
+    }
+    kit.pop();
+
+    /* ── THE GLASS RAIL at the window, waist high, on brass stanchions. What
+     * you walk up to, and what stops you walking through the front of the
+     * room into the drum. */
+    kit.slab(M.glass, w - 1.2, 0.9, 0.06, 0, 0.55, -d / 2 + 0.9, { collide: true, bevel: 0 });
+    kit.slab(M.wing, w - 1.0, 0.08, 0.12, 0, 1.04, -d / 2 + 0.9, { collide: false, bevel: 0.02 });
+    for (let i = 0; i * 2.6 < w - 1; i++) {
+      kit.post(M.wing, 0.05, 0.05, 1.05, -w / 2 + 0.9 + i * 2.6, 0.52, -d / 2 + 0.9, { radial: 8, collide: false });
+    }
+
+    /* ── THE LAMPS. Eight, hung low over the tables on stems, and the whole
+     * of the room's light. Two of them are real `kit.light`s — the budget
+     * will not carry eight — and they are the two over the middle terrace,
+     * where a person walking in is looking. */
+    for (let i = 0; i < 8; i++) {
+      const x = ((i % 4) - 1.5) * 3.6, z = (i < 4 ? -2.6 : 2.0);
+      const y = (i < 4 ? 0 : 0.42) + 2.5;
+      kit.post(M.wing, 0.03, 0.03, h - y - 0.2, x, y + (h - y - 0.2) / 2, z, { radial: 4, collide: false });
+      kit.post(M.wing, 0.34, 0.16, 0.26, x, y, z, { radial: 8, collide: false });
+      kit.post(M.strip, 0.3, 0.14, 0.06, x, y - 0.14, z, { radial: 8, collide: false });
+    }
+    kit.light(-3.0, 2.4, -0.6, { intensity: 9, distance: 15 });
+    kit.light(3.0, 2.4, -0.6, { intensity: 9, distance: 15 });
+
+    /* §11 — loose things. Low tables in ONES AND TWOS with deep chairs, two
+     * to a terrace, which is the count that makes the room read as half
+     * empty on purpose. A `boxBody` at the bar is somebody's case. */
+    for (let i = 0; i < 6; i++) {
+      const x = ((i % 3) - 1) * 4.6, z = (i < 3 ? -3.0 : 1.6), y = (i < 3 ? 0 : 0.42);
+      loose(kit, x, y, z, (world, q) => tableBody(world, q, M, 0.9, 0.9, 0.54));
+      loose(kit, x + 0.85, y, z, (world, q) => chairBody(world, q, M));
+      if (i % 2 === 0) loose(kit, x - 0.85, y, z, (world, q) => chairBody(world, q, M));
+    }
+    loose(kit, w / 2 - 2.0, 0.84, d / 2 - 2.6, (world, q) => boxBody(world, q, M, 0.5, 0.3, 0.22, M.wing, 6, 'case'));
   },
 
   /** #16 Galley: a WORK ROOM. Low, hot, two ranges back to back down the
@@ -834,6 +1033,10 @@ export const SHAPES = {
       kit.slab(M.screen, w / 3 - 1.4, 0.8, 0.06, x, h - 0.95, d / 2 - 0.8, { collide: false, bevel: 0 });
       /* The steam vent above each — the thing that makes a counter a kitchen. */
       kit.post(M.wing, 0.18, 0.18, 1.2, x, h - 0.6, d / 2 - 2.4, { radial: 6 });
+      /* …AND THE RANGE UNDER THE VENT. A hood over a bare desk was three
+       * stalls that had never cooked anything; one trade each, and the cook
+       * plays out on this. See `cookRange`. */
+      cookRange(kit, M, i, x, d / 2 - 1.4 + 0.26, 1.15);
     }
     for (let i = 0; i < 10; i++) {
       loose(kit, -w / 2 + 1.6 + i * ((w - 3.2) / 9), 0, d / 2 - 2.8, (world, q) => boxBody(world, q, M, 0.4, 0.72, 0.4, M.deep, 6, 'stool'));
