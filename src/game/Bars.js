@@ -234,7 +234,7 @@ function hashF(seed, salt = '') {
 export const LEAVE_SHARE = 1 / 3;
 
 /** Is this man flesh? See the header — steel takes a charge, not an evening. */
-export function takesLeave(man, army = null) {
+function takesLeave(man, army = null) {
   if (!man) return false;
   const kind = man.kind || kindOfArmy(man.army || army);
   return kind !== 'steel';
@@ -265,7 +265,7 @@ export function takesLeave(man, army = null) {
  * written list and it is the same third the hash draws, so the two answers are
  * the same SIZE and only one of them is yours.
  */
-export function onLeave(company, day = 0) {
+function onLeave(company, day = 0) {
   const men = company?.men || [];
   const army = company?.army || null;
   const inTank = new Set((company?.ward?.tanks || []).filter(Boolean));
@@ -534,7 +534,7 @@ function leaveOf(man) {
  * already been judged fit to lead by the licence — turning him away at a door
  * his own sergeant walks through would be two answers to one question.
  */
-export function admits(bar, man) {
+function admits(bar, man) {
   const b = typeof bar === 'object' && bar ? bar : barById(bar);
   if (!b || !man) return false;
   if (!takesLeave(man)) return false;

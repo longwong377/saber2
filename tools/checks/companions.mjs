@@ -462,6 +462,182 @@ export async function run({ check, assert }) {
     return rows.join(', ') + `; ${Object.keys(Kn.TEMPER_AXES).length} axes, none of them combat`;
   });
 
+  check('companion: every temper axis is read by something that is not the price table', async () => {
+    /**
+     * ══════════════════════════════════════════════════════════════════════
+     *  THE HOLE THE CHECK ABOVE CANNOT SEE, AND IT WAS THREE AXES WIDE
+     * ══════════════════════════════════════════════════════════════════════
+     *
+     * `companion: every temper costs at least what it buys` prices `TEMPERS`
+     * against `TEMPER_AXES` — a table against a table. It never asks whether
+     * anything in the SIMULATION reads the axis, so it was green for four
+     * rounds over three axes that nothing read at all.
+     *
+     * Measured before this check existed, by mutation: `_cmpSwing =
+     * { hold: 999, ward: 999, exposure: 999 }` on a fielded massiff left
+     * `leashOf` at 14.0 and `settledBand` at 0.61, unchanged, because
+     * `sw.reach - sw.recall` in `leashOf` was the ONLY read of a swing in the
+     * tree. What that cost, on the screen that prints both halves of every
+     * temper: HEAVY's gain did nothing and only its cost landed, KEPT's cost
+     * did nothing so the bond was a pure gift, KEEN's cost did nothing so it
+     * was a free four metres of rope, and SCARRED's gain did nothing so it was
+     * a pure penalty. Four rows, four lies, all of them printed in the room.
+     *
+     * ── WHY THIS IS A GREP AND NOT A LIST ─────────────────────────────────
+     *
+     * A hard-coded list of "the axes that have readers" is the same defect one
+     * step further along: it goes stale the day an axis is added and it is
+     * satisfied by editing itself. So the SUBJECT is derived — every axis in
+     * `TEMPER_AXES` — and so is the EVIDENCE: every `.js` under `src/` is
+     * read, comments are stripped (a check that reads prose finds an axis
+     * named in the paragraph explaining that nothing reads it), and the names
+     * bound to a temper swing are found per file rather than assumed.
+     *
+     * PER FILE, WHICH IS WHAT MAKES IT TIGHT. `sw` is a swing in
+     * `Companions.js` and could be anything anywhere else, so a binding found
+     * in one file only licenses reads in that file. The base name is
+     * `_cmpSwing`, which is the field the pack hangs the swing on and is what
+     * every reader eventually goes through.
+     *
+     * IT PROVES A READ AND NOT AN EFFECT — that is the driven check below,
+     * which mutates each axis on a real body and measures the number move.
+     * This one is the cheap gate that catches an axis added with a comment and
+     * no reader, which is exactly how the three got in.
+     */
+    const { readdir } = await import('node:fs/promises');
+    const files = [];
+    const walk = async (dir, rel) => {
+      for (const d of await readdir(dir, { withFileTypes: true })) {
+        const u = new URL(d.name + (d.isDirectory() ? '/' : ''), dir);
+        if (d.isDirectory()) await walk(u, `${rel}${d.name}/`);
+        else if (d.name.endsWith('.js')) files.push([`${rel}${d.name}`, strip(await readFile(u, 'utf8'))]);
+      }
+    };
+    await walk(new URL('../../src/', import.meta.url), '');
+    assert(files.length > 20, `only ${files.length} source files were scanned — the walk found nothing`);
+    /* THE FILE THE SWING IS BUILT IN DOES NOT COUNT AS A READER. `temperSwing`
+     * writes every axis by name off the table; if Kennel.js were allowed to
+     * answer, the check would be satisfied by the very loop whose output
+     * nothing consumes. */
+    const OUT = 'game/Kennel.js';
+    const rows = [];
+    for (const axis of Object.keys(Kn.TEMPER_AXES)) {
+      const hits = [];
+      for (const [path, text] of files) {
+        if (path === OUT) continue;
+        const names = new Set(['_cmpSwing']);
+        for (const m of text.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*[^;\n]*(?:_cmpSwing|temperSwing\s*\()/g)) {
+          names.add(m[1]);
+        }
+        const re = new RegExp(`(?:${[...names].join('|')})\\s*\\??\\.\\s*${axis}\\b`);
+        if (re.test(text)) hits.push(path);
+      }
+      assert(hits.length > 0,
+        `TEMPER_AXES prices "${axis}" and NOTHING in src/ reads it off a temper swing — the habitat `
+        + 'prints both halves of every temper, so an unread axis is a sentence the game does not keep');
+      rows.push(`${axis}←${hits[0].replace('game/', '')}`);
+    }
+    /* AND THE GATE IS DRIVEN TO A REAL FALSE. A made-up axis must fail it, or
+     * the loop above proves only that the regex compiles. */
+    {
+      const names = new Set(['_cmpSwing', 'sw']);
+      const re = new RegExp(`(?:${[...names].join('|')})\\s*\\??\\.\\s*nonesuch\\b`);
+      assert(!files.some(([, t]) => re.test(t)), 'the reader scan found an axis that does not exist');
+    }
+    return rows.join(', ');
+  });
+
+  check('companion: mutate any temper axis and a number on the field moves', async () => {
+    /**
+     * THE OTHER HALF OF THE CHECK ABOVE, AND THE ONE THAT ACTUALLY BITES.
+     *
+     * A grep proves a name is mentioned. This fields a real animal in a real
+     * world, writes a swing onto it one axis at a time, and asserts the thing
+     * that axis is supposed to move actually moves — the same mutation the
+     * audit used to prove three of the five did nothing, run now with the
+     * opposite expectation.
+     *
+     * EVERY AXIS IS COVERED AND THE COVERAGE IS DERIVED: the table below is
+     * keyed by axis id and the loop asserts it has a row for every key in
+     * `TEMPER_AXES`, so an axis added without a probe fails here rather than
+     * being quietly skipped.
+     */
+    const { world, input, e, p } = await field('massiff');
+    tick(world, input, p, 10);
+    const zero = { hold: 0, reach: 0, recall: 0, ward: 0, exposure: 0 };
+    const set = (o) => { e._cmpSwing = { ...zero, ...o }; };
+    const home = new THREE.Vector3();
+    /* HOW WIDE THE RING THE WARD ORDER ACTUALLY DEFENDS IS, walked out in
+     * quarter metres — measured through `dutyAllows`, which is the filter the
+     * aim wrap runs, rather than through the reader it calls. */
+    e._cmpDuty = { id: 'ward' };
+    const foe = { position: p.position.clone(), team: (p.team ?? 0) + 1, dead: false };
+    const ringNow = () => {
+      C.stationFor(e, home);
+      let r = 0;
+      for (let d = 0.5; d < 40; d += 0.25) {
+        foe.position.copy(p.position); foe.position.x += d;
+        if (C.dutyAllows(e, foe, home, 1e9)) r = d; else break;
+      }
+      return r;
+    };
+    const PROBES = {
+      /* Two axes on one rope, and the temper table buys them against each
+       * other — so each is moved alone and the rope has to move both ways. */
+      reach: () => { set({ reach: 4 }); return C.leashOf(e); },
+      recall: () => { set({ recall: 4 }); return C.leashOf(e); },
+      /* Metres of ring round YOU. */
+      ward: () => { set({ ward: 4.5 }); return ringNow(); },
+      /* Metres of extra distance-from-you, which is where it heels. */
+      exposure: () => { set({ exposure: -4 }); e._cmpDuty = null; C.stationFor(e, home); const d = home.distanceTo(p.position); e._cmpDuty = { id: 'ward' }; return d; },
+      /* Seconds. Not a distance at all, so it is measured as one: the animal
+       * is put past the end of its rope and the grace is the seconds before
+       * the walk home is allowed to start. */
+      hold: () => { set({ hold: 3 }); return C.holdOf(e); },
+    };
+    for (const axis of Object.keys(Kn.TEMPER_AXES)) {
+      assert(PROBES[axis], `${axis} is priced and this check has no probe for it`);
+    }
+    const rows = [];
+    for (const [axis, probe] of Object.entries(PROBES)) {
+      set({});
+      const before = axis === 'ward' ? ringNow()
+        : axis === 'exposure' ? (() => { e._cmpDuty = null; C.stationFor(e, home); const d = home.distanceTo(p.position); e._cmpDuty = { id: 'ward' }; return d; })()
+          : axis === 'hold' ? C.holdOf(e) : C.leashOf(e);
+      const after = probe();
+      assert(Math.abs(after - before) > 0.2,
+        `${axis} moved nothing: ${before.toFixed(2)} -> ${after.toFixed(2)} with the axis swung 4 — `
+        + 'the habitat prints this temper\'s cost and the field does not charge it');
+      rows.push(`${axis} ${before.toFixed(1)}→${after.toFixed(1)}`);
+    }
+    set({});
+    /* AND THE GRACE IS SECONDS ON THE FIELD AND NOT ONLY IN THE READER — the
+     * animal is dragged forty metres past the end of its rope and the frame it
+     * starts the walk home is measured with and without HEAVY's two seconds. */
+    const walkStart = async (hold) => {
+      const F = await field('massiff');
+      tick(F.world, F.input, F.p, 20);
+      F.e._cmpSwing = { ...zero, hold };
+      F.e._cmpHeld = 0;
+      const at0 = F.e.position.clone();
+      F.p.position.x += 40;
+      for (let i = 0; i < 240; i++) {
+        tick(F.world, F.input, F.p, 1);
+        if (F.e.position.distanceTo(at0) > 2) { F.world.unload?.(); return i * STEP; }
+      }
+      F.world.unload?.();
+      return null;
+    };
+    const t0 = await walkStart(0);
+    const t2 = await walkStart(2);
+    assert(t0 !== null && t2 !== null, 'the animal never walked home at all');
+    assert(t2 - t0 > 1.2,
+      `dragged past its leash, an animal with two seconds of hold started home ${(t2 - t0).toFixed(2)}s `
+      + 'later than one with none — HEAVY\'s "holds a spot longer" is printed and not charged');
+    world.unload?.();
+    return `${rows.join(', ')}; the walk home starts at ${t0.toFixed(2)}s plain and ${t2.toFixed(2)}s with hold 2`;
+  });
+
   /* ── what it is ───────────────────────────────────────────────────── */
 
   check("companion: a card's band claim is the row's band, both ways round", async () => {
@@ -4891,8 +5067,21 @@ export async function run({ check, assert }) {
      * satisfied by an array with `xp` in it.
      */
     const kn = strip(await src('game/Kennel.js'));
-    assert(/export const CARE_ACTS = Object\.freeze\(\['meals', 'grooms'\]\)/.test(kn),
-      'CARE_ACTS is not exactly meals and grooms — the care door has grown a third thing to write');
+    assert(/export const CARE_ACTS = Object\.freeze\(\['meals', 'grooms', 'plays'\]\)/.test(kn),
+      'CARE_ACTS is not exactly meals, grooms and plays — the care door has grown a fourth thing to write');
+    /**
+     * AND THE TALLY READS THE SAME THREE WORDS THE DOOR WRITES.
+     *
+     * `careOf` lives in CompanionKinds.js and sums `CARE_TALLIES`; `careFor`
+     * lives in Kennel.js and writes `CARE_ACTS`. They cannot be one constant —
+     * Kennel.js imports CompanionKinds.js, so the door's whitelist living in
+     * the file the tally is in would be a cycle — so the JOIN is made here,
+     * which is the check doing the work an import cannot. An act the door can
+     * write and the tally does not count is a control that does nothing to the
+     * growth ladder, which is the third button being decoration.
+     */
+    assert(K.CARE_TALLIES.join(',') === Kn.CARE_ACTS.join(','),
+      `careOf counts ${K.CARE_TALLIES.join(',')} and the care door writes ${Kn.CARE_ACTS.join(',')}`);
     const body = /export function careFor\([^)]*\)\s*\{([\s\S]*?)\n\}/.exec(kn)?.[1] || '';
     assert(body, 'Kennel.careFor is gone');
     /* Every write this function makes to the record, as the field it names. A
@@ -4911,7 +5100,8 @@ export async function run({ check, assert }) {
       assert(!new RegExp(`\\b${word}\\b`, 'i').test(hab),
         `Habitat.js has grown a "${word}" — the room has become a shop`);
     }
-    return `CARE_ACTS is meals,grooms; careFor writes exactly k.live[act]; Habitat.js clean of all six words`;
+    return `CARE_ACTS is ${Kn.CARE_ACTS.join(',')} and careOf counts the same three; careFor writes `
+      + 'exactly k.live[act]; Habitat.js clean of all six words';
   });
 
   check('companion: the growth ladder earns drawbacks, two-sided and priced', async () => {
@@ -4963,8 +5153,57 @@ export async function run({ check, assert }) {
     assert(Kn.TEMPERS_WORN >= Kn.TEMPERS.length,
       `the wear cap is ${Kn.TEMPERS_WORN} and the table has ${Kn.TEMPERS.length} rows — a cap under the `
       + 'table silently drops whichever ones the Set iterated last');
+    /**
+     * ── AND THE BONDED ONE PANICS WHEN IT IS HURT, DRIVEN ─────────────────
+     *
+     * The design's sentence has two halves and only the first had a mechanic:
+     * "a big one is slow and loud" is HEAVY's `hold`/`recall` swing, and "a
+     * bonded one panics when it is hurt" was nowhere in `src/` — KEPT was a
+     * trade, not a panic. So the temper table carries a `shy` flag, `stepShy`
+     * reads it, and this drives the whole loop on a real body: it takes a
+     * target, it is wounded, it refuses every target and its station becomes
+     * the player, and when the clock runs out it fights again.
+     *
+     * THE FALSE SIDE IS THE CLAUSE THAT MATTERS. An animal that does NOT wear
+     * the temper, wounded identically, must be untouched — otherwise this is
+     * not a drawback of KEPT, it is a change to every companion in the game.
+     */
+    const shyRec = Kn.readOne({ id: 'shy1', kind: 'massiff', xp: 0, runs: 20, meals: 20, grooms: 20 });
+    Kn.applyTempers(shyRec);
+    assert(shyRec.tempers.includes('kept'), `a well-kept animal wears ${JSON.stringify(shyRec.tempers)}`);
+    assert(Kn.shyTemper(shyRec), 'the bonded animal does not carry the temper that panics');
+    assert(!Kn.shyTemper({ tempers: ['heeled', 'keen', 'heavy'] }),
+      'an animal wearing no bond still panics — the flag is not doing the deciding');
+    const shyRun = async (rec) => {
+      const F = await field('massiff', rec);
+      tick(F.world, F.input, F.p, 10);
+      F.e._cmpDuty = { id: 'ward' };
+      const home = new THREE.Vector3();
+      const foe = { position: F.e.position.clone(), team: (F.p.team ?? 0) + 1, dead: false };
+      foe.position.x += 1;
+      const takes = () => { C.stationFor(F.e, home); return C.dutyAllows(F.e, foe, home, 1e9); };
+      const before = takes();
+      F.e.hp = (F.e.hp ?? F.e.maxHp) - 12;
+      tick(F.world, F.input, F.p, 1);
+      const during = takes();
+      const station = home.distanceTo(F.p.position);
+      tick(F.world, F.input, F.p, Math.ceil((C.SHY.run + 0.3) / STEP));
+      const after = takes();
+      F.world.unload?.();
+      return { before, during, after, station, shies: F.e._cmpShies | 0 };
+    };
+    const bonded = await shyRun(shyRec);
+    assert(bonded.before, 'the bonded animal would not take a target even before it was hurt');
+    assert(!bonded.during, 'the bonded animal took a target on the frame after it lost 12 hp — it does not panic');
+    assert(bonded.station < 6,
+      `its station while panicking is ${bonded.station.toFixed(1)} m from the player — it does not come to you`);
+    assert(bonded.after, 'the panic never ends — a drawback that does not stop is a deleted companion');
+    const plain = await shyRun(Kn.readOne({ id: 'plain1', kind: 'massiff', xp: 0, runs: 0 }));
+    assert(plain.during && plain.shies === 0,
+      'an animal wearing no bond panicked at the same wound — the drawback is not the temper\'s');
     return `${earned.length} tempers earned off the growth ladder (${earned.join(', ')}), all priced <= 0, `
-      + `none earned by a fresh animal; ${rec.tempers.length} worn at once under a cap of ${Kn.TEMPERS_WORN}`;
+      + `none earned by a fresh animal; ${rec.tempers.length} worn at once under a cap of ${Kn.TEMPERS_WORN}; `
+      + `the bonded one stops fighting for ${C.SHY.run}s at a 12 hp wound and an unbonded one does not`;
   });
 
   check('companion: the habitat writes the six plaques and answers the panel', async () => {
@@ -5025,6 +5264,44 @@ export async function run({ check, assert }) {
       assert((Kn.load().live[a.act] | 0) === before,
         `${a.act} was refused on the panel and written by the door — the two disagree`);
     }
+    /**
+     * AND EACH REFUSAL NAMES ITS OWN ACT. The sentence was built by a ternary
+     * — "fed" if the act was `meals`, "groomed" otherwise — which is a lookup
+     * only while there are two acts: the day the room grew a third control the
+     * greyed-out Play button said the animal had already been groomed. A
+     * control that refuses with the wrong reason is the same defect as one
+     * that refuses without one.
+     */
+    {
+      const whys = new Set(panel.care.acts.map((a) => a.why));
+      assert(whys.size === panel.care.acts.length,
+        `${panel.care.acts.length} controls share ${whys.size} refusals: `
+        + panel.care.acts.map((a) => `${a.act}="${a.why}"`).join(', '));
+    }
+    /**
+     * AND PLAY IS THE ONE ACT THAT ANSWERS — V15 §4 asks for "care, feeding,
+     * grooming, play" and `StationPlan.js` prints "feed, play, groom" on the
+     * room's own sign, so the third control has to be a thing that happens and
+     * not a third counter. `playLine` is what it says back: derived off the
+     * record's id and the count, so it is the same line on every machine and
+     * nothing extra is stored — the pin on `careFor` is untouched.
+     */
+    {
+      assert(Kn.CARE_ACTS.includes('plays'), 'the room signs itself "feed, play, groom" and cannot play');
+      const r = Kn.load().live;
+      assert((r.plays | 0) > 0, 'the play control was pressed above and wrote nothing');
+      const said = Kn.playLine(r);
+      assert(typeof said === 'string' && said.length > 10, `playLine answered ${JSON.stringify(said)}`);
+      assert(Kn.playLine(r) === said, 'playLine gives a different answer to the same record twice');
+      assert(Kn.playLine({ ...r, plays: 0 }) === null, 'an animal never played with still has a last time');
+      /* IT SURVIVES THE DISK, which is what "persisted like meals and grooms"
+       * means — a care count `readOne` does not name is one that is gone by
+       * the next load, which is a control that does nothing. */
+      assert((Kn.readOne({ ...r }).plays | 0) === (r.plays | 0), 'plays does not survive a read back');
+      /* AND IT FEEDS THE GROWTH LADDER, exactly as the other two do. */
+      const K2 = await import('../../src/game/CompanionKinds.js');
+      assert(K2.careOf({ meals: 0, grooms: 0, plays: 3 }) === 3, 'play does not count as care');
+    }
     /* AND A DROID IS CHARGED RATHER THAN FED — the noun is data, not a switch. */
     Kn.clear();
     const droid = Kn.adopt('astro', 'Arfour');
@@ -5056,7 +5333,8 @@ export async function run({ check, assert }) {
       'a second call built a second wall');
     Kn.clear();
     return `${H.PLAQUES} plaques written into a parent at ${xs.size} distinct positions and redrawn `
-      + `idempotently; the panel's two controls agree with the door in both directions; with the shipped `
+      + `idempotently; the panel's ${Kn.CARE_ACTS.length} controls agree with the door in both directions, `
+      + `each refusing in its own words; with the shipped `
       + `st.habitat it refuses with "${half.why}"`;
   });
 

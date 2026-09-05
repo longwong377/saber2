@@ -105,9 +105,9 @@ function openNight(venue, hour = 23) {
  * Nothing else differs. The same handler, the same seed, the same corner act,
  * the same engine.
  */
-function fight(style, { venue, rec, handler, seed, day = 0, hour = 23, accept = false, rng }) {
+function fight(style, { venue, rec, handler, seed, day = 0, hour = 23, accept = false, wager = 0, rng }) {
   const offer = offerBout({ venue, rec, handler, hour, day, seed });
-  const bout = openBout(offer, { accept: accept ? offer.stake.token : null });
+  const bout = openBout(offer, { accept: accept ? offer.stake.token : null, wager });
   let guard = 0;
   while (!bout.over && guard++ < 40) {
     const read = beginRound(bout);
@@ -1061,6 +1061,109 @@ export async function run({ check, assert }) {
     } finally { world.dispose?.(); }
   });
 
+  check('pits: the board says who the price is about, and a wager is real money', async () => {
+    /**
+     * ══ TWO THINGS THAT WERE LIBRARY-SHAPED AND NOT GAME-SHAPED ══════════
+     *
+     * *"obviously you can bet on yourself"* and *"you should be able to bet on
+     * other people's companion battles too even if you're not involved."*
+     *
+     * THE BOARD HAD NO NAMES ON IT. `priceCard` handed back `{ id, marketP,
+     * price }`, so the pit's own panel — which does not join back to
+     * `card.entrants` the way the tote does — printed an empty `<b>` and a
+     * number twice on the screen where a player decides whether to stake their
+     * animal's life. A price is a statement about somebody and it now carries
+     * who.
+     *
+     * AND THE WAGER WAS ALWAYS ZERO. `openBout` took one; `main.js` passed
+     * `{ accept }`, so `settleBout` returned an empty ledger in every bout
+     * ever fought and no credit ever moved at the rail. The ledger is driven
+     * here through `Credits` — the one wallet — and the purse is checked to
+     * the credit against what the engine's own `settle` said.
+     */
+    const C = await import('../../src/game/Credits.js');
+    const rec = grown();
+
+    /* ── 1. THE BOARD ─────────────────────────────────────────────────── */
+    const offer = offerBout({ venue: under, rec, handler: roster[0], hour: 23, day: openNight(under) });
+    assert(offer.board.length === offer.card.entrants.length, 'the board is not the card');
+    for (const row of offer.board) {
+      const e = offer.card.entrants.find((x) => x.id === row.id);
+      assert(row.name && row.name === e.name,
+        `the board prices ${row.id} as "${row.name}" — the row a player reads has no name on it`);
+      assert(row.odds && Number(row.odds) === row.price, `the board's odds "${row.odds}" are not its price`);
+    }
+    assert(offer.board.some((r) => r.name === (rec.name || 'Borz')),
+      'your own animal is not named on the board it is priced on');
+
+    /* ── 2. A WAGER ON YOURSELF, THROUGH THE ONE WALLET ───────────────── */
+    const WAGER = 40;
+    C.clearCredits();
+    C.pay(4000, 'probe');
+    const start = C.purse();
+    let staked = 0, back = 0, purses = 0, won = 0, lost = 0;
+    for (let i = 0; i < 14; i++) {
+      const took = C.spend(WAGER, 'pit');
+      assert(took.ok, `the window refused a stake the purse covers: ${took.why}`);
+      staked += WAGER;
+      const b = fight('read', {
+        venue: arena, rec, handler: roster[i % roster.length], seed: 9100 + i * 7, hour: 12,
+        wager: WAGER, rng: makeRng(11 + i),
+      });
+      assert(b.stake.wager === WAGER, `the bout carried a wager of ${b.stake.wager}`);
+      const led = settleBout(b);
+      assert(led.staked === WAGER && led.lines.length === 1, `the ledger read ${JSON.stringify(led)}`);
+      assert(led.lines[0].id === b.mine.id, 'the stake was laid on somebody else\'s animal');
+      const paid = Math.round(led.returned);
+      if (paid) C.pay(paid, 'pit');
+      back += paid;
+      const p = b.outcome.purse | 0;
+      if (p) C.pay(p, 'pit');
+      purses += p;
+      if (b.outcome.won) won++; else lost++;
+    }
+    assert(won > 0 && lost > 0, `${won} won and ${lost} lost — a ledger only ever tested one way round`);
+    assert(back > 0, 'fourteen bouts and the rail never paid anything back');
+    assert(C.purse() === start - staked + back + purses,
+      `the purse is ${C.purse()} and the ledger says ${start - staked + back + purses}`);
+
+    /* ── 3. AND ON SOMEBODY ELSE'S BOUT, WITH NO ANIMAL IN IT ─────────── */
+    const night = runPitCard(under, { day: 5, bouts: 1 });
+    assert(night.card, `tonight's card did not run: ${night.why}`);
+    const race = night.races[0];
+    for (const row of race.board) {
+      assert(row.name === night.card.entrants.find((e) => e.id === row.id).name,
+        `the card's board prices ${row.id} with no name on it`);
+    }
+    const before = C.purse();
+    const on = race.board.find((r) => r.id === race.result.winner);
+    const off = race.board.find((r) => r.id !== race.result.winner);
+    assert(C.spend(50, 'pit').ok && C.spend(50, 'pit').ok, 'the window refused a spectator');
+    const good = settlePitCard(night, [{ entrant: on.id, stake: 50 }], 0);
+    const bad = settlePitCard(night, [{ entrant: off.id, stake: 50 }], 0);
+    C.pay(Math.round(good.returned), 'pit');
+    assert(good.returned > 50 && bad.returned === 0,
+      `backing the winner returned ${good.returned} and backing a loser returned ${bad.returned}`);
+    assert(C.purse() === before - 100 + Math.round(good.returned),
+      `a spectator's purse went ${before} → ${C.purse()}`);
+    /* AND THE FIGHT DID NOT NOTICE. Settling is a read of a finished result. */
+    const again = runPitCard(under, { day: 5, bouts: 1 });
+    assert(JSON.stringify(again.races[0].result.events) === JSON.stringify(race.result.events),
+      'the card ran differently once somebody had money on it');
+    C.clearCredits();
+
+    /* ── 4. AND THE ROOM IS WHERE THE CREDITS MOVE ────────────────────── */
+    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const code2 = main.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    assert(/openBout\([^)]*\{[^}]*\bwager\b/s.test(code2),
+      'main.js opens a bout without handing it a wager — `settleBout` can only ever return an empty ledger');
+    assert(/\bspend\(/.test(code2) && /\bpay\(/.test(code2), 'the pit panel neither takes nor pays credits');
+    assert(/settlePitCard\(/.test(code2), 'nothing settles a stake on somebody else\'s bout');
+    return `${offer.board.length} board rows all named; 14 bouts at ${WAGER} a time — ${won}W/${lost}L, `
+      + `${staked} staked, ${back} back, ${purses} in purses, purse ${start} → ${C.purse() || start - staked + back + purses}; `
+      + `a spectator's 50 on the winner returned ${good.returned} and the card ran the same either way`;
+  });
+
   check('pits: the card of people who live here is on a screen, and every exit cancels the clock', async () => {
     /**
      * ══ WHY A SOURCE READ ══════════════════════════════════════════════
@@ -1085,6 +1188,26 @@ export async function run({ check, assert }) {
     assert(/\bpitCard\b/.test(code2), 'nothing in main.js calls pitCard — the residents\' card has no screen');
     assert(/from '\.\/game\/Pits\.js'/.test(main), 'main.js does not import from Pits.js at all');
 
+    /**
+     * AND `runPitCard` IS THE ONE THAT MATTERS, because `pitCard` only POSTS
+     * the field. The bouts on it never happened: the tote printed six names
+     * and six prices and there was no function call anywhere in `src/` that
+     * would ever run one of them, so *"bet on other people's companion
+     * battles"* was a list. The whole tree is scanned rather than main.js,
+     * so moving the door into another file is not a way to lose it.
+     */
+    const { readdir } = await import('node:fs/promises');
+    const root = new URL('../../src/', import.meta.url);
+    const all = (await readdir(root, { recursive: true })).filter((f) => f.endsWith('.js'));
+    const callers = [];
+    for (const f of all) {
+      if (f.endsWith('Pits.js')) continue;
+      const text = await readFile(new URL(f, root), 'utf8');
+      if (/\brunPitCard\s*\(/.test(text.replace(/\/\*[\s\S]*?\*\//g, ''))) callers.push(f);
+    }
+    assert(callers.length,
+      'runPitCard has no caller anywhere in src/ — tonight\'s card is posted and never fought');
+
     /* THE PRESS IS HANDED ON. `openPit` must refuse when a book shares the
      * room and there is no bout for you — without this line `stationKey`'s
      * fall-through never fires and #20 is a refusal again. */
@@ -1102,7 +1225,8 @@ export async function run({ check, assert }) {
       `clearToteTimer is called ${cancels} time(s) — the bell, the card's hide and the leave door are three`);
     assert(/screens\.card\('tote',[\s\S]{0,120}?clearToteTimer/.test(code2),
       "the tote's `screens.card` hide does not cancel the timer — it outlives its screen");
-    return `pitCard has a caller in main.js; openPit hands the press on; clearToteTimer called ${cancels}×`;
+    return `pitCard has a caller in main.js, runPitCard in ${callers.join(', ')}; openPit hands the press `
+      + `on; clearToteTimer called ${cancels}×`;
   });
 
   check('pits: the file holds no balance and names no mode', () => {

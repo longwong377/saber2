@@ -39,6 +39,12 @@
 
 import * as THREE from '../../vendor/three/three.module.js';
 import { Kit, makeCrate, makeBarrel, Prop, slabGeo, cylGeo } from '../world/Props.js';
+/* THE COOK'S OWN NUMBERS. `Food.js` holds no mesh and no material — it hands
+ * back where a pan is and where his hands are, in the stall's frame — and
+ * `CookSet` at the foot of this file is what owns the geometry that reads
+ * them. The import goes one way only: nothing in `Food.js` knows this file
+ * exists. */
+import * as Food from './Food.js';
 import { DECK_Y, DRUM, floorOf, waysOn, junctionsOn } from './StationPlan.js';
 /**
  * ── THE WHEEL'S SEGMENT COUNT COMES OFF THE RULES, NOT OFF A RULER ───────
@@ -3165,4 +3171,367 @@ export function dressWayfinding(world, st, M) {
   }
   st.wayfinding = made;
   return made;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  WATCHING IT COOKED — V16 §B5, and it is geometry rather than five lines   */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ WHAT WAS THERE, AND WHY IT WAS NOT WHAT WAS ASKED FOR ═════════════════
+ *
+ * The player: *"there could be a small cutscene of it being cooked … you
+ * actually see them cook."* What shipped was `Food.Cook` — five sentences in
+ * the banner over three and a half seconds — with the counter pane up, which
+ * `Screens.take` raises by STOPPING THE WORLD. So not only did no stall move:
+ * nothing on the station could have moved, because `World.update` returns on
+ * the first line while an overlay owns the screen. The lane's own promise was
+ * "one animation loop per stall" and the measured answer was zero.
+ *
+ * `CookSet` is that loop. It is built when somebody orders, it runs in the
+ * ROOM on the desk they are standing at, and `main.js` gives the screen back
+ * before it starts — you are on your feet, at the counter, watching, which is
+ * the whole difference between a cutscene and a thing that happens in front of
+ * you. Nothing here takes the camera; `Warp.js` argues that at length for the
+ * jump and the argument is smaller here.
+ *
+ * ── IT IS BUILT AND THROWN AWAY, AND THAT IS THE CHEAP WAY ROUND ──────────
+ *
+ * The alternative was a wok, a lid, a ladle, a bowl, a flame and three puffs
+ * of steam standing on every kitchen counter on the station for the whole of
+ * every visit — eight meshes × three stalls × two decks, drawn, culled and
+ * matrix-walked forever so that they can move for four seconds. This builds
+ * the eight the prep actually names at the moment of the order and disposes
+ * them at the hand-over, so a station nobody has ordered anything at pays
+ * exactly nothing. The RANGE they work on — the burner, the coals, the
+ * baskets — is static and merged, because that is there whether you order or
+ * not. See `cookRange`.
+ *
+ * ── THE FRAME COMES OFF THE DESK, NOT OFF A TABLE OF COORDINATES ──────────
+ *
+ * `counter()` already records three world points and a top height for every
+ * desk in the game, so the stall's frame is read rather than authored: +Z at
+ * the customer, +Y up, +X the cook's right, origin in the middle of the top.
+ * Every number in `Food.cookPose` is in that frame, which is why the same
+ * pose lands on #15's 0.7 m pass and #17's 1.1 m stall without a special
+ * case. The Narn market has no desk at all — it sells over a stone floor —
+ * and there the frame is taken off the keeper and the set brings its own
+ * board, which is what a market stall is.
+ */
+
+const _ckA = new THREE.Vector3(), _ckB = new THREE.Vector3(), _ckC = new THREE.Vector3();
+const _ckD = new THREE.Vector3(), _ckE = new THREE.Vector3();
+const _ckQ = new THREE.Quaternion(), _ckE2 = new THREE.Euler();
+const UPV = new THREE.Vector3(0, 1, 0);
+
+/** How near the desk a keeper has to be for it to be HIS counter. */
+const AT_DESK = 2.2;
+/** Steam puffs. Three is enough to read as steam and cheap enough to throw away. */
+const PUFFS = 3;
+
+/**
+ * The desk in this counter's room that the player is standing at, or the one
+ * the keeper is behind, or none.
+ *
+ * `Station.counterHere` runs the same arithmetic to answer WHICH SHOP the key
+ * raises and cannot be reused for this — it returns the shop, not the desk it
+ * matched, and a second copy of the shop test is not what this needs. What it
+ * needs is the FURNITURE, and the nearest desk in the room is the honest
+ * answer to "the one you are at": you had to be standing at it to order.
+ */
+function deskFor(world, counter) {
+  const desks = world?._station?.counters?.get(counter?.place);
+  if (!desks?.length) return null;
+  const p = world?.player?.position;
+  if (!p) return desks[0];
+  let best = desks[0], bd = Infinity;
+  for (const d of desks) {
+    const q = d.front || d.at;
+    const dx = q.x - p.x, dz = q.z - p.z;
+    const r = dx * dx + dz * dz;
+    if (r < bd) { bd = r; best = d; }
+  }
+  return best;
+}
+
+export class CookSet {
+  /**
+   * @param world    the live world; the group is parented to its scene
+   * @param counter  the `Vendors.js` row being ordered from
+   * @param cook     a `Food.Cook` already constructed with its own sink —
+   *                 THIS CLASS DOES NOT SAY THE LINES. The banner is the
+   *                 caller's and the geometry is this one's, off one clock.
+   * @param prep     the `Food.prepOf(dish).id`
+   */
+  constructor(world, counter, cook, prep) {
+    this.world = world;
+    this.cook = cook;
+    this.prep = prep;
+    this.gear = Food.GEAR[prep] || null;
+    this.group = null;
+    this.parts = {};
+    this.puffs = [];
+    this.geos = [];
+    this.made = 0;
+    this.done = !cook || !this.gear;
+    this.keeper = null;
+    this.wantYaw = null;
+    if (this.done) return;
+
+    const M = world?._station?.mats;
+    if (!M || !world.scene) { this.done = true; return; }
+
+    /* ── the stall's frame ─────────────────────────────────────────── */
+    const desk = deskFor(world, counter);
+    const keeper = (world._station.keepers || []).find((k) => k.id === counter?.id) || null;
+    const body = keeper?.body && !keeper.body.dead ? keeper.body : null;
+    const o = _ckA, fwd = _ckB;
+    let top = 1.08, trestle = false;
+    if (desk?.front) {
+      o.set(desk.at.x, desk.at.y, desk.at.z);
+      fwd.set(desk.front.x - desk.at.x, 0, desk.front.z - desk.at.z).normalize();
+      top = desk.h ?? 1.08;
+      /* AND HE STEPS DOWN THE ROW TO THE STALL YOU ARE AT. `dressKeepers`
+       * stands one man behind `desks[0]`, and `counterHere`'s own note says
+       * why that is right — "a row of stalls is one vendor's frontage" — but
+       * it leaves the cook seven metres from the counter you ordered at, and
+       * a stall that cooks with nobody behind it is worse than a banner. He
+       * is not put back afterwards on purpose: a man who moved down the row
+       * has moved down the row, and popping him home the moment the bowl
+       * lands is the only version of this a player could catch. */
+      if (body && desk.behind) {
+        const dx = body.position.x - desk.behind.x, dz = body.position.z - desk.behind.z;
+        if (dx * dx + dz * dz > AT_DESK * AT_DESK) {
+          body.position.set(desk.behind.x, body.position.y, desk.behind.z);
+          body._poseAt?.copy(body.position);
+        }
+      }
+    } else if (body && world.player?.position) {
+      /* NO DESK: the Narn market sells off a stone floor. The frame is taken
+       * off the man and he brings his own board — and it faces YOU, because
+       * there is no furniture to say which way "the customer's side" is. */
+      o.copy(body.position);
+      fwd.set(world.player.position.x - o.x, 0, world.player.position.z - o.z);
+      if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, 1);
+      fwd.normalize();
+      o.addScaledVector(fwd, 0.8);
+      top = 0.98;
+      trestle = true;
+    } else { this.done = true; return; }
+
+    this.o = o.clone();
+    this.z = fwd.clone();
+    this.x = new THREE.Vector3().crossVectors(UPV, fwd).normalize();
+    this.top = top;
+    /* He works facing the customer's side of his own counter. Written once
+     * and damped in `step`, because a man snapping round is a man teleporting
+     * — see the note there on why writing `facing` at all is safe. */
+    this.keeper = body;
+    this.wantYaw = Math.atan2(-fwd.x, -fwd.z);
+
+    /* ── the pieces, and only the ones this prep names ──────────────── */
+    const g = new THREE.Group();
+    g.name = `station-cook-${counter?.id || 'stall'}`;
+    this.group = g;
+    const add = (name, geo, mat) => {
+      const m = new THREE.Mesh(geo, mat);
+      m.name = `cook-${name}`;
+      this.geos.push(geo);
+      g.add(m);
+      this.parts[name] = m;
+      return m;
+    };
+    if (trestle) add('board', slabGeo(1.5, 0.09, 0.7), M.deep);
+    const V = this.gear.vessel;
+    if (V === 'wok') add('vessel', cylGeo(0.21, 0.09, 0.11, 12, 1.2, true), M.wing);
+    else if (V === 'vat') add('vessel', cylGeo(0.24, 0.22, 0.17, 12, 1.2, true), M.dark);
+    else if (V === 'pot') add('vessel', cylGeo(0.19, 0.18, 0.22, 12), M.dark);
+    else if (V === 'basket') add('vessel', cylGeo(0.20, 0.20, 0.13, 12, 1.2, true), M.mark);
+    else if (V === 'skewer') add('vessel', cylGeo(0.028, 0.028, 0.40, 6), M.mark);
+    else if (V === 'bottle') add('vessel', cylGeo(0.04, 0.055, 0.29, 8), M.glass);
+    else if (V === 'board') add('vessel', slabGeo(0.44, 0.035, 0.30), M.mark);
+    else if (V === 'jar') add('vessel', cylGeo(0.075, 0.08, 0.17, 10), M.glass);
+    else if (V === 'tank') add('vessel', cylGeo(0.22, 0.22, 0.27, 12, 1.2, true), M.glass);
+    else if (V === 'post') add('vessel', cylGeo(0.10, 0.12, 0.46, 10), M.dark);
+    if (this.gear.lid) add('lid', cylGeo(0.20, 0.205, 0.03, 12), M.wing);
+    const T = this.gear.tool;
+    if (T === 'knife') add('tool', slabGeo(0.035, 0.014, 0.26), M.wing);
+    else if (T === 'paper') add('tool', slabGeo(0.13, 0.005, 0.17), M.mark);
+    else if (T === 'cable') add('tool', cylGeo(0.022, 0.022, 0.52, 6), M.dark);
+    else if (T) add('tool', cylGeo(0.055, 0.013, 0.33, 6), M.wing);
+    /* The dish is built whatever the prep, because every sequence ends with
+     * one arriving — that is what `serve` is. */
+    add('dish', cylGeo(0.15, 0.11, 0.06, 12, 1.2, true), M.mark);
+    if (this.gear.fire) {
+      add('fire', this.gear.fire === 'burner' ? cylGeo(0.03, 0.17, 0.18, 10, 1, true)
+        : cylGeo(0.19, 0.19, 0.02, 12), M.status);
+    }
+    for (let i = 0; i < PUFFS; i++) {
+      const geo = cylGeo(0.085, 0.05, 0.09, 6, 1, true);
+      this.geos.push(geo);
+      const m = new THREE.Mesh(geo, M.wing);
+      m.name = `cook-steam-${i}`;
+      g.add(m);
+      this.puffs.push(m);
+    }
+    world.scene.add(g);
+    world.statics.push(g);
+    this.place(Food.cookPose(prep, cook.move, 0, 0));
+  }
+
+  /** A point in the stall's frame, into the world. `y` is above the TOP. */
+  at(x, y, z, out) {
+    return out.copy(this.o).addScaledVector(this.x, x).addScaledVector(this.z, z)
+      .setY(this.o.y + this.top + y);
+  }
+
+  /**
+   * ONE FRAME OF THE COOK: step the clock, read the pose, place the pieces.
+   *
+   * Returns false when the thing is over the counter and the set has taken
+   * itself down, which is what `stepStation` tests — the handle is dropped by
+   * the caller rather than by a flag somebody has to remember to read.
+   */
+  step(dt) {
+    if (this.done) return false;
+    const cook = this.cook;
+    /* THE ONE CLOCK. The banner's lines and the geometry come out of the same
+     * `Cook.step`, so a stall cannot be tossing a pan while the line on screen
+     * says he is still reaching under the counter. */
+    const over = cook.step(dt) === 'done';
+    this.place(Food.cookPose(this.prep, cook.move, cook.within, cook.elapsed));
+    if (over) { this.dispose(); return false; }
+    return true;
+  }
+
+  /** Put every piece where the pose says, and pose the man behind it. */
+  place(p) {
+    this._lastP = p;
+    const P = this.parts;
+    if (P.board) this.at(0, -0.045, 0, P.board.position);
+    if (P.vessel) {
+      this.at(p.vessel.x, p.vessel.y, p.vessel.z, P.vessel.position);
+      P.vessel.quaternion.setFromAxisAngle(this.x, p.vessel.tilt)
+        .multiply(_ckQ.setFromAxisAngle(UPV, p.vessel.spin));
+    }
+    if (P.lid) {
+      this.at(p.lid.x, p.lid.y, p.lid.z, P.lid.position);
+      P.lid.quaternion.setFromAxisAngle(this.x, 0.5 * p.lid.off);
+    }
+    if (P.tool) {
+      this.at(p.tool.x, p.tool.y, p.tool.z, P.tool.position);
+      P.tool.quaternion.setFromAxisAngle(this.x, p.tool.tilt)
+        .multiply(_ckQ.setFromAxisAngle(_ckD.set(0, 0, 1), p.tool.roll));
+    }
+    if (P.dish) {
+      /* A PLATE DOES NOT UN-APPEAR. `cookPose` is pure per move and a move
+       * that does not make anything returns nothing made, so the monotone is
+       * kept here rather than by giving the pose a memory. */
+      this.made = Math.max(this.made, p.dish.size);
+      this.at(p.dish.x, p.dish.y + 0.03, p.dish.z, P.dish.position);
+      const s = Math.max(0.001, this.made);
+      P.dish.scale.set(s, s, s);
+      P.dish.visible = this.made > 0.02;
+    }
+    if (P.fire) {
+      this.at(p.vessel.x, 0.005, p.vessel.z, P.fire.position);
+      const k = Math.max(0.001, p.fire);
+      P.fire.scale.set(0.6 + 0.4 * k, k, 0.6 + 0.4 * k);
+      P.fire.visible = p.fire > 0.02;
+    }
+    for (let i = 0; i < this.puffs.length; i++) {
+      const m = this.puffs[i];
+      m.visible = p.steam > 0.05;
+      if (!m.visible) continue;
+      /* Seeded off the puff's index and the cook's own clock — no die, and
+       * two people watching one stall see one column of steam. */
+      const ph = (this.cook.elapsed * 0.55 + i / PUFFS) % 1;
+      const s = (0.35 + 0.9 * ph) * p.steam;
+      this.at(p.vessel.x + 0.07 * Math.sin(i * 2.4 + ph * 3.1),
+        0.16 + ph * 0.62, p.vessel.z + 0.06 * Math.cos(i * 1.7 + ph * 2.6), m.position);
+      m.scale.set(s, s, s);
+    }
+    this.poseKeeper(p);
+  }
+
+  /**
+   * ══ AND THE MAN, WHICH IS THE HALF THE ASK IS ACTUALLY ABOUT ═══════════
+   *
+   * *"you actually see THEM cook."* The keeper is a real body with a real
+   * skeleton — `dressKeepers` spawns it and `Rig.solveIK` is the same two-bone
+   * solve the rifle hold uses — so his hands go where the pose says they go
+   * and his elbows fall out of it.
+   *
+   * ── WHY THIS IS ALLOWED TO WRITE BONES AT ALL ────────────────────────
+   *
+   * Order inside `World.update`: bodies pose themselves at step 2 and the
+   * director — and through it `stepStation`, and through that this — runs at
+   * step 8. So the gait has already written the arms this frame and these
+   * four writes land on top of them, exactly as `Enemy._poseArms` lands on
+   * top of the animator. Nothing accumulates: the gait rewrites all 66 bones
+   * from rest next frame.
+   *
+   * Past LOD 1 a body draws through `MergedSkin`, which reads `position` and
+   * nothing else, so posing it would be arithmetic nobody could see — the
+   * same early return `_poseArms` takes, and for the same reason.
+   */
+  poseKeeper(p) {
+    const b = this.keeper;
+    if (!b || b.dead || (b.lod ?? 0) > 1) return;
+    const rig = b.rig;
+    if (!rig?.get('armR') || !rig.get('foreR')) return;
+    /* He comes about to face his own counter. Damped rather than snapped, and
+     * safe to write: an idle body with no target and no velocity has `want ===
+     * facing` in `Enemy._move`, so nothing pulls it back. */
+    if (this.wantYaw !== null) {
+      let d = this.wantYaw - b.facing;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      b.facing += d * 0.12;
+    }
+    const chest = rig.get('chest'), spine = rig.get('spine'), head = rig.get('head');
+    if (spine) spine.obj.quaternion.copy(spine.restQuat).multiply(_ckQ.setFromEuler(_ckE2.set(p.lean * 0.55, 0, 0, 'XYZ')));
+    if (chest) chest.obj.quaternion.copy(chest.restQuat).multiply(_ckQ.setFromEuler(_ckE2.set(p.lean * 0.45, 0, 0, 'XYZ')));
+    if (head) head.obj.quaternion.copy(head.restQuat).multiply(_ckQ.setFromEuler(_ckE2.set(p.bow, 0, 0, 'XYZ')));
+    rig.touchMatrices();
+    for (const side of ['L', 'R']) {
+      const hand = p.hand[side];
+      const target = this.at(hand.x, hand.y, hand.z, side === 'L' ? _ckC : _ckD);
+      /* The elbow hangs out and down from the shoulder — the pole is the one
+       * thing a two-bone solve cannot infer, and an unbiased one folds the
+       * arm through the body. */
+      const sh = rig.freshPos(`arm${side}`, _ckE);
+      const pole = _ckA.copy(sh).addScaledVector(this.x, side === 'L' ? -0.42 : 0.42)
+        .addScaledVector(this.z, -0.30);
+      pole.y -= 0.35;
+      rig.solveIK(`arm${side}`, `fore${side}`, target, pole);
+    }
+    rig.updateMatrices();
+  }
+
+  /** Everything this built, put down. */
+  dispose() {
+    this.done = true;
+    const g = this.group;
+    this.group = null;
+    if (!g) return;
+    g.parent?.remove(g);
+    const arr = this.world?.statics;
+    if (arr) { const i = arr.indexOf(g); if (i >= 0) arr.splice(i, 1); }
+    for (const geo of this.geos) geo.dispose?.();
+    this.geos.length = 0;
+    this.parts = {};
+    this.puffs.length = 0;
+  }
+}
+
+/**
+ * The station's one cook, stepped. Called from `stepStation` on `Warp`'s own
+ * line and for the same reason: it drives a handful of meshes and one man's
+ * arms and nothing else, so it can run while the player walks about.
+ */
+export function stepCook(world, dt) {
+  const c = world?._cook;
+  if (!c) return;
+  if (!c.step(dt)) world._cook = null;
 }

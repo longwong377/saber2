@@ -58,9 +58,17 @@ import { guardZoneOf } from './game/Bolts.js';
 import { emptyLarder, stowFood, takeFood } from './game/Home.js';
 import { noteApartment, larderAt } from './game/Coop.js';
 import { habitatPanel, careAt, choosePad, writePlaques } from './game/Habitat.js';
+/* §11's third clause — the counters read your standing. See `openKiosk`. */
+import { servedHere } from './game/StationLife.js';
 import { wardRows, wakePlan, arrivalNotice, checkIn, discharge, tanksFree, wounded, TANKS, soonestOut,
   awayFor } from './game/Medbay.js';
 import { watch as toteWatch, resultOf as toteResult, venueAtPlace, MAX_STAKE } from './game/Tote.js';
+/* V16 Lane C2 — the liberty board at #29 and the four rooms it sends men to. */
+import {
+  BARS, barById, barPlaces, berths, leaveRows, grantLeave, recallLeave,
+  crowdOf, libertyAt,
+} from './game/Bars.js';
+import { headcount } from './game/StationLife.js';
 import * as Food from './game/Food.js';
 import {
   openWheelhouse, sabaccTable, nextHand, dejarikTable, dejarikTurn,
@@ -1276,6 +1284,10 @@ async function enterStation(floorRow = null, opts = {}) {
     world.onCharge = () => takeCharge();
     /* #57 — see `openHolodeck`. */
     world.onHolodeck = () => openHolodeck();
+    /* #29's liberty board and the three bars that carry a panel — V16 Lane
+     * C2. See `openLeave` and `openBar`. */
+    world.onLeave = () => openLeave();
+    world.onBar = (id) => openBar(id);
   }
   cancelDeathCard();
   menu.hideMenu();
@@ -2055,8 +2067,39 @@ function wayOut() {
   return screens.escape();
 }
 
+/**
+ * ══ AND A COUNTER MAY REFUSE YOU — SHARK §11 ══════════════════════════════
+ *
+ * *"You wake in the Brig (#47), your station `standing` drops (one number in
+ * `Session`), the kiosks refuse you for a day."*
+ *
+ * `StationLife.stepConsequence` already drops the number every time you cut or
+ * throw a resident, `StationSave` already persists it, and
+ * `StationLife.servedHere` already answers the question — and NOTHING ASKED
+ * IT. The export had no caller anywhere in `src/`, so the third clause of §11
+ * was written, stored, checked and unreachable: you could put the concourse in
+ * the medbay and still buy a hilt off the man watching you do it.
+ *
+ * IT IS ASKED HERE AND NOT IN THE ROOM. `Station.stationKey` raises the kiosk
+ * through `world.onKiosk`, and this is the one end of that hook — so every
+ * counter in the gazetteer is covered by one branch and a room added tomorrow
+ * cannot forget to ask. It refuses BEFORE `screens.take`, because a panel that
+ * opens and then says no is a panel that already served you.
+ *
+ * THE MIRROR IS NOT A KIOSK. `#27`'s glass rides the same hook (see
+ * `KIOSK_TAB.mirror`) and it is your own cabin — nobody is behind it to take
+ * offence, and a station that locked a man out of his own bathroom mirror for
+ * a bar fight would be reading §11 as a punishment rather than as a
+ * consequence.
+ */
 function openKiosk(panelId) {
   if (!panelId || !world) return;
+  if (panelId !== 'mirror' && !servedHere(world)) {
+    audio.ui('bad');
+    world.notify?.('THE COUNTER IS CLOSED TO YOU',
+      'word got round — nobody on this deck is serving you today');
+    return;
+  }
   audio.ui('good');
   screens.take('kiosk', () => showKioskPanel(panelId));
 }
@@ -2739,7 +2782,7 @@ function showCasino() {
   const el = casinoRoot();
   const day = stationDay();
   const hour = casinoHour();
-  if (!casino) casino = { tab: 'sabacc', index: 0, acts: [], board: null, ticket: drumHeld, said: null };
+  if (!casino) casino = { tab: 'sabacc', index: 0, acts: [], board: null, ticket: drumHeld, settled: null, said: null };
 
   const room = openWheelhouse(hour, day, WHEELHOUSE);
   let html = `<div class="pane"><h2>${esc(room.name)}</h2>`;
@@ -2826,12 +2869,23 @@ function showCasino() {
      * that settled against the hour it sold into would be selling a result
      * `drumAt` had already published, which is the one thing this game is
      * written not to be. */
+    /* THE RESULT IS HELD, NOT PAINTED ONCE. This panel now re-renders four
+     * times a second off its own bell, so a line built inside the settling
+     * branch was on the screen for 250 ms and gone — the player staked, waited
+     * out the hour and saw nothing happen. The settlement is written down
+     * where the next render can still read it, and it also goes through
+     * `notify`, because the turn can come round while the drum's tab is not
+     * the one being looked at. */
     if (casino.ticket && drumDue(casino.ticket, hour, day)) {
-      const rode = drumClockOf(casino.ticket.turn).hour;
+      const rode = String(drumClockOf(casino.ticket.turn).hour).padStart(2, '0');
       const paid = payAtDrum(casino.ticket, drumStop(casino.ticket));
-      html += `<p class="sub"><b>${paid.won ? `the ${String(rode).padStart(2, '0')}:00 turn paid ${paid.paid}` : `the ${String(rode).padStart(2, '0')}:00 turn took it`}</b>`
-        + (paid.capped ? ` — the wallet capped it at ${paid.paid} of ${paid.owed}` : '') + '</p>';
+      casino.settled = (paid.won ? `the ${rode}:00 turn paid ${paid.paid}` : `the ${rode}:00 turn took it`)
+        + (paid.capped ? ` — the wallet capped it at ${paid.paid} of ${paid.owed}` : '');
       casino.ticket = null;
+      world?.notify?.('THE DRUM', paid.won ? `${paid.paid} credits` : 'nothing on that turn');
+    }
+    if (casino.settled) {
+      html += `<p class="sub"><b>${esc(casino.settled)}</b></p>`;
     } else if (casino.ticket) {
       html += `<p class="sub">${casino.ticket.stake} on ${esc(casino.ticket.label)}, `
         + `riding on the ${String(drumClockOf(casino.ticket.turn).hour).padStart(2, '0')}:00 turn. `
@@ -2887,6 +2941,7 @@ function showCasino() {
        * two fields this line used to collapse into one. */
       casino.ticket = drumTicket(struck.ticket, casinoHour(), stationDay());
       casino.said = null;
+      casino.settled = null;
       audio.ui('good');
       showCasino();
     });
@@ -3203,11 +3258,18 @@ function showTote(venueId, { keep = false } = {}) {
       const lead = r.standings?.[0]?.id === row.id;
       const form = [`rating ${row.rating}`];
       form.push(row.recent?.length ? `form ${row.recent.join('-')}` : 'unraced');
-      /* The going line only when the book had enough starts to say one — a
-       * reading off two runs is a rumour and `readForm` shrinks it to nothing
-       * anyway, so printing it would be printing a zero with a decoration. */
+      /* THE TWO READINGS, AND THE BIG ONE IS THE SECOND. `on the book` is how
+       * this one has been finishing against what its rating claims, which is
+       * the column the board prices least of and the one that pays; `this
+       * going` is the going split beside it. Both are printed only where the
+       * book had enough starts to say anything — a reading off two runs is a
+       * rumour and `readForm` shrinks it to nothing anyway, so printing it
+       * would be printing a zero with a decoration on it. */
+      if (row.read >= 4 && Math.abs(row.standing) >= 0.02) {
+        form.push(`on the book ${row.standing > 0 ? '+' : ''}${row.standing.toFixed(2)} (${row.read} read)`);
+      }
       if (row.read >= 4 && Math.abs(row.going) >= 0.02) {
-        form.push(`this going ${row.going > 0 ? '+' : ''}${row.going.toFixed(2)} (${row.read} read)`);
+        form.push(`this going ${row.going > 0 ? '+' : ''}${row.going.toFixed(2)}`);
       }
       if (row.beat || row.beaten) form.push(`met them ${row.beat}–${row.beaten}`);
       return `<div class="row"><b>${esc(row.name)}${lead && r.phase !== 'parading' ? ' ◂' : ''}</b>`
@@ -3447,6 +3509,197 @@ function openMedbay(placeId = 43) {
 screens.card('medbay', () => closeMedbay());
 
 /**
+ * ══ #29 THE LIBERTY BOARD, AND THE FOUR ROOMS IT SENDS MEN TO ═════════════
+ *
+ * *"you can assign troops to go on leave … they will get increased morale and
+ * will heal over time."*
+ *
+ * NONE OF THAT EXISTED. Leave was `hashF(designation, day)` — a third of the
+ * company drank in the cantina every night, chosen by a hash, and came back
+ * with exactly the nerve and the wound they left with. `Bars.js` had eight
+ * exported functions no file under `src/` called and three lines of room
+ * flavour no player could ever see. This board and `showBar` below are the two
+ * screens that make that file reachable, and `Bars.grantLeave` is what makes
+ * it cost something.
+ *
+ * WHAT IS DECIDED HERE AND WHAT IS NOT: the ledger runs on the station's own
+ * clock — `Bars.stepLeave`, in `stepStation`, every ten seconds whether you
+ * are standing here or not — so this page is NOT where the resting happens,
+ * exactly as `showMedbay` is not where the healing happens. What it owns is
+ * the two things a clock cannot decide: WHICH THIRD of the company stands
+ * down, and WHICH ROOM each of them stands down in. Both cost: a man with a
+ * pass is out of `Company.fieldable` and cannot be taken on a run.
+ *
+ * THE SLATE IS ON IT. `#29`'s gazetteer verb is *"read the Muster slate"* and
+ * this branch sits above the kiosk in `stationKey`, so the slate is the last
+ * row on the board and hands the press straight to `openKiosk('muster')`.
+ * Nothing the room used to do is gone.
+ */
+let leavePick = BARS[0].id;
+
+function showLeave() {
+  const el = paneRoot('leave');
+  const b = barById(leavePick) || BARS[0];
+  const hour = world?._station?.hour ?? 0;
+  const open = libertyAt(hour) > 0;
+
+  const rolls = [];
+  for (const army of ARMY_IDS) {
+    const c = Company.load(army);
+    const rows = leaveRows(c);
+    if (!rows.length) continue;
+    rolls.push({ army, rows, out: rows.filter((r) => r.bar).length, room: berths(c) });
+  }
+
+  let html = '<div class="pane"><h2>Liberty board</h2>';
+  /* THE WINDOW, SAID PLAINLY. `Bars.LIBERTY` is 18:00 to 02:00 and a player
+   * who grants leave at 09:00 has done something that will not look like
+   * anything until this evening — the board says so rather than letting the
+   * bar look broken. The pass is still worth granting: the ledger credits by
+   * the hour from the moment it is written. */
+  html += `<p class="sub">${clockOf(hour)} · ${open ? 'liberty is running' : 'liberty runs 18:00–02:00'}</p>`;
+
+  /* WHERE THEY ARE SENT. Four rooms, one chosen, and the fancy one says on
+   * the tab that it will not take everybody. */
+  html += '<div class="acts">' + barPlaces().map((row) => {
+    const on = row.id === leavePick ? ' disabled' : '';
+    const name = row.place?.name || row.what;
+    return `<button class="care" data-room="${row.id}"${on}>${esc(name)}`
+      + `${row.rope ? ' · SGT+' : ''}</button>`;
+  }).join('') + '</div>';
+  html += `<p class="sub">${esc(b.line)}</p>`;
+
+  if (!rolls.length) html += '<p class="sub">Nobody on the roll to stand down.</p>';
+  for (const r of rolls) {
+    html += `<p class="sub">${esc(String(r.army).toUpperCase())} — ${r.out} of ${r.room} berths taken</p>`;
+    html += '<div class="rows">' + r.rows.map((m) => {
+      const nerve = `${Math.round(m.morale * 100)}% nerve`;
+      const hurt = m.hurt ? ` · ${Math.round(m.hp * 100)}% health` : '';
+      if (m.tank) {
+        return `<div class="row"><b>${esc(m.designation)}</b>`
+          + `<span>${nerve}${hurt} · in a tank</span></div>`;
+      }
+      if (m.bar) {
+        return `<div class="row"><b>${esc(m.designation)}</b>`
+          + `<span>${nerve}${hurt} · at ${esc(m.where)}</span>`
+          + `<button class="care" data-in="${esc(m.designation)}" data-army="${esc(r.army)}">Recall</button></div>`;
+      }
+      /* THE ROPE, AS A FACT ABOUT THE MAN rather than as an error he gets
+       * after pressing. `leaveRows.may` is `Bars.admits` over all four rooms. */
+      const may = m.may.includes(b.id);
+      const full = r.out >= r.room;
+      return `<div class="row"><b>${esc(m.designation)}</b>`
+        + `<span>${nerve}${hurt}${may ? '' : ' · not admitted'}</span>`
+        + `<button class="care" data-out="${esc(m.designation)}" data-army="${esc(r.army)}"`
+        + `${may && !full ? '' : ' disabled'}>Send</button></div>`;
+    }).join('') + '</div>';
+  }
+
+  html += '<div class="acts"><button class="care" data-do="slate">Read the Muster slate</button></div>';
+  el.innerHTML = html + '</div>';
+
+  for (const btn of el.querySelectorAll('button.care')) {
+    btn.addEventListener('click', () => {
+      const d = btn.dataset;
+      if (d.room) { leavePick = Number(d.room); showLeave(); return; }
+      if (d.do === 'slate') { closePane('leave'); openKiosk('muster'); return; }
+      /* THE CLOCK IS HANDED IN AND NOT READ OFF THE STORE, because the world's
+       * hour is the fractional one the station is actually keeping and
+       * `stationHour()` off disk is only written once an hour. A stamp taken
+       * from the wrong one of those two credits up to an hour nobody spent. */
+      const at = stationDay() * 24 + (world?._station?.hour ?? 0);
+      if (d.out) {
+        const got = grantLeave(d.army, d.out, leavePick, at);
+        if (got.refused.length) world?.notify?.('LIBERTY', got.refused[0].why);
+      } else if (d.in) {
+        recallLeave(d.army, d.in, at);
+      }
+      showLeave();
+    });
+  }
+  el.classList.remove('hidden');
+}
+
+function openLeave() {
+  /* A PLAYER WITH NO ROLL AT ALL HAS NOBODY TO SEND ANYWHERE, and the press
+   * belongs to the room's own kiosk in that case — `stationKey` falls straight
+   * through to the Muster slate. See the branch's note. */
+  if (!ARMY_IDS.some((a) => leaveRows(Company.load(a)).length)) return false;
+  audio.ui('good');
+  screens.take('leave', () => showLeave());
+  return true;
+}
+screens.card('leave', () => closePane('leave'));
+
+/**
+ * ══ WHO IS IN THIS BAR, RIGHT NOW ═════════════════════════════════════════
+ *
+ * *"you will actually see your real troops relaxing there."* You always could
+ * — `StationLife.occupant` seats them — and the game never said a word about
+ * it, so a player who walked into the Long Night at 22:00 saw a room of
+ * strangers and had no way of knowing that four of them were his.
+ *
+ * `Bars.crowdOf` is the whole reading and it has never had a caller outside a
+ * check: how many are in the room, how many of those are in uniform, which of
+ * them are off your own roll BY NAME, and the room's own line. `headcount` is
+ * handed in rather than recomputed, because `StationLife` owns that curve and
+ * a second copy of it here would be a second answer to how full a room is.
+ *
+ * #18 THE PIT NEVER REACHES THIS. It is a bar and a book, and `stationKey`'s
+ * tote branch is above the bar branch, so the Pit keeps the panel it already
+ * had. The ledger still seats men there and still pays them.
+ */
+function showBar(placeId) {
+  const el = paneRoot('bar');
+  const row = barPlaces().find((x) => x.id === placeId);
+  const place = row?.place;
+  const hour = world?._station?.hour ?? 0;
+  const heads = place ? headcount(place, hour) : 0;
+
+  let html = `<div class="pane"><h2>${esc(place?.name || 'The bar')}</h2>`;
+  html += `<p class="sub">${clockOf(hour)} · ${heads} in the room</p>`;
+  /* THE LINE. Three of these have been in `Bars.BARS` since Lane C2 and no
+   * player has ever read one, because the only function that returned them
+   * had no caller. */
+  html += `<p class="sub">${esc(row?.line || '')}</p>`;
+
+  let mine = 0, seats = 0;
+  for (const army of ARMY_IDS) {
+    const c = Company.load(army);
+    if (!(c.men || []).length) continue;
+    const crowd = crowdOf(placeId, hour, heads, { company: c, day: stationDay() });
+    seats += crowd.leave.length;
+    const named = crowd.leave.filter((x) => x && x.leave);
+    mine += named.length;
+    if (!named.length) continue;
+    html += `<p class="sub">${esc(String(army).toUpperCase())} — ${named.length} of yours in here</p>`;
+    html += '<div class="rows">' + named.map((x) => {
+      const man = (c.men || []).find((m) => m.designation === x.leave.designation);
+      const nerve = man && Number.isFinite(man.morale) ? `${Math.round(man.morale * 100)}% nerve` : 'off duty';
+      return `<div class="row"><b>${esc(x.name)}</b><span>${esc(nerve)}</span></div>`;
+    }).join('') + '</div>';
+  }
+  if (!seats) {
+    html += `<p class="sub">${libertyAt(hour) > 0 ? 'Nobody in uniform tonight.'
+      : 'Nobody in uniform — liberty runs 18:00–02:00.'}</p>`;
+  } else if (!mine) {
+    html += `<p class="sub">${seats} in uniform, none of them yours.</p>`;
+  }
+  html += '<div class="acts"><button class="care" data-do="leave">Leave</button></div></div>';
+  el.innerHTML = html;
+  for (const b of el.querySelectorAll('button.care')) b.addEventListener('click', () => screens.clear());
+  el.classList.remove('hidden');
+}
+
+function openBar(placeId) {
+  if (!barById(placeId)) return false;
+  audio.ui('good');
+  screens.take('bar', () => showBar(placeId));
+  return true;
+}
+screens.card('bar', () => closePane('bar'));
+
+/**
  * ══ A COUNTER, AND THE BENCH — V16 Lanes B and A3 ═════════════════════════
  *
  * Both on `openMeditation`'s shape and not `openKiosk`'s, for the reason the
@@ -3592,10 +3845,31 @@ screens.card('counter', () => closePane('counter'));
  * One handle, cancelled by every exit — `cancelDeathCard`'s precedent and its
  * exact reason: a timer that outlives the screen it belongs to raises its
  * closing line over whatever the player walked into next.
+ *
+ * ── AND THE SCREEN IS GIVEN BACK BEFORE A SINGLE LINE LANDS ──────────────
+ *
+ * The player asked to *"actually see them cook"* and what this did was say
+ * five sentences into the banner with the counter pane still up. `Screens
+ * .take` raises that pane by setting `world.paused`, and `frame()` steps the
+ * world only while the state is 'playing' — so for the whole of the cook the
+ * station was a photograph. Not "no stall animated": nothing on the station
+ * COULD animate, including the stall a man was supposedly working at two
+ * metres in front of the camera.
+ *
+ * So ordering a dish hands the screen back, on `closeKiosk`'s exact idiom:
+ * the pane goes down, the overlay is forgotten and `resume()` takes the
+ * playing branch — world running, input live, pointer lock back. You are on
+ * your feet at the counter watching a man cook, which is what the sentence
+ * asked for and what a modal pane cannot be. The lines still land in the
+ * banner over the top of it.
  */
 let cookTimer = null;
 function cancelCook() {
   if (cookTimer !== null) { clearTimeout(cookTimer); cookTimer = null; }
+  /* THE GEOMETRY GOES WITH IT. A set left standing on a counter after the
+   * screen it belongs to is gone is the same defect as the timer above, in
+   * meshes: eight of them, on a desk in a room the player has left. */
+  if (world?._cook) { world._cook.dispose(); world._cook = null; }
 }
 
 function cookAtCounter(counter, row) {
@@ -3611,10 +3885,46 @@ function cookAtCounter(counter, row) {
         st.ok ? `${row.name} — in your larder at home` : (st.why || 'no room for it'));
     },
   });
+  /* ── OUT FROM BEHIND THE PANE, AND ONTO YOUR FEET ─────────────────────
+   * `closeKiosk`'s three lines: forget the overlay, say we are paused so
+   * `resume()` takes the playing branch, and resume — which is the only thing
+   * in the tree that clears `world.paused`, re-enables input and asks for the
+   * pointer back. Without it the cook below would never be stepped at all. */
+  closePane('counter');
+  screens.overlay = null;
+  screens.state = 'paused';
+  resume();
+  /**
+   * ── THE STALL, IF THERE IS A WORLD TO PUT ONE IN ─────────────────────
+   *
+   * Imported here rather than at the top of the file because this is the only
+   * line in `main.js` that wants the station's fit-out, and the module is
+   * already in memory — `Station.js` imports it to build every room — so the
+   * promise resolves on the next microtask, well inside the first frame of a
+   * cook that lasts three and a half seconds.
+   *
+   * THE TIMER IS THE FALLBACK AND NOT THE PATH. A cook stepped off
+   * `setTimeout` would run while the world was paused behind some other card,
+   * which is how the lines used to arrive over a stall that was not moving.
+   * It is kept for the cases where there is no set to build — no world, no
+   * station, a dish with no prep — because a player who has paid for a bowl
+   * must be told about it whatever the surface can draw.
+   */
+  const prep = Food.prepOf(row)?.id || null;
+  import('./game/StationKit.js').then(({ CookSet }) => {
+    if (cook.done) return;
+    const set = new CookSet(world, counter, cook, prep);
+    if (set.done) { set.dispose(); cookBeat(cook); return; }
+    world._cook = set;
+  }).catch(() => cookBeat(cook));
+}
+
+/** The fallback beat: the lines, on a timer, with nothing to look at. */
+function cookBeat(cook) {
   const TICK = 0.25;
   const beat = () => {
     cookTimer = null;
-    if (cook.step(TICK) === 'done') return;
+    if (cook.done || cook.step(TICK) === 'done') return;
     cookTimer = setTimeout(beat, TICK * 1000);
   };
   beat();

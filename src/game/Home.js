@@ -1574,19 +1574,373 @@ function roomLine(h) {
 }
 
 /**
- * ══ THE MIRROR, AND IT IS DELIBERATELY NOT A REFLECTION ═══════════════════
+ * ══════════════════════════════════════════════════════════════════════════
+ *  THE MIRROR, AND IT IS A REFLECTION NOW — V15 §1.3
+ * ══════════════════════════════════════════════════════════════════════════
  *
  * §1.3: *"a real mirror in the cabin, and standing at it opens the character
- * creator with your own body in the glass rather than on a menu stage."* The
- * SECOND half of that is the feature and it is what `homeKey` raises;
- * the first half is a planar reflection, and `DeckMirror.js` — the only mirror
- * in this tree — is floor-plane only. Generalising it to an arbitrary vertical
- * plane is a rendering change with a rendering change's risk, and it would buy
- * a picture of a body that the panel it opens is about to draw anyway.
+ * creator with your own body in the glass rather than on a menu stage."*
  *
- * So the fixture is dark glass in a frame, which is what an unlit mirror looks
- * like, and the door behind it is real from the first day.
+ * ── WHAT WAS HERE, AND WHY IT WAS A LIE ───────────────────────────────────
+ *
+ * Dark glass in a frame, a press that opened the menu's saber tab scrolled to
+ * the face list, and a notification reading *"THE MIRROR — your own body in
+ * the glass"*. The glass reflected nothing. The sentence on screen described a
+ * feature the code did not have, which is worse than the feature being absent:
+ * a player who reads it looks for the body and concludes the game is broken.
+ *
+ * ── WHAT IT COSTS, MEASURED BEFORE IT WAS WRITTEN ─────────────────────────
+ *
+ * A reflection is a second rasterisation, and the question is of WHAT.
+ * `DeckMirror.js` reflects the whole hangar and pays +123..+149 draw calls,
+ * 11-13% of the frame's. A mirror hanging on a cabin wall does not need the
+ * station: it needs the room it is in and the person standing in it. Counted
+ * on a live deck-44 world:
+ *
+ *   the whole station scene   1334 draws   493 449 triangles
+ *   #27's own group             18 draws     4 030 triangles
+ *   the player's rig            62 draws    12 920 triangles
+ *   ───────────────────────────────────────────────────────
+ *   what the glass renders      80 draws    16 950 triangles
+ *                               +6.0%       +3.4%
+ *
+ * …and only while the camera is inside `GLASS.reach` of the glass and on the
+ * room side of it. Everywhere else in the game this is one distance test in a
+ * hook that returns. That is the whole reason the mask below exists: without
+ * it a cabin mirror would cost what the deck's does, for a picture of a room
+ * six metres across.
+ *
+ * ── WHAT IS STILL NOT TRUE, SAID HERE RATHER THAN ON SCREEN ───────────────
+ *
+ * *"with your own body in the glass rather than on a menu stage"* is TWO
+ * claims, and this delivers one of them. The body in the glass is the real
+ * one — your species, your robe, your hair, your blade, moving as you move.
+ * The creator's controls do NOT drive it: they drive `Menu.js`'s own preview
+ * figure, and the change reaches your body on your next deploy exactly as it
+ * did before. Making them drive the live body needs a re-dress path that does
+ * not exist — `dressPreviewFigure` ATTACHES cloth to a figure that has none,
+ * so calling it on a dressed player hangs a second cape on the first, and
+ * species and build change the skeleton, which is a rebuild and not a
+ * re-dress. Both live in `src/ui/Menu.js` and `src/game/Player.js`.
+ *
+ * So the room is honest about which half it has: the notification says the
+ * glass is real and says where the creator's controls land. Nothing on screen
+ * claims the other half until the other half exists.
  */
+
+/** Every number the cabin's glass runs on. */
+export const GLASS = {
+  /**
+   * How near the camera has to be for the reflection to be rendered at all,
+   * in metres. `MIRROR_REACH` (2.4) is how near the PLAYER must be to press
+   * the key; this is bigger because in third person the camera sits a couple
+   * of metres behind the player's head and the glass has to be live before
+   * you have finished walking up to it.
+   */
+  reach: 7.0,
+  /**
+   * The render target's size as a fraction of the drawing buffer, per tier.
+   * 0 is "no reflection": the glass keeps its dark material and nothing is
+   * rendered, which is the tier the menu offers to integrated graphics.
+   * Smaller than `DeckMirror`'s at every tier because the glass is 0.94 m of
+   * a room and never fills the frame the way a deck floor does.
+   */
+  scale: { low: 0, medium: 0.34, high: 0.5, ultra: 0.5 },
+  /** How much of the reflected image comes back. Glass is not a front mirror. */
+  strength: 0.86,
+  /** What the glass is when the reflection is off, and what it tints toward. */
+  tint: [0.052, 0.058, 0.070],
+};
+
+/** The target's size as a fraction of the frame for a tier name. */
+export function glassScale(tier) {
+  const s = GLASS.scale[tier];
+  return Number.isFinite(s) ? s : GLASS.scale.medium;
+}
+
+const GLASS_VERT = /* glsl */`
+  uniform mat4 uTexMat;
+  varying vec4 vProj;
+  void main() {
+    /* uTexMat carries the mesh's own matrixWorld, folded in on the CPU each
+     * frame exactly as three's Reflector does, so this maps OBJECT space. */
+    vProj = uTexMat * vec4(position, 1.0);
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }`;
+
+const GLASS_FRAG = /* glsl */`
+  uniform sampler2D tGlass;
+  uniform vec3 uTint;
+  uniform float uOn;
+  varying vec4 vProj;
+  void main() {
+    /* Behind the plane, or off: the glass is what an unlit mirror is. */
+    vec3 c = uTint;
+    if (uOn > 0.0 && vProj.w > 0.0) {
+      vec2 uv = vProj.xy / vProj.w;
+      vec3 r = texture2D(tGlass, clamp(uv, 0.0, 1.0)).rgb;
+      c = mix(uTint, r, ${GLASS.strength.toFixed(3)} * uOn);
+    }
+    gl_FragColor = vec4(c, 1.0);
+  }`;
+
+/* Scratch, so the per-frame hook allocates nothing. */
+const _gN = new THREE.Vector3();
+const _gP = new THREE.Vector3();
+const _gCam = new THREE.Vector3();
+const _gView = new THREE.Vector3();
+const _gLook = new THREE.Vector3();
+const _gTarget = new THREE.Vector3();
+const _gRot = new THREE.Matrix4();
+const _gPlane = new THREE.Plane();
+const _gClip = new THREE.Vector4();
+const _gQ = new THREE.Vector4();
+const _gSize = new THREE.Vector2();
+
+/**
+ * The tier the world is running at — `DeckMirror.tierOf`'s argument, and the
+ * same order: the ENGINE's tier first, because `world.settings` is a copy
+ * taken when the world was built and never sees an options screen.
+ */
+function glassTier(world) {
+  return world?.engine?.quality ?? world?.settings?.quality ?? 'high';
+}
+
+/**
+ * ══ POINT THE VIRTUAL CAMERA — three's `Reflector`, generalised ═══════════
+ *
+ * `DeckMirror.mirrorCamera` is the y-plane special case of this: it flips y
+ * and calls `lookAt`. A wall mirror's plane is vertical and its normal is the
+ * room's own yaw, so the reflection has to be about an ARBITRARY plane —
+ * which is `Vector3.reflect` plus the same `lookAt`, and `lookAt` is what
+ * keeps the basis right-handed so no triangle winding flips and no material
+ * has to switch its `side`.
+ *
+ * The near plane is then replaced by the mirror's own plane (Lengyel's
+ * oblique depth projection, transcribed from `DeckMirror` because it is the
+ * same six lines): the wall the glass is screwed to sits between the virtual
+ * camera and the room, and without the clip it fills the reflection.
+ */
+function aimGlassCamera(S, camera) {
+  const V = S.camera;
+  _gN.copy(S.normal);
+  _gP.copy(S.plane);
+  _gCam.setFromMatrixPosition(camera.matrixWorld);
+
+  _gView.subVectors(_gP, _gCam);
+  /* Facing away: the camera is behind the glass, which happens the moment you
+   * walk through the wall in a free camera. Nothing to reflect. */
+  if (_gView.dot(_gN) > 0) return false;
+  _gView.reflect(_gN).negate().add(_gP);
+
+  _gRot.extractRotation(camera.matrixWorld);
+  _gLook.set(0, 0, -1).applyMatrix4(_gRot).add(_gCam);
+  _gTarget.subVectors(_gP, _gLook).reflect(_gN).negate().add(_gP);
+
+  V.position.copy(_gView);
+  V.up.set(0, 1, 0).applyMatrix4(_gRot).reflect(_gN);
+  V.lookAt(_gTarget);
+  V.near = camera.near; V.far = camera.far;
+  V.fov = camera.fov; V.aspect = camera.aspect; V.zoom = camera.zoom;
+  V.updateMatrixWorld(true);
+  V.projectionMatrix.copy(camera.projectionMatrix);
+
+  /* World → clip → [0,1], through the projection BEFORE the oblique rewrite:
+   * that rewrite touches the z row only, and the uv never reads z. */
+  S.texMat.set(
+    0.5, 0.0, 0.0, 0.5,
+    0.0, 0.5, 0.0, 0.5,
+    0.0, 0.0, 0.5, 0.5,
+    0.0, 0.0, 0.0, 1.0,
+  );
+  S.texMat.multiply(V.projectionMatrix);
+  S.texMat.multiply(V.matrixWorldInverse);
+  S.texMat.multiply(S.mesh.matrixWorld);
+
+  _gPlane.setFromNormalAndCoplanarPoint(_gN, _gP);
+  _gPlane.applyMatrix4(V.matrixWorldInverse);
+  _gClip.set(_gPlane.normal.x, _gPlane.normal.y, _gPlane.normal.z, _gPlane.constant);
+  const P = V.projectionMatrix.elements;
+  _gQ.x = (Math.sign(_gClip.x) + P[8]) / P[0];
+  _gQ.y = (Math.sign(_gClip.y) + P[9]) / P[5];
+  _gQ.z = -1.0;
+  _gQ.w = (1.0 + P[10]) / P[14];
+  _gClip.multiplyScalar(2.0 / _gClip.dot(_gQ));
+  P[2] = _gClip.x;
+  P[6] = _gClip.y;
+  P[10] = _gClip.z + 1.0;
+  P[14] = _gClip.w;
+  V.projectionMatrixInverse.copy(V.projectionMatrix).invert();
+  return true;
+}
+
+/**
+ * ══ WHAT IS IN THE REFLECTION, AND IT IS NOT THE STATION ══════════════════
+ *
+ * The room and the person in it, and everything else switched off for the
+ * length of one render. That is the whole cost argument at the top of this
+ * chapter: reflecting the scene would be 1334 draws for a picture of a cabin.
+ *
+ * `station-place-27` IS A DIRECT CHILD OF THE SCENE — measured, 185 of them,
+ * one group per place plus the lights and the loose props — so the mask is one
+ * pass over `scene.children` and never a `traverse`. Lights stay (a hidden
+ * light is a dark reflection), the cabin's own group stays, and the player's
+ * body stays: the rig root, and the two cloth meshes, which are scene children
+ * of their own at the ORIGIN with world-space vertices, so no distance test
+ * could ever have found them.
+ *
+ * Objects are hidden and not removed, for the reason `DeckMirror` gives: the
+ * scene graph must not change shape in the middle of a frame.
+ */
+function maskForGlass(S, world, h, scene) {
+  const hidden = S.hidden;
+  hidden.length = 0;
+  const keep = S.keep;
+  keep.clear();
+  keep.add(h.group);
+  const P = world?.player;
+  if (P?.rig?.root) keep.add(P.rig.root);
+  for (const c of [P?.cloak, P?.skirt, P?.waistCape, P?.hoodDrape]) {
+    if (c?.mesh) keep.add(c.mesh);
+  }
+  for (const o of scene.children) {
+    if (!o.visible || o.isLight || keep.has(o)) continue;
+    o.visible = false;
+    hidden.push(o);
+  }
+  /* The glass cannot be in its own reflection. */
+  S.mesh.visible = false;
+}
+
+function unmaskAfterGlass(S) {
+  for (const o of S.hidden) o.visible = true;
+  S.hidden.length = 0;
+  S.keep.clear();
+  S.mesh.visible = true;
+}
+
+/**
+ * The render hook. Runs inside the beauty pass, once a stepped frame, when the
+ * glass is about to be drawn by the engine's own camera.
+ *
+ * ONE RENDER PER STEPPED FRAME, AND THE CLOCK IS `world.time`. `DeckMirror`
+ * has a director to arm it; this room has none, and a per-frame `step` export
+ * would be a line in `Station.js`, which this lane does not own. `world.time`
+ * advances once per `world.update`, so a second pass over the same frame — the
+ * ink prepass, a probe, a shadow camera — reads the same number and is
+ * refused. It is the same guard by another clock.
+ */
+function renderGlass(world, h, S, renderer, scene, camera) {
+  const u = S.material.uniforms;
+  if (S.disposed || S.rendering || !(S.scale > 0)) { u.uOn.value = 0; return; }
+  const main = world?.engine?.camera;
+  if (main && camera !== main) { S.skipped++; return; }
+  if (typeof renderer?.getDrawingBufferSize !== 'function' || typeof renderer.render !== 'function') return;
+  const t = world?.time ?? 0;
+  if (t === S.at) { S.skipped++; return; }
+  S.at = t;
+  /* THE DISTANCE GATE, and it is the whole of the cost argument. */
+  _gCam.setFromMatrixPosition(camera.matrixWorld);
+  if (_gCam.distanceTo(S.plane) > GLASS.reach) { u.uOn.value = 0; S.skipped++; return; }
+  if (!aimGlassCamera(S, camera)) { u.uOn.value = 0; S.skipped++; return; }
+
+  renderer.getDrawingBufferSize(_gSize);
+  const w = Math.max(2, Math.round(_gSize.x * S.scale));
+  const hh = Math.max(2, Math.round(_gSize.y * S.scale));
+  if (S.target.width !== w || S.target.height !== hh) S.target.setSize(w, hh);
+  maskForGlass(S, world, h, scene);
+
+  S.rendering = true;
+  const prevTarget = renderer.getRenderTarget();
+  const xr = renderer.xr;
+  const prevXr = xr ? xr.enabled : false;
+  const sm = renderer.shadowMap;
+  const prevAuto = sm ? sm.autoUpdate : false;
+  const prevNeeds = sm ? sm.needsUpdate : false;
+  if (xr) xr.enabled = false;
+  /* The cascades are already fresh and are rendered from the LIGHT's camera,
+   * so a second set would come back byte-identical — `frame-budget.mjs` §1's
+   * finding, and the reason this does what the deck's mirror does. */
+  if (sm) { sm.autoUpdate = false; sm.needsUpdate = false; }
+  renderer.setRenderTarget(S.target);
+  renderer.state?.buffers?.depth?.setMask?.(true);
+  if (renderer.autoClear === false) renderer.clear();
+  try {
+    renderer.render(scene, S.camera);
+  } catch { /* a reflection is never worth a frame */ } finally {
+    if (xr) xr.enabled = prevXr;
+    if (sm) { sm.autoUpdate = prevAuto; sm.needsUpdate = prevNeeds; }
+    renderer.setRenderTarget(prevTarget);
+    const vp = camera.viewport;
+    if (vp !== undefined) renderer.state?.viewport?.(vp);
+    unmaskAfterGlass(S);
+    S.rendering = false;
+  }
+  u.uTexMat.value.copy(S.texMat);
+  u.uOn.value = 1;
+  S.renders++;
+}
+
+/**
+ * Give the glass its reflection: a target, a virtual camera and the material
+ * that samples one. YOURS ONLY — a guest's apartment keeps the flat glass,
+ * because four render targets and four second passes for four rooms, three of
+ * which you are not standing in, is the cost this chapter exists to refuse.
+ *
+ * Returns the state, or null when the tier has the reflection switched off, in
+ * which case the mesh keeps `stationMats.glass` and nothing is allocated.
+ */
+function glassMirror(world, h, gm, lx, lz) {
+  const scale = glassScale(glassTier(world));
+  if (!(scale > 0)) return null;
+  const target = new THREE.WebGLRenderTarget(2, 2, {
+    minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
+    type: THREE.HalfFloatType, generateMipmaps: false,
+    colorSpace: THREE.LinearSRGBColorSpace, depthBuffer: true, stencilBuffer: false,
+  });
+  target.texture.name = 'home-mirror';
+  const material = new THREE.ShaderMaterial({
+    name: 'home-mirror',
+    uniforms: {
+      uTexMat: { value: new THREE.Matrix4() },
+      tGlass: { value: target.texture },
+      uTint: { value: new THREE.Vector3(...GLASS.tint) },
+      uOn: { value: 0 },
+    },
+    vertexShader: GLASS_VERT,
+    fragmentShader: GLASS_FRAG,
+    /* Opaque: the glass is the picture, not light added over one. A mirror
+     * standing against a wall has nothing behind it to blend with. */
+    transparent: false, depthWrite: true, depthTest: true,
+    side: THREE.FrontSide, fog: false, lights: false,
+  });
+  /* The ink prepass rasterises silhouettes; the frame around the glass already
+   * draws this one, and a prepass through a cloned camera is exactly the
+   * second pass the `world.time` guard above refuses. */
+  material.userData.saberNoInk = true;
+  gm.material = material;
+  gm.updateMatrixWorld(true);
+
+  const camera = new THREE.PerspectiveCamera(60, 16 / 9, 0.05, 900);
+  camera.name = 'home-mirror-camera';
+  const S = {
+    mesh: gm, material, target, camera, scale,
+    texMat: new THREE.Matrix4(),
+    /* The plane: a point on the glass and the normal pointing into the room.
+     * The glass slab is offset 0.09 m along the room's own +x inside its mesh,
+     * and the room's +x is the world direction `toWorld` turns it into. */
+    normal: new THREE.Vector3(Math.cos(h.spot.yaw), 0, -Math.sin(h.spot.yaw)).normalize(),
+    /** A point on the glass: the plane's anchor AND the distance gate's mark. */
+    plane: toWorld(h, lx + 0.09, lz).clone().setY(h.y + 1.15),
+    /** `world.time` of the last render — the one-per-frame clock. */
+    at: -1,
+    rendering: false, disposed: false,
+    renders: 0, skipped: 0,
+    keep: new Set(), hidden: [],
+  };
+  return S;
+}
+
 function dressMirror(world, h) {
   const { w, d } = h.spot;
   /* On the left-hand wall of the outer room, facing the desk. */
@@ -1603,7 +1957,28 @@ function dressMirror(world, h) {
     h.built.push(m);
     h.draws++;
   }
-  h.mirror = { lx, lz, at: toWorld(h, lx, lz).clone(), mesh: fm };
+  h.mirror = { lx, lz, at: toWorld(h, lx, lz).clone(), mesh: fm, glass: gm, S: null };
+  if (h.mine) {
+    const S = glassMirror(world, h, gm, lx, lz);
+    if (S) {
+      gm.onBeforeRender = (renderer, scene, cam) => renderGlass(world, h, S, renderer, scene, cam);
+      h.mirror.S = S;
+    }
+  }
+}
+
+/** The reflection's own allocations, given back. `undressOne` calls it. */
+function undressMirror(h) {
+  const S = h?.mirror?.S;
+  if (!S) return;
+  S.disposed = true;
+  S.mesh.onBeforeRender = () => {};
+  S.material.uniforms.tGlass.value = null;
+  S.material.dispose();
+  S.target.dispose();
+  S.keep.clear();
+  S.hidden.length = 0;
+  h.mirror.S = null;
 }
 
 /**
@@ -1892,7 +2267,16 @@ function seatCompanion(world, h) {
  * and nothing else: no solver, no beat, no `Flight` state — the wings are
  * PARENTS of their own meshes on this rig, so a rotation is the fold.
  */
-const WING_FOLD = { arm: [-1.30, 0, 0], fan: [-0.55, 0, 0] };
+/**
+ * SEARCHED RATHER THAN AUTHORED. A grid over the two bones' local eulers,
+ * measuring the built hawk's bounding box at each: unfolded it is
+ * **1.83 m across, 0.61 m tall, 1.39 m long**; at these two numbers it is
+ * **0.59 m across, 0.61 m tall, 1.48 m long**, with the lowest point of the
+ * body unchanged at −0.24 m under the pelvis — so the span comes in by 68%,
+ * the wings go BACK over the tail rather than down through the perch, and the
+ * feet are still the part that touches the bar.
+ */
+const WING_FOLD = { arm: [-0.85, 0, 0], fan: [0.25, 0, 0] };
 const _fold = new THREE.Quaternion();
 const _euler = new THREE.Euler();
 
@@ -2507,6 +2891,10 @@ function undressOne(world, h) {
    * `remove` + one `geometry.dispose` would leave thirty-seven of them alive
    * inside a Group nobody points at any more. */
   undressPad(h);
+  /* AND THE GLASS'S REFLECTION — a render target is GPU memory and the hook
+   * that fills it closes over this world. Neither is freed by removing a mesh
+   * from a group. */
+  undressMirror(h);
   for (const p of h.props) { if (p && !p.dead) p.destroy(); }
   h.props.length = 0;
   /* And the fixtures and surfaces this dressing added to the room's group.

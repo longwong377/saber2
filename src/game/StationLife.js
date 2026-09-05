@@ -640,7 +640,7 @@ export function dressStationLife(world, st) {
    */
   world.rules = { pvp: false, friendlyFire: true };
   /**
-   * ══ THE FIRST POPULATION HAPPENS NOW, NOT ON FRAME ONE ═════════════════
+   * ══ THE FIRST POPULATION IS SEATED IN SLICES, OFF THE SEAM ═════════════
    *
    * Measured: an unbounded re-seat during play spends 100 ms on the frame the
    * player walks into a full hall, because a spawn BUILDS a body — a rig,
@@ -648,17 +648,59 @@ export function dressStationLife(world, st) {
    * re-seat after this one is capped at two, which at half-second intervals is
    * four bodies a second appearing just ahead of a walk.
    *
-   * This one is uncapped and it is free, because `dressStation` runs inside
-   * `World._loadSteps` — the player is looking at the loading plate, and §12.2
-   * budgets the station's LOAD at the hangar's rather than its frames. It also
-   * settles §13.2's contact sheet: a shot of the Concourse at 13:00 is of a
-   * market, not of a market filling up.
+   * THIS ONE USED TO BE UNCAPPED AND HAPPEN HERE, on the grounds that
+   * `dressStation` runs inside `World._loadSteps` and "the player is looking
+   * at the loading plate". That sentence stopped being true when V15 §1.5
+   * took the plate away: between the flight deck and the station there is no
+   * plate, there is a still of the lift car the player is standing in, and
+   * every millisecond spent here is a millisecond of photograph. Metered with
+   * the deck already built, the station's whole build is about 2.1 s of CPU
+   * and this call was 1.14 s of it — twenty-eight bodies, over half the seam.
+   *
+   * So the pool is filled by `primeStationLife`, a few bodies a frame, on the
+   * frames after the world is live. `life.priming` stays TRUE for the whole of
+   * it, so it is the same seating with the same budget — not the walk's
+   * trickle — and it has 1.1 s of door animation (`RIDE.doors`, about 66
+   * frames) to finish in, which it does with room to spare. §13.2's contact
+   * sheet still gets a market rather than a market filling up: a screenshot
+   * either steps the world or calls `Station.finishStationBuild`, which drains
+   * the slices in one go.
    */
-  const here = world._station;
-  const p = world.player?.position;
-  if (here) reseat(world, here, life, p ? p.x : 0, p ? p.z : 24);
-  life.priming = false;
   return life;
+}
+
+/**
+ * HOW MANY BODIES ONE SLICE OF THE PRIME MAY BUILD.
+ *
+ * A body costs about 40 ms of CPU the first time its archetype is built and
+ * about 23 ms after, so four is a frame of roughly a sixth of a second at
+ * worst — a stutter under a closing pair of lift doors, not a freeze, and
+ * seven slices is the whole pool. One a frame would be smoother and would
+ * take twenty-eight frames of the sixty-six available, which is a thinner
+ * margin than this is worth.
+ */
+export const PRIME_SLICE = 4;
+
+/**
+ * Seat one slice of the first population. Returns true while there is more.
+ *
+ * Queued by `dressStation` and drained by `drainStationBuild`; see the note
+ * above for why the prime is not done inside the dress any more. It is safe
+ * to call directly and safe to call after the pool is full — the second is
+ * how it says it is finished.
+ */
+export function primeStationLife(world) {
+  const life = world?._stationLife;
+  const here = world?._station;
+  if (!life || !here || !life.priming) return false;
+  const before = life.live.size;
+  const p = world.player?.position;
+  reseat(world, here, life, p ? p.x : 0, p ? p.z : 24);
+  /* A re-seat that added nobody has nobody left to add: every candidate
+   * inside the radius is already standing, or the budget is spent. Either way
+   * the prime is over and the pool goes on the walk's own trickle. */
+  if (life.live.size <= before) { life.priming = false; return false; }
+  return true;
 }
 
 /** Which archetype builds a given resident row — a species, or a Borz row. */
@@ -734,9 +776,10 @@ function reseat(world, st, life, px, pz) {
    * which at a walk is a room populating just ahead of you. The DROP radius is
    * wider than the LIVE one for the same reason — see the constants.
    */
-  /* The first re-seat runs inside the loading plate, so it may spend as long
-   * as it needs; every one after it is a trickle. */
-  const cap = life.priming ? life.budget : 1;
+  /* The prime fills the pool in slices of `PRIME_SLICE` over the frames after
+   * the world comes up — see `primeStationLife` — and every re-seat after it
+   * is a trickle of one. */
+  const cap = life.priming ? PRIME_SLICE : 1;
   let made = 0;
   for (const w of want) {
     if (n >= life.budget) break;

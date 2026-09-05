@@ -286,6 +286,7 @@ export const WRITERS = [
     /* §1.3.4, and the only notice that cannot be rolled off the wall. */
     id: 'address', pin: 100, take: 1,
     write: (s) => (s.address ? [['ADDRESS', s.address, 'YOUR DOOR']] : []),
+    say: (r) => `the door you live behind is ${r[1]}`,
   },
   {
     /* The giver is pinned in that room until you go back for it — see
@@ -293,16 +294,19 @@ export const WRITERS = [
      * where the player would never think to look for it. */
     id: 'owed', pin: 90, take: 2,
     write: (s) => s.owed.map((o) => ['OWED', shortRoom(o.room), `${o.pay} CREDITS`, 'GO AND ASK']),
+    say: (r) => `${r[2].toLowerCase()} waiting for you at ${r[1]} — go and ask`,
   },
   {
     /* A companion left standing on the ground. The one notice on this wall
      * that is literally what the room is called. */
     id: 'lost', pin: 80, take: 2,
     write: (s) => s.lost.map((l) => ['LOST', l.name, l.where || 'LEFT BEHIND', 'ANY WORD?']),
+    say: (r) => `${r[1]} is still up on the wall — last seen ${String(r[2]).toLowerCase()}`,
   },
   {
     id: 'wanted', pin: 60, take: 4,
     write: (s, rng) => shuffled(s.work, rng).map((w) => ['WANTED', w.who, shortRoom(w.room), `${w.pay} CR`]),
+    say: (r) => `${r[1]} wants a hand at ${r[2]}, ${String(r[3]).toLowerCase()}`,
   },
   {
     /* SHUFFLED, so the five venues take turns. Three slots and five rooms —
@@ -314,10 +318,13 @@ export const WRITERS = [
       ? ['TONIGHT', shortRoom(c.name), 'DARK']
       : ['TONIGHT', shortRoom(c.name), c.meets ? `${c.meets} MEET${c.meets === 1 ? '' : 'S'}` : 'IT IS ON',
         c.from == null ? '' : `FROM ${clock(c.from)}`].filter(Boolean))),
+    say: (r) => (r[2] === 'DARK' ? `${r[1]} is dark tonight`
+      : `${r[1]} tonight — ${String(r[2]).toLowerCase()}${r[3] ? `, ${String(r[3]).toLowerCase()}` : ''}`),
   },
   {
     id: 'sale', pin: 40, take: 2,
     write: (s, rng) => shuffled(s.shelf, rng).map((h) => ['ON SALE', h.what, shortRoom(h.room), `${h.price} CR`]),
+    say: (r) => `${r[1]} is on the shelf at ${r[2]}, ${String(r[3]).toLowerCase()}`,
   },
   {
     /* THE ROOM'S OWN STOCK. A thing off a real shelf, at a real door — both
@@ -335,11 +342,14 @@ export const WRITERS = [
       }
       return out;
     },
+    say: (r) => `somebody handed in ${r[1]} — claim it at ${r[3]}`,
   },
   {
     id: 'roll', pin: 20, take: 1,
     write: (s) => (s.roll
       ? [['THE ROLL', `${s.roll.standing} STANDING`, `${s.roll.fallen} FALLEN`, 'SEE #56']] : []),
+    say: (r) => `the roll is pinned up: ${String(r[1]).toLowerCase()}, `
+      + `${String(r[2]).toLowerCase()} — the names are at #56`,
   },
 ];
 
@@ -372,7 +382,14 @@ export function noticesFor(day = 0, slots = 13, s = null) {
       if (out.length >= slots) return out;
       if (took >= (w.take ?? 1)) break;
       took++;
-      out.push({ id: w.id, rows: fit(rows) });
+      /* `say` IS BUILT OFF THE RAW ROWS AND NOT THE FITTED ONES. `fit`
+       * uppercases and cuts to the slab's width, which is right for a 320 px
+       * canvas and wrong for a banner — "COOLANT & WATE" is a legible notice
+       * and an illegible sentence. Both come out of the same rows, so the
+       * words the key reads to you and the words on the slab in front of you
+       * are one string built twice, which is the whole reason `noticeReading`
+       * does not have a table of its own. */
+      out.push({ id: w.id, rows: fit(rows), say: w.say ? w.say(rows) : '' });
     }
   }
   return out.slice(0, slots);
@@ -381,27 +398,81 @@ export function noticesFor(day = 0, slots = 13, s = null) {
 /**
  * ══ WHAT THE KEY SAYS — #25's verb, answered ══════════════════════════════
  *
- * `StationBoards.standingReading`'s shape one room over: the gazetteer's verb
- * for #25 is *"read the notices"*, and a press that answered with those three
- * words was the whole of the room. This is the reading — how many are up, the
- * one that is about YOU, and §1.3.4's address, which is the sentence this room
- * exists in the design document to carry.
+ * ── THE DEFECT THIS FUNCTION WAS ─────────────────────────────────────────
+ *
+ * The gazetteer's verb for #25 is *"read the notices"* and its look is
+ * *"notices change daily"*. The WALL honours both — thirteen slabs, written,
+ * and `noticesFor(0) !== noticesFor(1)`. The READING did not. Measured through
+ * the real door, three presses a day on days 0, 1, 2, 7 and 30, fifteen presses
+ * in all:
+ *
+ *     LOST & FOUND :: 13 notices up today, and your door is 44-A-27
+ *
+ * Byte-identical, all fifteen. The two branches that could have moved it read
+ * `s.owed` and `s.lost`, and both are EMPTY ON A FRESH SAVE — so the constant
+ * was not an edge case, it was what every player gets on every one of their
+ * first days, in a room whose one verb is to read.
+ *
+ * ── SO THE KEY READS YOU A NOTICE OFF THE WALL ───────────────────────────
+ *
+ * Which is what the verb says and what a person does: you stand at a board,
+ * you read one of the things pinned to it, and if you are still standing there
+ * you read the next one. Two dimensions of change and each is honest:
+ *
+ *   DAY TO DAY   the board itself is different (that is `noticesFor`), and the
+ *                ORDER you read it in is a second draw off the day —
+ *                `makeRng(hashOf('read:' + day))` — so press one is a different
+ *                notice tomorrow even where the same notice is up.
+ *   PRESS TO PRESS  a cursor walks that order. It is the only mutable thing in
+ *                this file and it is a READING POSITION, not content: two
+ *                players on one station read the same wall in the same order,
+ *                which is `Counter.shelfFor`'s law and the reason nothing here
+ *                is `Math.random`. It resets when the day turns, and it wraps,
+ *                because a wall you have read all of is one you start again.
+ *
+ * WHAT IS ABOUT YOU IS READ FIRST. `owed` and `lost` are the two notices with
+ * your name on them — money left in a room and an animal you left standing —
+ * so they are lifted to the front of the order rather than being given a
+ * branch of their own. That keeps the old code's intent (the money must not be
+ * buried) without its constant, and on a fresh save, where both lists are
+ * empty, the order is the day's shuffle and nothing is special-cased.
+ *
+ * AND THE COUNT IS SAID ONCE. "13 notices up today" is worth saying when you
+ * walk up to the wall and is noise on the fourth press, so it rides the first
+ * reading of the day and nothing after it.
  *
  * Two strings, because `world.notify` takes a head and a line, which is the
  * shape every other verb on the station answers in.
  */
+
+/** Where you are in today's wall. See above: a position, not content. */
+let _read = { day: null, n: 0 };
+
+/** The order today's board is read in — the day's own draw, yours first. */
+export function readingOrder(day = 0, board = []) {
+  const rng = makeRng(hashOf(`read:${day | 0}`));
+  const idx = shuffled(board.map((_, i) => i), rng);
+  const mine = idx.filter((i) => board[i].id === 'owed' || board[i].id === 'lost');
+  return [...mine, ...idx.filter((i) => !mine.includes(i))];
+}
+
 export function noticeReading(day = 0, slots = 13) {
   const s = sourcesFor(day);
-  const up = noticesFor(day, slots, s).length;
-  const door = s.address ? `your door is ${s.address}` : 'no door of yours on it';
-  if (s.owed.length) {
-    const o = s.owed[0];
-    return ['LOST & FOUND', `${o.pay} credits waiting for you at ${o.room} — and ${door}`];
-  }
-  if (s.lost.length) {
-    return ['LOST & FOUND', `${s.lost[0].name} is still on the wall, and ${door}`];
-  }
-  return ['LOST & FOUND', `${up} notice${up === 1 ? '' : 's'} up today, and ${door}`];
+  const board = noticesFor(day, slots, s);
+  const door = s.address ? `your door is ${s.address}` : 'no door of yours is on it';
+  /* A wall with nothing on it is a real answer and not a failure — see
+   * `noticesFor`'s note about the unwritten slab staying paper. */
+  if (!board.length) return ['LOST & FOUND', `nothing is pinned up today, and ${door}`];
+  const d = day | 0;
+  if (_read.day !== d) _read = { day: d, n: 0 };
+  const order = readingOrder(d, board);
+  const one = board[order[_read.n % order.length]];
+  const first = _read.n === 0;
+  _read.n++;
+  const say = one.say || one.rows.filter(Boolean).join(' — ').toLowerCase();
+  return ['LOST & FOUND', first
+    ? `${board.length} notice${board.length === 1 ? '' : 's'} up today — ${say}`
+    : say];
 }
 
 /**

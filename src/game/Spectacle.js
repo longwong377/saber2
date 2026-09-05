@@ -227,6 +227,62 @@ const FIGHT_HAZARDS = [
   },
 ];
 
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  THE SEVEN NUMBERS THAT MAKE A ROOM WORTH READING, AND WHERE THEY CAME FROM
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * Everything above this line is the SIM. Everything in the block below is a
+ * MODEL of the sim — the prices, the reading room and the house's own opinion
+ * — and a model of a simulation is either fitted to it or it is decoration.
+ * Every one of these was fitted, by `tools/checks/tote.mjs` and the tools
+ * beside it, against the sim's own winners on the book `Tote.bookAt` actually
+ * hands the player. None of them was chosen for feel.
+ *
+ *   sigma       the dice, in strength units. Fitted by log-loss against real
+ *               winners AND by requiring the model's own top pick to win as
+ *               often as it says. It was WIDE in all three rooms and the Pit
+ *               was the worst: the model quoted its favourite at 0.494 and he
+ *               won 0.528, which is seven points of relative error sold at the
+ *               window every night. 0.70 / 0.75 / 0.53.
+ *
+ *   grudge      what a bout's grudge is worth as strength, and it was MISSING
+ *               from the model entirely — `formStrength` cannot carry it,
+ *               because a grudge is held against one opponent and is a
+ *               property of the field. Most of the Pit's mis-calibration was
+ *               this one term.
+ *
+ *   blind       the declared per-term spreads add in quadrature to an estimate
+ *               of what the board cannot see, and the estimate is off by up to
+ *               a third (see `blindnessOf`). This scales it to the measured
+ *               truth.
+ *
+ *   leftBlind   how much of that is STILL hiding after a punter has read the
+ *               card properly — the residual of the regression in `readForm`,
+ *               divided by the same measured spread. 0.86 on the pods, 0.65 in
+ *               the Pit, 0.76 at the Arena.
+ *
+ *   stand/rate  the two halves of reading a form line: how a runner has been
+ *               finishing, net of what its rating already claims. See
+ *               `readForm`. This is the column that was worth the most and
+ *               that nothing in the tree had ever looked at.
+ *
+ *   houseRead   how much of all that the HOUSE has already done and put in the
+ *               price, which is the one dial here that is a room's character
+ *               rather than a measurement — and it is where the punter's edge
+ *               is set. The Pit is twelve at the rail and fourteen in the
+ *               yard and the man taking the book has watched every one of them
+ *               fight, so almost everything readable is already in his price;
+ *               the Holo-theatre runs a twenty-pod yard off a feed; the Arena
+ *               grades its pair and prices the match. Measured, at the values
+ *               below, a punter who reads the card and backs the overlays
+ *               makes between one and five points a bet at all three windows
+ *               and a punter who does not loses. `tools/checks/tote.mjs` holds
+ *               that band and `tools/_toteedge.mjs` prints the long run.
+ *
+ *   take        the window's cut, and it is now the smallest part of the
+ *               story rather than the whole of it.
+ */
 export const SKINS = Object.freeze({
   /**
    * PODRACE — `#19 Holo-theatre` shows the feed. Two tracks and a third for
@@ -236,7 +292,7 @@ export const SKINS = Object.freeze({
   PODRACE: Object.freeze({
     id: 'PODRACE', word: 'race', entrantWord: 'pod', room: 'holo-theatre',
     advance: courseAdvance, mode: 'course',
-    field: 8, vol: 0.20, daySd: 0.60, sigma: 0.70, houseRead: 0.85,
+    field: 8, vol: 0.20, daySd: 0.60, sigma: 0.70, houseRead: 0.65,
     blind: 1.12, leftBlind: 0.86, stand: 1.53, rate: 0.39, grudge: 0, grudgeSd: 0,
     terms: POD_TERMS, hazards: POD_HAZARDS,
     read: [{ key: 'rain', at: 0.4, k: 0.62 }, { key: 'heat', at: 0.62, k: 0.62 }],
@@ -252,7 +308,7 @@ export const SKINS = Object.freeze({
   PIT: Object.freeze({
     id: 'PIT', word: 'bout', entrantWord: 'fighter', room: 'the-pit',
     advance: boutAdvance, mode: 'bout',
-    field: 6, vol: 0.20, daySd: 0.52, sigma: 0.75, houseRead: 0.85,
+    field: 6, vol: 0.20, daySd: 0.52, sigma: 0.75, houseRead: 0.88,
     blind: 0.90, leftBlind: 0.65, stand: 2.57, rate: 0.69, grudge: 0.75, grudgeSd: 0.06,
     bite: 7.5, pool: 100,
     terms: FIGHT_TERMS, hazards: FIGHT_HAZARDS,
@@ -268,7 +324,7 @@ export const SKINS = Object.freeze({
   ARENA: Object.freeze({
     id: 'ARENA', word: 'bout', entrantWord: 'companion', room: 'the-arena',
     advance: boutAdvance, mode: 'bout',
-    field: 2, vol: 0.20, daySd: 0.46, sigma: 0.53, houseRead: 0.85,
+    field: 2, vol: 0.20, daySd: 0.46, sigma: 0.53, houseRead: 0.35,
     blind: 0.70, leftBlind: 0.76, stand: 0.92, rate: 0.06, grudge: 0.50, grudgeSd: 0.13,
     bite: 6.0, pool: 100,
     terms: FIGHT_TERMS, hazards: FIGHT_HAZARDS,
@@ -618,8 +674,37 @@ export function blindnessOf(ground, { survive = 1 } = {}) {
  * press. With the house half-reading, the same bettor on the same circuits is
  * in single figures and the insider — who holds terms no amount of reading can
  * recover — still is not.
+ *
+ * IT IS THE ONE DIAL IN `SKINS` THAT IS NOT A MEASUREMENT, and it is where the
+ * punter's edge is actually set: everything else there is fitted to the sim,
+ * and this says how much of the fitting the house has done for itself.
+ * `tools/checks/tote.mjs` holds the resulting edge to a band at all three
+ * windows, so moving it is a thing the gate notices.
  */
-const survivalFor = (S, who) => (who === 'read' ? S.leftBlind : 1 - S.houseRead * (1 - S.leftBlind));
+function survivalFor(S, who) {
+  if (who === 'read') return S.leftBlind;
+  /**
+   * ── AND THE BOARD'S HALF IS NOT A STRAIGHT LINE BETWEEN THE TWO ────────
+   *
+   * The first cut interpolated the SD — `1 − houseRead·(1 − leftBlind)` — which
+   * is wrong in the direction that costs money. A reader who uses a fraction w
+   * of an estimator does not keep a fraction w of its variance reduction: the
+   * residual is `1 − 2wρ² + w²ρ²` in variance, where ρ² is the share of the
+   * unseen spread the reading explains and is `1 − leftBlind²`. The straight
+   * line leaves the board FLATTER than its own mean deserves at every w
+   * between the ends, and a board flatter than it should be sells its
+   * outsiders too long — measured in the Pit at `houseRead` 0.85, a bettor
+   * picking with a pin got back all but 0.7% of his money against a declared
+   * 8% take, which is a room giving money away to somebody who is not reading
+   * anything.
+   *
+   * It agrees with the line at both ends (w = 0 is blind, w = 1 is the
+   * punter's own residual), which is why it read as sensible.
+   */
+  const rho2 = Math.max(0, 1 - S.leftBlind * S.leftBlind);
+  const w = S.houseRead;
+  return Math.sqrt(Math.max(0, 1 - 2 * w * rho2 + w * w * rho2));
+}
 
 /* ══════════════════════════════════════════════════════════════════════════
  *  THE GRUDGE, AND THE COLUMN THAT PUBLISHES IT
@@ -693,12 +778,15 @@ export function grudgeCarried(card, { published = false } = {}) {
  * is worth nothing in a bout that opponent is not in, so it is a property of
  * the FIELD and not of the entrant. It went missing from the model for exactly
  * that reason and it cost the Pit its calibration: measured, the model's own
- * top pick was quoted at 0.494 and won 0.528, which is a seventh of the take
- * handed to anybody backing favourites and nothing to do with reading a form
- * book. The board's half of it is `houseRead`, on the same dial as the going
- * splits, plus the part it has NOT priced added back as blindness — a house
- * that prints the column knows the field is carrying something even where it
- * has not put a number on which.
+ * top pick was quoted at 0.494 and won 0.528, which is seven points of
+ * relative error handed to anybody backing favourites and nothing whatever to
+ * do with reading a form book.
+ *
+ * NOBODY BUT THE SIM PRICES IT. The count is public — `Tote.writeHeadToHead`
+ * publishes it — and pricing it still loses, for the reason over
+ * `grudgeCarried`. So the board and the reading room carry it as BLINDNESS
+ * (`grudgeSd`) rather than as a term: a house that prints the column knows
+ * the field is carrying something without putting a number on which.
  */
 export function winProbabilities(card, ground, { hidden = false } = {}) {
   const S = SKINS[ground.skin];
@@ -712,11 +800,16 @@ export function winProbabilities(card, ground, { hidden = false } = {}) {
 /**
  * THE SAME MODEL, WITH THE READING ROOM'S WORK IN IT.
  *
- * Public strength plus whatever `readForm` could recover from the public log,
- * and a σ narrowed by `leftBlind` because a term you have recovered is a term
- * that is no longer hiding. Nothing here is told a hidden field; it is
- * inferred from results, badly at first and better every meeting, which is
- * what makes the walk to the reading room a decision rather than a formality.
+ * Public strength plus whatever `readForm` could recover from the public log —
+ * the going splits AND the finishing record read against the rating, which is
+ * the half that was missing and the half that carries most of it — and a σ
+ * narrowed by `leftBlind`, because a term you have recovered is a term that is
+ * no longer hiding. Nothing here is told a hidden field; it is inferred from
+ * results, badly at first and better every meeting, which is what makes the
+ * walk to the reading room a decision rather than a formality.
+ *
+ * `leftBlind` is the RESIDUAL of that reading, measured — not a dial. See
+ * `SKINS`.
  */
 export function researchedProbabilities(card, ground) {
   const S = SKINS[ground.skin];
@@ -971,7 +1064,8 @@ export function formBook(e, ground = null) {
       if (p.seen) rows.push([p.label, p.delta > 0 ? `+${p.delta}` : String(p.delta)]);
     }
     const read = readForm(e, ground);
-    if (read.confidence > 0) rows.push(['on this going', `${read.bonus > 0 ? '+' : ''}${round2(read.bonus)} (${read.starts} starts read)`]);
+    if (read.going) rows.push(['on this going', `${read.going > 0 ? '+' : ''}${round2(read.going)}`]);
+    if (read.standing) rows.push(['on the book', `${read.standing > 0 ? '+' : ''}${round2(read.standing)} (${read.starts} starts read)`]);
   }
   return rows;
 }

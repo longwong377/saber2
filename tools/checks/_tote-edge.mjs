@@ -163,9 +163,10 @@ export function agreesWithBookAt(venueId, day) {
  * Both go through `ticketFor` and `settleTickets`, so both are subject to the
  * window's refusals, its price rounding and its payout rounding.
  */
-export function playWindow(venueId, { bets = 20000, yardSeed = 4242, from = 400, margin = MARGIN } = {}) {
+export function playWindow(venueId, { bets = 20000, yardSeed = 4242, from = 400, margin = MARGIN, days = 0 } = {}) {
   const v = venueById(venueId);
   if (!v) throw new Error(`no such venue: ${venueId}`);
+  days = days || bets * 20 + 2000;
   const readDays = [], pinDays = [], favDays = [];
   let read = { staked: 0, back: 0, bets: 0, hits: 0, ev: 0 };
   let pin = { staked: 0, back: 0, bets: 0, ev: 0 };
@@ -237,8 +238,12 @@ export function playWindow(venueId, { bets = 20000, yardSeed = 4242, from = 400,
     if (dRead.staked) { read.staked += dRead.staked; read.back += dRead.back; readDays.push(dRead.back / dRead.staked - 1); }
     if (dPin.staked) { pin.staked += dPin.staked; pin.back += dPin.back; pinDays.push(dPin.back / dPin.staked - 1); }
     if (dFav.staked) { fav.staked += dFav.staked; fav.back += dFav.back; favDays.push(dFav.back / dFav.staked - 1); }
-    /* A room that is dark for a fortnight is a room, not a hang. */
-    if (day - from > bets * 40 + 4000) break;
+    /* A ROOM THAT IS DARK FOR A FORTNIGHT IS A ROOM, NOT A HANG — and a
+     * window where the reader finds a bet on one card in ten needs ten times
+     * the days for the same number of tickets, so the ceiling is in days and
+     * not in races. It is a guard and not a budget: the loop stops on `bets`
+     * long before this on every venue as shipped. */
+    if (day - from > days) break;
   }
   const roi = (b) => (b.staked ? b.back / b.staked - 1 : NaN);
   const line = (b, days, evs, extra = {}) => {

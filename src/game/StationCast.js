@@ -1106,7 +1106,7 @@ for (const R of BORZ_RESIDENTS) {
      * `buildJedi()` fails, and a colour cannot make it pass.
      */
     build: (o = {}) => buildJedi({ ...o, species: sp.row, robe: R.robe,
-                                   top: (R.wear === 'jerkin' ? 'service' : R.wear), hood: R.hood || false }),
+                                   top: R.wear, hood: R.hood || false }),
     scale: 1.0, hp: 60, mass: 72, speed: 3.0,
     toughness: TOUGHNESS.flesh, melee: false, damage: 0,
     preferred: [1.4, 2.8],

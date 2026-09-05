@@ -68,7 +68,7 @@ const pct = (n) => `${(n * 100).toFixed(2)}%`;
  * `tools/_toteedge.mjs` rides the same driver for a quarter of a million a
  * window when the numbers themselves are in question.
  */
-const BETS_PER_WINDOW = 2500;
+const BETS_PER_WINDOW = 1200;
 
 /** The projection of a reading a screen would actually print. Compared field
  * for field between a reader who bet and one who did not. */
@@ -1086,7 +1086,8 @@ export async function run({ check, assert }) {
    * shipped frame loop is run over a real station and asked what it did.
    */
 
-  check('tote: every venue\'s crowd row is read, and both numbers in it move the room', () => {
+  check('tote: every venue\'s crowd row is read, and both numbers in it move the room', async () => {
+    const { MOMENTS } = await import('../../src/game/Spectacle.js');
     const { crowdAt, crowdVoice, dramaOf } = Tote;
     assert(typeof crowdVoice === 'function' && typeof crowdAt === 'function',
       'Tote.js exports no crowd model — the venue rows describe a room nothing reads');
@@ -1170,6 +1171,14 @@ export async function run({ check, assert }) {
     /* And a moment the sim never emitted is worth nothing, rather than a
      * default the room would roar at. */
     assert(dramaOf(null, null, null) === 0, 'the crowd reacts to nothing happening');
+    /* ── AND THE TABLE COVERS THE ENGINE, not a subset somebody typed once.
+     * `MOMENTS` is `Spectacle.js`'s own list of everything a spectator is
+     * told about; a moment the engine emits and the crowd has no weight for is
+     * a thing that happens in front of sixty people who do not look up. */
+    for (const m of MOMENTS) {
+      assert(Number.isFinite(Tote.CROWD_WEIGHT[m]),
+        `the engine announces "${m}" and the crowd has no opinion about it`);
+    }
     return lines.join('; ') + `; pit ${p.swell} vs arena ${a.swell} on one drama`;
   });
 

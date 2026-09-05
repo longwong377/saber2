@@ -521,24 +521,32 @@ export async function run({ check, assert }) {
 
   /* ══════════════════════════════════════════════════════════════════════ */
 
-  check('food: the bars fill with soldiers at their own hour and hold none at 06:00', async () => {
+  check('food: the bars fill with soldiers at their own hour, through the pool that seats them', async () => {
     /**
      * *"one or two bars … a casino/nightclub with troops on leave."*
      *
-     * The station already had three bars and none of them had ever held a
-     * soldier. This is the half that was missing, and it is a POPULATION at an
-     * HOUR — so it is measured against `StationLife.headcount`, which is the
-     * curve that already decides how full a room is, rather than against a
-     * number this lane invented.
+     * ── AND THIS CHECK USED TO BE THE DEFECT IT WAS GUARDING ──────────────
      *
-     * THE 06:00 CLAUSE IS THE ONE THAT BITES. The cantina is not empty at
-     * 06:00 — seven people work nights — so "empty" has to mean empty of
-     * UNIFORMS, which is a different curve from fullness and is the whole
-     * reason `libertyAt` exists beside it.
+     * Every reading here was `Bars.crowdOf(...)` and `Bars.libertyAt(...)`,
+     * called straight off the module — and the V16 audit found that
+     * `crowdOf` had NO CALLER ANYWHERE UNDER `src/`. So this file was the
+     * only thing in the building that had ever run the function it was
+     * asserting about: eight green readings over a room no player could see,
+     * with the flavour line in `BARS[].line` reachable through the same dead
+     * door. A check that calls a function nothing else calls proves the
+     * function works, not that the game does.
+     *
+     * So the crowd is read through `StationLife.occupant` now, which is the
+     * one thing in the tree that turns a slot in a room into a body — it asks
+     * `Bars.barman`, `barman` asks `leaveHeads` and `soldierIn`, and if any of
+     * that stops being wired the readings below go to zero. The panel that
+     * shows it to a person is `main.js`'s `showBar`, and the last clause here
+     * holds the door open for it.
      */
     const B = await import('../../src/game/Bars.js');
     const L = await import('../../src/game/StationLife.js');
     const { PLACE } = await import('../../src/game/StationPlan.js');
+    const Co = await import('../../src/game/Company.js');
 
     /* EVERY BAR IS A ROOM THAT EXISTS. §15: a place not in §3.2 is not built,
      * and a bar pointing at nothing would seat an evening into nowhere. */
@@ -547,26 +555,56 @@ export async function run({ check, assert }) {
       assert(p, `bar #${b.id} is not in the gazetteer`);
       assert(/bar|sabacc|dice|cantina/i.test(p.look + p.name),
         `#${b.id} ${p.name} does not read as a place anybody drinks in: "${p.look}"`);
+      assert(b.ease > 0 && b.mend > 0,
+        `#${b.id} ${p.name} pays a man nothing for an evening in it`);
     }
     assert(Math.abs(B.BARS.reduce((a, b) => a + b.draw, 0) - 1) < 1e-9,
-      'the three draws do not add to one — somebody is on leave nowhere');
+      'the draws do not add to one — somebody is on leave nowhere');
+    /* THE CONTRAST THE PLAYER ASKED FOR, AS A NUMBER: *"some being really
+     * fancy and incredibly upscale and others being incredibly grimy."* An
+     * evening at the fancy end has to be worth visibly more than one at the
+     * grimy end or the two rooms are one room with different furniture. */
+    const fancy = B.BARS.find((b) => b.rope > 0);
+    const grimy = B.BARS.reduce((a, b) => (b.ease < a.ease ? b : a));
+    assert(fancy, 'no room on this station turns anybody away — there is no upscale end');
+    assert(fancy.ease > grimy.ease * 2,
+      `the fanciest room pays ${fancy.ease}/h and the grimiest ${grimy.ease}/h — that is not a contrast`);
 
     const company = {
       army: 'republic',
       men: Array.from({ length: 30 }, (_, i) => ({
         designation: `CT-${1000 + i * 7}`, nickname: i % 3 ? null : 'Ladder', kind: 'flesh',
+        xp: 1, morale: 0.6,
       })),
       ward: { tanks: ['CT-1007'] },
     };
 
-    /* THE MORNING. Nobody in uniform, in any bar, at any hour before liberty. */
+    /**
+     * THE POOL IS THE READING. `occupant` is what `StationLife` calls to build
+     * every body in every room; a soldier it does not hand back is a soldier
+     * no player will ever stand next to.
+     */
+    const uniforms = (placeId, hour) => {
+      const p = PLACE.get(placeId);
+      const heads = L.headcount(p, hour);
+      const out = [];
+      for (let i = 0; i < heads; i++) {
+        const r = L.occupant(p, i, { hour, day: 0, heads, company });
+        if (r && r.bar === placeId) out.push(r);
+      }
+      return { heads, out };
+    };
+
+    /* THE MORNING. Nobody in uniform, in any bar, at any hour before liberty
+     * — and the rooms are NOT empty, which is what makes the clause mean
+     * something. `libertyAt` is the curve underneath; it is asserted here by
+     * its consequence rather than by being called. */
     let morningHeads = 0;
     for (const b of B.BARS) {
       for (const h of [3, 6, 9, 12, 15, 17]) {
-        const heads = L.headcount(PLACE.get(b.id), h);
-        morningHeads += heads;
-        const c = B.crowdOf(b.id, h, heads, { company, day: 0 });
-        assert(c.leave.length === 0, `#${b.id} held ${c.leave.length} soldiers at ${h}:00`);
+        const r = uniforms(b.id, h);
+        morningHeads += r.heads;
+        assert(r.out.length === 0, `#${b.id} held ${r.out.length} soldiers at ${h}:00`);
       }
     }
     assert(morningHeads > 60,
@@ -576,19 +614,16 @@ export async function run({ check, assert }) {
     /* THE EVENING. Every bar has soldiers in it, and some of them are yours. */
     let mine = 0, seats = 0;
     for (const b of B.BARS) {
-      const heads = L.headcount(PLACE.get(b.id), 22);
-      const c = B.crowdOf(b.id, 22, heads, { company, day: 0 });
-      assert(c.leave.length > 0, `#${b.id} held no soldiers at 22:00, with ${heads} people in it`);
-      assert(c.leave.length <= heads, `#${b.id} held ${c.leave.length} soldiers in a room of ${heads}`);
-      assert(c.locals === heads - c.leave.length, `#${b.id}'s arithmetic does not close`);
-      mine += c.own; seats += c.leave.length;
+      const r = uniforms(b.id, 22);
+      assert(r.out.length > 0, `#${b.id} held no soldiers at 22:00, with ${r.heads} people in it`);
+      assert(r.out.length <= r.heads, `#${b.id} held ${r.out.length} soldiers in a room of ${r.heads}`);
+      seats += r.out.length;
+      mine += r.out.filter((x) => x.leave).length;
     }
-    assert(mine >= 3, `only ${mine} of ${seats} uniforms across three bars were men off the player's own roll`);
+    assert(mine >= 3, `only ${mine} of ${seats} uniforms across the bars were men off the player's own roll`);
 
     /* NAMES OFF THE ROLL, and they are the roll's own. */
-    const Co = await import('../../src/game/Company.js');
-    const named = B.crowdOf(14, 22, L.headcount(PLACE.get(14), 22), { company, day: 0 })
-      .leave.filter((r) => r.leave);
+    const named = uniforms(14, 22).out.filter((r) => r.leave);
     assert(named.length > 0, 'nobody in the cantina was one of yours');
     for (const r of named) {
       const man = company.men.find((m) => m.designation === r.leave.designation);
@@ -601,58 +636,332 @@ export async function run({ check, assert }) {
 
     /* THE WOUNDED ARE NOT DRINKING. `Company.ward.tanks` is who is in the
      * glass at #44 and `Medbay.js` is mending him by the hour. */
-    const everyone = B.BARS.flatMap((b) => B.crowdOf(b.id, 22, L.headcount(PLACE.get(b.id), 22), { company, day: 0 }).leave)
+    const everyone = B.BARS.flatMap((b) => uniforms(b.id, 22).out)
       .filter((r) => r.leave).map((r) => r.leave.designation);
     assert(!everyone.includes('CT-1007'), 'a man in a bacta tank was in a bar');
 
     /* A DROID DOES NOT TAKE LEAVE — the same rule `Food.js` draws, drawn once. */
     const steel = { ...company, army: 'separatist', men: company.men.map((m) => ({ ...m, kind: 'steel' })) };
-    assert(B.onLeave(steel, 0).length === 0, 'a droid was granted an evening in the cantina');
-    assert(B.crowdOf(14, 22, 26, { company: steel, day: 0 }).own === 0,
-      'a separatist roll put its own men in a bar');
+    const p14 = PLACE.get(14);
+    const h22 = L.headcount(p14, 22);
+    let steelSeats = 0;
+    for (let i = 0; i < h22; i++) {
+      const r = L.occupant(p14, i, { hour: 22, day: 0, heads: h22, company: steel });
+      if (r?.leave) steelSeats++;
+    }
+    assert(steelSeats === 0, 'a separatist roll put its own men in a bar');
 
     /* AND WITH NO ROLL AT ALL THE STATION'S OWN GARRISON STANDS IN, because a
      * bar that emptied because you have not played the muster yet is a feature
      * punishing you for not having used another feature. */
-    const alone = B.crowdOf(14, 22, L.headcount(PLACE.get(14), 22), {});
-    assert(alone.leave.length > 0 && alone.own === 0,
-      `with no company the cantina held ${alone.leave.length} soldiers, ${alone.own} of them named`);
+    let alone = 0, aloneNamed = 0;
+    for (let i = 0; i < h22; i++) {
+      const r = L.occupant(p14, i, { hour: 22, day: 0, heads: h22 });
+      if (r?.bar === 14) { alone++; if (r.leave) aloneNamed++; }
+    }
+    assert(alone > 0 && aloneNamed === 0,
+      `with no company the cantina held ${alone} soldiers, ${aloneNamed} of them named`);
 
-    /* THE ROLL LASTS THE DAY AND CHANGES OVERNIGHT — `Counter.shelfFor`'s own
-     * contract, for the same reason: a roll per visit is a room you can re-draw
-     * by walking out and back in. */
-    const d0 = B.onLeave(company, 0).map((r) => r.man.designation).join(',');
-    assert(d0 === B.onLeave(company, 0).map((r) => r.man.designation).join(','), 'two readers saw two evenings');
-    let moved = 0;
-    for (let d = 0; d < 10; d++) {
-      if (B.onLeave(company, d).map((r) => r.man.designation).join(',') !== d0) moved++;
-    }
-    assert(moved >= 8, `the same men had leave on ${10 - moved} of 10 days`);
-
-    /* AND THE POOL ACTUALLY SEATS THEM. `StationLife.occupant` is what builds
-     * a body, so a bar full of soldiers that the pool never asked about would
-     * be a table nobody reads. */
-    const p14 = PLACE.get(14);
-    const heads22 = L.headcount(p14, 22);
-    const seated = [];
-    for (let i = 0; i < heads22; i++) {
-      const r = L.occupant(p14, i, { hour: 22, day: 0, heads: heads22, company });
-      if (r.role === 'trooper' || r.bar === 14) seated.push(r);
-    }
-    assert(seated.length > 0, 'the pool seated no soldiers into the cantina at 22:00');
-    const dawn = [];
-    for (let i = 0; i < L.headcount(p14, 6); i++) {
-      const r = L.occupant(p14, i, { hour: 6, day: 0, heads: L.headcount(p14, 6), company });
-      if (r.bar === 14) dawn.push(r);
-    }
-    assert(dawn.length === 0, `the pool seated ${dawn.length} soldiers into the cantina at 06:00`);
     /* …and a caller with no clock — `Pits.js` is one — gets the census it
      * always got, unchanged. */
     assert(!L.occupant(p14, 8).bar, 'occupant with no hour handed back a bar seat');
 
-    return `3 bars, 0 uniforms across 18 morning readings of ${morningHeads} people, `
+    /**
+     * ── AND THE ROOM SAYS ITS LINE TO A PERSON ────────────────────────────
+     *
+     * `BARS[].line` — *"the band is loud enough that nobody has to talk"* —
+     * was reachable only through `crowdOf`, which nothing called. The panel
+     * that prints it is `main.js`'s `showBar`, raised by `Station.stationKey`
+     * off `world.onBar`, and if that chain breaks the lines go back to being
+     * three strings in a table.
+     */
+    const station = strip(await src('game/Station.js'));
+    const main = strip(await src('main.js'));
+    assert(/isBar\(place\.id\)\s*&&\s*world\.onBar/.test(station),
+      'stationKey no longer raises a bar panel — the rooms are silent again');
+    assert(/world\.onBar\s*=/.test(main) && /crowdOf\(/.test(main) && /row\?\.line/.test(main),
+      'main.js no longer answers onBar with the crowd and the room’s own line');
+
+    return `${B.BARS.length} bars, 0 uniforms across 24 morning readings of ${morningHeads} people, `
       + `${seats} at 22:00 of which ${mine} were named off a roll of ${company.men.length}; `
-      + `the leave roll moved on ${moved} of 10 nights; the pool seated ${seated.length} into #14`;
+      + `every reading through StationLife.occupant, the pool that builds the body`;
+  });
+
+  /* ══════════════════════════════════════════════════════════════════════ */
+
+  check('food: leave is assigned by the player, and a man on it cannot be fielded', async () => {
+    /**
+     * *"you can assign troops to go on leave."*
+     *
+     * MEASURED BEFORE THIS LANE: there was no assignment control anywhere in
+     * the game. Leave was `hashF(designation, day)` — the player could not
+     * choose who went, could not see who was out, and nothing marked a man
+     * unavailable while he was on it. `Bars.onLeave` and `Bars.takesLeave`
+     * had no caller under `src/` at all.
+     *
+     * Everything below goes through the doors a person presses: `grantLeave`
+     * is what `main.js`'s liberty board writes and `recallLeave` is its
+     * Recall button, and the run's own resolver is asked whether it can still
+     * see the man.
+     */
+    const B = await import('../../src/game/Bars.js');
+    const Co = await import('../../src/game/Company.js');
+    const Muster = await import('../../src/game/Muster.js');
+
+    Co.clear('republic');
+    const men = Array.from({ length: 12 }, (_, i) => ({
+      type: 'clone', designation: `CT-${1000 + i * 7}`, kind: 'flesh',
+      /* THREE SERGEANTS AND NINE TROOPERS — `Command.RANKS` puts the third
+       * rung at 10 xp — because the velvet rope below is a rank. */
+      xp: i < 3 ? 22 : 1, morale: 0.5, joined: 1,
+    }));
+    Co.save({ ...Co.blank('republic'), men });
+    const fancy = B.BARS.find((b) => b.rope > 0);
+    const open = B.BARS.find((b) => !b.rope);
+
+    /* THE BOARD READS THE ROLL. One row per man, with the two numbers the
+     * evening moves on it, and which of the rooms would have him. */
+    const rows = B.leaveRows(Co.load('republic'));
+    assert(rows.length === 12, `the liberty board shows ${rows.length} of 12 men`);
+    assert(rows.filter((r) => r.may.includes(fancy.id)).length === 3,
+      'the fancy room would take somebody it should not, or nobody it should');
+    assert(rows.every((r) => r.may.includes(open.id)), 'a room with no rope turned somebody away');
+
+    /* THE GRANT, AND THE THREE REFUSALS. Each of them is something a player
+     * can act on, which is why they carry a reason and not a false. */
+    const at = 100;
+    assert(B.grantLeave('republic', 'CT-1000', fancy.id, at).granted.length === 1,
+      'a sergeant was refused the room his rank admits him to');
+    assert(B.grantLeave('republic', 'CT-1000', open.id, at).refused[0]?.why === 'already out',
+      'a man with a pass was handed a second one');
+    assert(B.grantLeave('republic', 'CT-1021', fancy.id, at).refused[0]?.why === 'not admitted',
+      'a trooper walked into the fancy room');
+    assert(B.grantLeave('republic', 'CT-1021', 999, at).refused[0]?.why === 'no such room',
+      'a pass was written to a room that does not exist');
+
+    /* AND THE BERTHS RUN OUT, WHICH IS WHAT MAKES IT A CHOICE. A third of the
+     * roll, `Bars.LEAVE_SHARE`'s own share — the same size evening the hash
+     * used to draw, so using the board never empties a bar. */
+    const room = B.berths(Co.load('republic'));
+    assert(room === 4, `a roll of 12 has ${room} berths; a third of it is 4`);
+    const rest = men.slice(1).map((m) => m.designation);
+    const spree = B.grantLeave('republic', rest, open.id, at);
+    assert(spree.granted.length === room - 1,
+      `the board sent ${spree.granted.length + 1} men out with ${room} berths`);
+    assert(spree.refused.some((r) => r.why === 'no berth'), 'nobody was turned back for want of a berth');
+
+    /**
+     * ── HE IS GENUINELY UNAVAILABLE, THROUGH BOTH DOORS A RUN USES ───────
+     *
+     * `Company.fieldable` is the single choke point and `Muster.lineup` is
+     * `main.js`'s `veteransToField`. A pick BY NAME is the second door and
+     * the one that matters: `lineup` builds its pick map out of `fieldable`
+     * too, so a saved slate naming a man on leave must not smuggle him back.
+     */
+    const out = new Set(Co.load('republic').men.filter((m) => m.leave).map((m) => m.designation));
+    assert(out.size === room, `${out.size} men are out and the roll has ${room} berths`);
+    const field = Co.fieldable(Co.load('republic')).map((m) => m.designation);
+    assert(field.length === 12 - room, `fieldable offers ${field.length} of ${12 - room} men in barracks`);
+    for (const name of out) assert(!field.includes(name), `${name} is on leave and still fieldable`);
+
+    const plan = { army: 'republic', want: 12, armyMode: true };
+    const line = (Muster.lineup(plan, Co.load('republic')) || []).map((m) => m.designation);
+    assert(line.length === 12 - room, `the muster fielded ${line.length} men with ${room} on leave`);
+    Muster.setPicks('republic', [...out]);
+    const picked = (Muster.lineup(plan, Co.load('republic')) || []).map((m) => m.designation);
+    for (const name of out) {
+      assert(!picked.includes(name), `${name} was picked by name off a slate while he was on leave`);
+    }
+    Muster.clearPicks('republic');
+
+    /* AND THE PASS CAN BE TORN UP. `Medbay.discharge`'s twin: he comes back in,
+     * he keeps what he was credited, and the berth goes to somebody else. */
+    const back = B.recallLeave('republic', [...out][0], at);
+    assert(back.length === 1, 'Recall did not bring anybody in');
+    assert(Co.fieldable(Co.load('republic')).some((m) => m.designation === back[0]),
+      `${back[0]} was recalled and is still not fieldable`);
+    assert(B.recallLeave('republic', null, at).length === room - 1, 'recalling everybody left somebody out');
+
+    /* IT SURVIVES A RELOAD, through `Company`'s one door and no new key. */
+    B.grantLeave('republic', 'CT-1000', fancy.id, at);
+    const reread = Co.load('republic').men.find((m) => m.designation === 'CT-1000');
+    assert(reread.leave?.bar === fancy.id && reread.leave.since === at,
+      `the pass did not survive the fold: ${JSON.stringify(reread.leave)}`);
+    const sess = strip(await src('game/Bars.js'));
+    assert(!/localStorage/.test(sess), 'Bars.js has grown a durable key of its own');
+    Co.clear('republic');
+
+    return `12 men, ${room} berths; the rope on #${fancy.id} admits 3 of 12; `
+      + 'fieldable and Muster.lineup both refuse a man with a pass, by default and by name';
+  });
+
+  /* ══════════════════════════════════════════════════════════════════════ */
+
+  check('food: an evening off actually moves a man’s nerve and mends him', async () => {
+    /**
+     * *"they will get increased morale and will heal over time."*
+     *
+     * MEASURED BEFORE THIS LANE: zero hits for `morale` in `Bars.js`,
+     * `StationLife.js` and `Medbay.js`'s leave path. Nothing wrote anything. A
+     * man came back from an evening in the cantina with exactly the nerve and
+     * the wound he left with.
+     *
+     * DRIVEN THROUGH `stepLeave`, which is the shipped entry — `stepStation`
+     * calls it once a frame beside `stepMedbay` — rather than through the
+     * arithmetic underneath it. What is handed in is what the station hands
+     * in: a world with a clock on it and a frame's `dt`.
+     */
+    const B = await import('../../src/game/Bars.js');
+    const Co = await import('../../src/game/Company.js');
+    const M = await import('../../src/game/Medbay.js');
+    const S = await import('../../src/game/StationSave.js');
+
+    /* THE CALL SITE FIRST, because a ledger nothing steps is a ledger that
+     * only runs in this check — which is the exact defect this lane found. */
+    const station = strip(await src('game/Station.js'));
+    assert(/stepLeave\(world,\s*dt\)/.test(station),
+      'stepStation no longer steps the leave ledger — nothing rests unless a check says so');
+
+    S.clearStation();
+    S.setStationHour(18);
+    Co.clear('republic');
+    const men = [
+      /* A SERGEANT, HURT, sent to the fancy room. */
+      { type: 'clone', designation: 'CT-1000', kind: 'flesh', xp: 22, morale: 0.50, hp: 0.40, joined: 1 },
+      /* A TROOPER, HURT, sent to the grimiest room that will have him. */
+      { type: 'clone', designation: 'CT-1007', kind: 'flesh', xp: 1, morale: 0.50, hp: 0.40, joined: 1 },
+      /* AND ONE WHO STAYED IN THE BARRACKS — the control. */
+      { type: 'clone', designation: 'CT-1014', kind: 'flesh', xp: 1, morale: 0.50, hp: 0.40, joined: 1 },
+    ];
+    Co.save({ ...Co.blank('republic'), men });
+    const fancy = B.BARS.find((b) => b.rope > 0);
+    const grimy = B.BARS.filter((b) => !b.rope).reduce((a, b) => (b.ease < a.ease ? b : a));
+
+    const day0 = S.stationDay();
+    B.grantLeave('republic', 'CT-1000', fancy.id, day0 * 24 + 18);
+    B.grantLeave('republic', 'CT-1007', grimy.id, day0 * 24 + 18);
+
+    const read = (name) => {
+      const m = Co.load('republic').men.find((x) => x.designation === name);
+      return { morale: m.morale, hp: M.hpOf(m) };
+    };
+    const was = { sgt: read('CT-1000'), trp: read('CT-1007'), home: read('CT-1014') };
+    assert(was.sgt.morale === 0.5 && was.sgt.hp === 0.4, 'the fixture did not take');
+
+    /**
+     * EIGHT STATION HOURS, the whole of `Bars.LIBERTY`'s window, at the
+     * station's own rate — one hour per two real minutes. The world is the
+     * shape `stepStation` hands `stepLeave`: a clock and nothing else.
+     */
+    const world = { _station: { hour: 18 } };
+    for (let i = 0; i < 60 * 120 * 8; i++) {
+      world._station.hour += (1 / 60) / 120;
+      S.setStationHour(world._station.hour);
+      B.stepLeave(world, 1 / 60);
+    }
+    const now = { sgt: read('CT-1000'), trp: read('CT-1007'), home: read('CT-1014') };
+
+    /* THE NERVE MOVED, AND IT MOVED BY THE ROOM. */
+    assert(now.sgt.morale > was.sgt.morale + 0.2,
+      `eight hours at the fancy end moved a man's nerve ${(now.sgt.morale - was.sgt.morale).toFixed(3)}`);
+    assert(now.trp.morale > was.trp.morale + 0.05,
+      `eight hours at the grimy end moved nothing: ${(now.trp.morale - was.trp.morale).toFixed(3)}`);
+    assert(now.sgt.morale - was.sgt.morale > (now.trp.morale - was.trp.morale) * 2,
+      'the two ends of the station are worth the same, which is not a contrast');
+    assert(now.home.morale === was.home.morale,
+      'a man who never left the barracks was credited an evening out');
+
+    /* AND SO DID THE WOUND. Never past `Medbay.FIT`, which is where a patient
+     * stops being one, and the field is DROPPED there rather than pinned —
+     * `Company.readMan` reads an absent `hp` as a whole man. */
+    assert(now.sgt.hp > was.sgt.hp, 'eight hours in the best room on the station mended nothing');
+    assert(now.trp.hp > was.trp.hp, 'eight hours anywhere mended nothing');
+    assert(now.sgt.hp - was.sgt.hp > (now.trp.hp - was.trp.hp) * 1.5,
+      'the fancy room mends no better than the grimy one');
+    assert(now.home.hp === was.home.hp, 'a man in the barracks was mended by a bar he never entered');
+    assert(now.sgt.hp <= 1 && now.trp.hp <= 1, 'a man came out of a bar with more health than he has');
+
+    /* THE CAP IS THE FIELD'S OWN. `MORALE.PRESENCE_CAP` is where standing
+     * beside your commander under fire tops a man out; a night off may steady
+     * him that far and no further, or a bar is stronger than a battle. */
+    const { MORALE } = await import('../../src/game/Morale.js');
+    for (let i = 0; i < 60 * 120 * 40; i++) {
+      world._station.hour += (1 / 60) / 120;
+      S.setStationHour(world._station.hour);
+      B.stepLeave(world, 1 / 60);
+    }
+    const long = read('CT-1000');
+    assert(long.morale <= MORALE.PRESENCE_CAP + 1e-9,
+      `two days in a bar carried a man to ${long.morale.toFixed(3)} against a cap of ${MORALE.PRESENCE_CAP}`);
+    assert(long.hp === 1, 'forty-eight hours of rest never took the wound off the record');
+
+    Co.clear('republic');
+    S.clearStation();
+    return `8 h at #${fancy.id}: nerve ${was.sgt.morale.toFixed(2)}→${now.sgt.morale.toFixed(3)}, `
+      + `health ${was.sgt.hp.toFixed(2)}→${now.sgt.hp.toFixed(3)}; at #${grimy.id}: `
+      + `${was.trp.morale.toFixed(2)}→${now.trp.morale.toFixed(3)} / ${now.trp.hp.toFixed(3)}; `
+      + `the man who stayed in: ${now.home.morale.toFixed(2)} / ${now.home.hp.toFixed(2)}`;
+  });
+
+  /* ══════════════════════════════════════════════════════════════════════ */
+
+  check('food: every function Bars.js exports is called by something else in src/', async () => {
+    /**
+     * ══ THE SHAPE OF DEFECT THIS EXISTS FOR ══════════════════════════════
+     *
+     * The V16 audit counted EIGHT exports of `Bars.js` with no caller anywhere
+     * under `src/` — `onLeave`, `takesLeave`, `ownHeads`, `crowdOf`, `isBar`,
+     * `barPlaces`, plus two constants — while this very file called two of
+     * them directly. Every one was green. `_shipped.mjs` walks the module
+     * graph and would not have found it either: `StationLife.js` imports
+     * `barman`, so the FILE was in the build and eleven-twelfths of it was
+     * not.
+     *
+     * DERIVED AND NOT LISTED. The names come off the source, so a function
+     * added tomorrow is in this check tomorrow without anybody remembering to
+     * add it — a hard-coded list is a list that goes stale in the direction
+     * that hides the defect.
+     *
+     * A CALLER IN ANOTHER FILE, which is the whole point: `onLeave` used to be
+     * called by `ownHeads` and `crowdOf`, both inside `Bars.js`, and all three
+     * were dead together. A file that only calls itself is a file nothing
+     * calls.
+     */
+    const { readdir } = await import('node:fs/promises');
+    const code = strip(await src('game/Bars.js'));
+    const exported = [...code.matchAll(/^export function ([A-Za-z0-9_]+)\s*\(/gm)].map((m) => m[1]);
+    assert(exported.length >= 8,
+      `only ${exported.length} exported functions found in Bars.js — the scan has stopped scanning`);
+
+    /* Every .js under src/, except the file itself. */
+    const root = new URL('../../src/', import.meta.url);
+    const files = [];
+    const walk = async (dir) => {
+      for (const e of await readdir(new URL(dir, root), { withFileTypes: true })) {
+        if (e.isDirectory()) await walk(`${dir}${e.name}/`);
+        else if (e.name.endsWith('.js') && `${dir}${e.name}` !== 'game/Bars.js') files.push(`${dir}${e.name}`);
+      }
+    };
+    await walk('');
+    const bodies = new Map();
+    for (const f of files) bodies.set(f, strip(await readFile(new URL(f, root), 'utf8')));
+
+    const orphans = [];
+    const where = [];
+    for (const name of exported) {
+      /* A CALL AND NOT A MENTION. `\bname(` — an import line names it without
+       * calling it, and a file that imports a function and never runs it is
+       * the same silence in a longer form. */
+      const call = new RegExp(`\\b${name}\\s*\\(`);
+      const hit = [...bodies.entries()].filter(([, b]) => call.test(b)).map(([f]) => f);
+      if (!hit.length) orphans.push(name);
+      else where.push(`${name}→${hit[0].replace(/^game\//, '')}`);
+    }
+    assert(orphans.length === 0,
+      `${orphans.length} of Bars.js's ${exported.length} exported functions have no caller anywhere else `
+      + `under src/: ${orphans.join(', ')} — a room nobody can reach is not built`);
+
+    return `${exported.length} exports, every one called from another file: ${where.join(', ')}`;
   });
 
   /* ══════════════════════════════════════════════════════════════════════ */

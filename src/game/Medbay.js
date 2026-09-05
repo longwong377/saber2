@@ -92,7 +92,7 @@ import * as Company from './Company.js';
  * reason — a droid and a clone are two companies — and `stepMedbay` settles
  * both because the station does not know which one you came home with. */
 import { ARMY_IDS } from './Command.js';
-import { stationHour, stationDay, passStationHours } from './StationSave.js';
+import { stationHour, stationDay, passStationHours, hasSeen, markSeen } from './StationSave.js';
 
 /* ── the numbers ─────────────────────────────────────────────────────── */
 
@@ -343,7 +343,33 @@ export function party(company) {
  * It is a STATEMENT AND NOT A PROMPT. It says how many are hurt and how they
  * are getting there; it does not ask you to do anything, because the whole
  * point of §C1's fifth clause is that nothing forces the walk.
+ *
+ * ── AND IT EXPLAINS ITSELF ONCE — SHARK §14 ──────────────────────────────
+ *
+ * *"A fresh player arrives … and a guide walks them the spine to the concourse
+ * once, naming the decks. After that, never again."* §14's shape, and
+ * `StationSave` has held the machinery for it since the fold was written —
+ * `seen`, `hasSeen`, `markSeen`. NOTHING HAS EVER CALLED `markSeen`, so
+ * nothing on this station has ever been "seen": the once-only guide was a
+ * store with no writer, and `StationSave`'s own header cites it as its
+ * standing example of what an export with no caller is worth.
+ *
+ * This is the first thing to use it, and the medbay is the right first thing
+ * because §C1's fifth clause is a RULE THE PLAYER CANNOT SEE. *"You can leave
+ * them. A man not checked in heals slower. Consequence, not chore."* Five
+ * tanks, `UNTENDED` of the rate outside one — a player who is never told that
+ * reads an untended man as a broken man. So the first banner carries it and
+ * every banner after it is the count alone, which is exactly what §14 asks
+ * for: named once, never again.
+ *
+ * THE MARK IS WRITTEN HERE AND NOT BY THE CALLER, because "has the player been
+ * told" is one fact and a second writer of it is two answers to one question —
+ * `StationSave.setStationHour`'s stated rule, applied to `seen`. The mark is
+ * only taken when a notice is actually RETURNED: a company that came home
+ * whole is not an arrival and must not burn the one telling.
  */
+export const GUIDE_ARRIVAL = 'medbay:arrival';
+
 export function arrivalNotice(company) {
   const p = party(company);
   const n = p.walking.length + p.litters.length + p.unborne.length;
@@ -352,9 +378,19 @@ export function arrivalNotice(company) {
   if (p.walking.length) bits.push(`${p.walking.length} walking`);
   if (p.litters.length) bits.push(`${p.litters.length} on litters`);
   if (p.unborne.length) bits.push(`${p.unborne.length} with nobody to carry them`);
+  let tail = ' — the medbay is aft';
+  if (!hasSeen(GUIDE_ARRIVAL)) {
+    markSeen(GUIDE_ARRIVAL);
+    /* THE TWO NUMBERS ARE READ AND NOT TYPED. `TANKS` and `UNTENDED` are this
+     * file's policy and a guide that stated them as words would be the
+     * hand-maintained twin HANDOFF §2.3 is about — retune the rate and the
+     * one sentence the player is ever told about it retunes with it. */
+    tail = ` — the medbay is aft, ${TANKS} tanks in the ward. Leave them and they `
+      + `still mend, at ${Math.round(UNTENDED * 100)}% of the rate`;
+  }
   return {
     title: `${n} WOUNDED`,
-    body: `${bits.join(', ')} — the medbay is aft`,
+    body: `${bits.join(', ')}${tail}`,
   };
 }
 

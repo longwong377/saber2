@@ -36,7 +36,7 @@
  */
 
 import * as THREE from 'three';
-import { buildJedi } from '../../src/game/Bodies.js';
+import { buildJedi, TOP_CUTS } from '../../src/game/Bodies.js';
 import { BipedAnimator } from '../../src/game/Rig.js';
 import { Cloak, attachCloak, attachSkirt, ROBE_CUTS, robeCut } from '../../src/game/Cloth.js';
 import { weave } from './_weave.mjs';
@@ -1224,5 +1224,105 @@ export async function run({ check, assert }) {
       + `${n} cloth particles all below the eye, nearest ${nearest.toFixed(3)} m`;
     world.unload();
     return line;
+  });
+
+  check('garments: a torso cut says what is below the belt, and the body wears what it says', () => {
+    /**
+     * `TOP_CUTS` used to reach the TORSO and nothing else — a shirt on or off,
+     * the collar with it — and that is why every off-duty body on the station
+     * went out in the Order's robe with the palette moved. The robe is not on
+     * the torso. It is the over-skirt, the under-robe and the two front panels
+     * hanging off the pelvis, and until `lower` existed there was no way to
+     * say "this person is not wearing one" at all.
+     *
+     * So the cuts now carry three fields below the belt — `lower`, `apron`
+     * and `cuff` — and this measures each of them ON THE BUILT BODY. It is
+     * the "a data field declaring behaviour no code keeps" failure that this
+     * whole area kept producing: a row saying `lower: 'trousers'` while the
+     * builder hangs a skirt anyway looks completely correct in the table.
+     *
+     * Nothing below is a typed count. Every bound is derived from the tunic
+     * row — the garment that shipped — or from the cut's own declared number.
+     */
+    const built = new Map(TOP_CUTS.map((c) => [c.id, buildJedi({ top: c.id, scale: 1 })]));
+
+    /** How far cloth hung off the pelvis reaches below it, in metres. */
+    const drop = (b) => {
+      b.rig.root.updateMatrixWorld(true);
+      const hips = b.rig.get('hips').obj;
+      const hy = new THREE.Vector3().setFromMatrixPosition(hips.matrixWorld).y;
+      let lo = Infinity;
+      for (const ch of hips.children) {
+        if (ch.isMesh) lo = Math.min(lo, new THREE.Box3().setFromObject(ch).min.y);
+      }
+      return hy - lo;
+    };
+    /** How many pieces are on one shin — the boot, and a trouser cuff over it. */
+    const shin = (b) => b.rig.get('shinL').obj.children.filter((o) => o.isMesh).length;
+
+    const ref = built.get('tunic');
+    const refDrop = drop(ref), refShin = shin(ref), refRigid = ref.robeSkirt.length;
+    assert(refDrop > 0.5 && refRigid >= 3,
+      `the tunic row hangs ${refDrop.toFixed(2)} m of cloth off ${refRigid} rigid pieces — that is not `
+      + 'the robe that shipped, so every bound below is measured against the wrong thing');
+
+    const said = [], aprons = [];
+    for (const cut of TOP_CUTS) {
+      const b = built.get(cut.id);
+      const d = drop(b), sn = shin(b);
+      const lower = cut.lower || 'robe';
+      const rigid = b.robeSkirt ? b.robeSkirt.length : 0;
+
+      if (lower === 'robe') {
+        assert(rigid === refRigid && Math.abs(d - refDrop) < 0.01,
+          `"${cut.name}" declares no lower cut and hangs ${rigid} pieces reaching ${d.toFixed(2)} m `
+          + `against the tunic's ${refRigid} and ${refDrop.toFixed(2)} — the default is not the default`);
+      }
+      if (lower === 'jerkin') {
+        assert(rigid > 0 && rigid < refRigid,
+          `"${cut.name}" is a jerkin and hands out ${rigid} rigid pieces against the robe's ${refRigid} — `
+          + 'a jerkin is the over-skirt ALONE, so it is neither the whole robe nor none of it');
+        assert(d < refDrop - 0.15,
+          `"${cut.name}" is a jerkin and its cloth still reaches ${d.toFixed(2)} m against the robe's `
+          + `${refDrop.toFixed(2)} — the under-robe is still on it`);
+      }
+      if (lower === 'trousers') {
+        /* AND `null`, NOT `[]`. Every reader of this field — Enemy._build,
+         * Player._makeCloak, the menu's preview twice — tests it with
+         * `if (built.robeSkirt)`, and an empty array is truthy. A body in
+         * trousers handed back `[]` gets a cloth skirt simulated over legs it
+         * does not have. */
+        assert(b.robeSkirt === null,
+          `"${cut.name}" has no robe below the belt and answers robeSkirt as ${JSON.stringify(b.robeSkirt)} `
+          + '— every caller tests that field for truth, and an empty array is truthy');
+        if (!cut.apron) {
+          assert(d < 0.15,
+            `"${cut.name}" is trousers with no apron and still hangs ${d.toFixed(2)} m off the pelvis`);
+        }
+      }
+      if (cut.apron) {
+        /* THE ROW'S OWN NUMBER, ON THE BODY. It hangs from inside the belt, so
+         * it reaches a little less far than its own cut length. */
+        assert(Math.abs(d - cut.apron) < 0.08,
+          `"${cut.name}" declares an apron of ${cut.apron} m and its cloth reaches ${d.toFixed(3)} m`);
+        aprons.push([cut.apron, d]);
+      }
+      /* THE CUFF, which is one band of the leg's own cloth over the boot top. */
+      assert(sn === refShin + (cut.cuff ? 1 : 0),
+        `"${cut.name}" ${cut.cuff ? 'declares a cuffed trouser' : 'declares no cuff'} and carries ${sn} `
+        + `pieces on a shin against the tunic's ${refShin}`);
+      said.push(`${cut.id} ${lower} ${d.toFixed(2)}m/${rigid} shin ${sn}`);
+    }
+
+    /* AND THE APRON LENGTH IS A LENGTH, not one lathe under two numbers: the
+     * spread the rows declare has to be the spread the bodies measure. */
+    if (aprons.length > 1) {
+      const dec = Math.max(...aprons.map((a) => a[0])) - Math.min(...aprons.map((a) => a[0]));
+      const got = Math.max(...aprons.map((a) => a[1])) - Math.min(...aprons.map((a) => a[1]));
+      assert(Math.abs(dec - got) < 0.01,
+        `the apron rows declare ${dec.toFixed(3)} m between the longest and the shortest and the bodies `
+        + `measure ${got.toFixed(3)} — the number on the row is not the number on the garment`);
+    }
+    return `${TOP_CUTS.length} cuts against the tunic's ${refDrop.toFixed(2)}m/${refRigid}: ${said.join(', ')}`;
   });
 }

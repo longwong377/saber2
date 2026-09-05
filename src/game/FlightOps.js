@@ -403,14 +403,31 @@ export function signCert(fold, ctx = {}) {
   };
 }
 
-/** The three rows, for a banner or a page. */
-export function certLines(fold) {
-  const f = cleanFlight(fold);
-  return CERT.map((c) => ({
-    id: c.id, name: c.name, signed: f.cert.includes(c.id),
-    short: f.cert.includes(c.id) ? null : certShort(f, c),
-  }));
-}
+/**
+ * ── THERE IS NO `certLines`, AND THAT IS A DECISION ──────────────────────
+ *
+ * A `certLines(fold)` lived here for several passes: the three rungs as rows,
+ * each with `signed` and what it was short of, documented as *"the three rows,
+ * for a banner or a page"*. It had NO CALLER anywhere in `src/` and no check,
+ * from the commit that wrote it to the one that deleted it.
+ *
+ * It is deleted rather than wired because the page it was for is one this
+ * lane's own rules refuse. SHARK §14: *"the station adds no interface"* — no
+ * second front door, no overlay a room raises over itself — and
+ * `Station.signInReadyRoom` says it again in as many words over the press this
+ * would have fed: *"NO PAGE AND NO OVERLAY … a cert with three rows on it is a
+ * banner's worth of words"*. `world.notify` takes a head and a line, so three
+ * rows cannot be spoken through it and a fourth row of scaffolding to hold
+ * them is the interface §14 forbids.
+ *
+ * And nothing was missing without it. The two readings a player can actually
+ * reach already exist and both have callers: `shortLine` is the refusal at #5
+ * — *"1 of 3 signed — type rating next: the airframe, all three levels of it"*
+ * — and `readiness` is the whole fold in one call for the bay's door. Between
+ * them they say everything the three rows said, in the one shape the station
+ * speaks in. Restoring this function means first finding the surface §14
+ * allows it on; until then it is a page nobody can open.
+ */
 
 /* ══════════════════════════════════════════════════════════════════════════
  *  3. THE GANTRIES — #4, "walk the gantries"

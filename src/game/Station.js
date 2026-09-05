@@ -51,7 +51,7 @@ import { loadRoom, materialKeyFor } from './StationMesh.js';
 import { PLACES, PLACE, DECK_Y, DRUM, CORRIDOR, SHAFTS, placesOn, floorOf, sectorAt } from './StationPlan.js';
 import { buildPlace, SHAPES, buildWays, dressWayfinding } from './StationKit.js';
 import { dressDeckLift, stepDeckLift, undressDeckLift, liftKey, liftFloors } from './DeckLift.js';
-import { dressStationLife, stepStationLife, undressStationLife, dressTram } from './StationLife.js';
+import { dressStationLife, primeStationLife, stepStationLife, undressStationLife, dressTram } from './StationLife.js';
 import { dressObelisk, dressBoards, stepBoards, standingReading, companyOf } from './StationBoards.js';
 /* What a man on the roll is CALLED — one rule, `Company.js`'s own, so the job
  * board names him exactly as the company tab does. See `questContext`. */
@@ -93,7 +93,7 @@ import {
 import { Sortie, canLaunch } from './Launch.js';
 import { sample as orbitSample, sightLine, CIRCUIT_LENGTH } from './Outside.js';
 import { CircuitPilot, TOP_SPEED } from './Pilot.js';
-import { GANTRY_Y } from './StationKit.js';
+import { GANTRY_Y, stepCook } from './StationKit.js';
 import { flightState, setFlightState } from './StationSave.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -984,7 +984,9 @@ export function dressStation(world) {
      *
      * So it goes on this queue and `drainStationBuild` — called first thing in
      * `stepStation` — spends it on the frames after the world is live, while
-     * the doors are running their animation. Each entry is `{name, run}`;
+     * the doors are running their animation. Each entry is `{name, run}`, and
+     * a `run` that returns `true` is asking to be called again next frame,
+     * which is how a job too big for one frame slices itself (the people do).
      * `finishStationBuild` drains the lot at once for a caller that needs the
      * station whole and is not going to step it.
      */
@@ -1153,6 +1155,26 @@ export function dressStation(world) {
    * first frame, so a player who arrives at the Concourse at 13:00 walks into
    * a market rather than into an empty hall. */
   dressStationLife(world, st);
+  /**
+   * ── AND SEATING THEM IS SLICED, BECAUSE IT IS HALF THE SEAM ────────────
+   *
+   * Metered on this box with the flight deck already built: the station's
+   * build costs about 2.1 s of CPU and 1.14 s of that is twenty-eight
+   * humanoid bodies — a rig, sixty meshes and a `MergedSkin` chain each. It
+   * was ONE uncapped re-seat inside `dressStationLife`, on the grounds that
+   * the player was looking at a loading plate anyway. He is not: V15 §1.5
+   * says there is no plate between the deck and the station, and what he is
+   * actually looking at is a still of the car he is standing in.
+   *
+   * So the pool fills over the frames AFTER the world is live, a few bodies
+   * at a time, and it has the whole of the door animation to do it in —
+   * `dressDeckLift({arrive:true})` starts in `STATE.OPENING` and takes
+   * `RIDE.doors` (1.1 s, about 66 frames) to part the leaves. The pool is
+   * full long before the player can see a room, and `life.priming` stays true
+   * until it is, so the seating is the same seating with the same budget
+   * rather than the trickle a walk gets.
+   */
+  st.pending.push({ name: 'the people', run: () => primeStationLife(world) });
   if (deck === 44) dressTram(world, st, M);
 
   /* ── AND THE THINGS WITH WORDS ON THEM (V15 §1.1, §1.2). The obelisk is a
@@ -2077,6 +2099,36 @@ export function stationKey(world) {
   if (shop && world.onCounter) {
     if (world.onCounter(shop.id) !== false) return true;
   }
+  /**
+   * ── #29 COMPANY BARRACKS: THE LIBERTY BOARD — V16 Lane C2 ──────────────
+   *
+   * *"you can assign troops to go on leave."* There was no control anywhere:
+   * leave was `hashF(designation, day)` and the player could not choose who
+   * went, could not see who was out, and got nothing back for it.
+   *
+   * THE BARRACKS AND NOT A BAR, because the choice is about the COMPANY and
+   * not about the room — who you can spare, not where he drinks. It is the
+   * same argument `#43`'s branch makes about the ward: the clock decides the
+   * healing and the door decides the thing the clock cannot, which here is
+   * which third of your men is standing down tonight.
+   *
+   * ── ABOVE THE KIOSK, AND THE SLATE IS ON THE BOARD ────────────────────
+   *
+   * `#29` carries `kiosk: 'muster'` and the kiosk branch below would take
+   * every press in this room, so this has to sit above it. What that would
+   * ordinarily cost is the room's own gazetteer verb — *"read the Muster
+   * slate"* — so `main.js`'s board carries the slate as a row on it and hands
+   * the press straight on to `onKiosk('muster')`. Nothing is lost and the two
+   * things a player does in their own barracks are on one page, which is what
+   * the room is.
+   *
+   * IT MAY REFUSE. A player with no roll at all has nobody to send anywhere,
+   * and `main.js` answers false for that — the press falls through to the
+   * kiosk on the next line and the slate opens exactly as it always did.
+   */
+  if (place.id === 29 && world.onLeave) {
+    if (world.onLeave(place.id) !== false) return true;
+  }
   /* A counter opens the panel it names; everything else answers with its own
    * verb, which is the prompt and, until its system lands, the whole of it. */
   if (place.kiosk && world.onKiosk) { world.onKiosk(place.kiosk); return true; }
@@ -2228,6 +2280,36 @@ export function stationKey(world) {
    */
   const tote = venueAtPlace(place.id);
   if (tote && world.onTote) return world.onTote(tote.id) !== false;
+  /**
+   * ── #14, #54 AND #59, THE BARS — V16 Lane C2's OTHER HALF ──────────────
+   *
+   * *"a casino/nightclub with troops on leave … you will actually see your
+   * real troops relaxing there."*
+   *
+   * You could already see them — `StationLife.occupant` has been asking
+   * `Bars.barman` for the first n seats of these rooms since Lane C2 landed —
+   * and there was nothing you could DO about it, or even read. Every line in
+   * `Bars.BARS` (*"the band is loud enough that nobody has to talk"*) was
+   * reachable only through a function no file under `src/` called, so no
+   * player has ever seen one. This branch is the door those lines come
+   * through, and it is where a man's own name in a room full of strangers
+   * gets said out loud.
+   *
+   * AFTER THE TOTE, WHICH IS WHY `#18` IS NOT IN THIS LIST IN PRACTICE. The
+   * Pit is a bar AND a book, its own gazetteer verb is "watch and bet", and
+   * `venueAtPlace` claims that press one line up. `isBar` still answers true
+   * for it — the leave ledger seats men there and pays them for it exactly as
+   * it does anywhere else — what it does not get is the panel, because the
+   * room already had a better one. The rule is the pit branch's rule stated
+   * again: a branch that claims a press it did not use is the defect.
+   *
+   * BEFORE the flight rooms and the job board, neither of which names 14, 54
+   * or 59; and `main.js` may still refuse, in which case the press falls
+   * through to the room's own verb.
+   */
+  if (isBar(place.id) && world.onBar) {
+    if (world.onBar(place.id) !== false) return true;
+  }
   if (place.id === 41 && world._warp && !world._warp.done) {
     world.notify?.('COMMAND / CIC', 'the jump is under way');
     return true;
@@ -3048,13 +3130,13 @@ function persistStanding(world, st) {
  */
 
 /** How far from the middle of a venue you can still hear it. */
-export const CROWD_EAR = 34;
+const CROWD_EAR = 34;
 /** A swell under this is the room talking, not the room reacting. */
-export const ROAR_GATE = 0.12;
+const ROAR_GATE = 0.12;
 /** Two roars closer together than this are one roar. */
-export const ROAR_GAP = 0.7;
+const ROAR_GAP = 0.7;
 /** How often the wash under it is renewed while you are in the room. */
-export const MURMUR_EVERY = 1.6;
+const MURMUR_EVERY = 1.6;
 
 const _crowdAt = new THREE.Vector3();
 
@@ -3208,11 +3290,17 @@ export function drainStationBuild(world, st = world?._station, all = false) {
   if (!st?.pending?.length) return 0;
   const t0 = _now();
   let n = 0;
+  /* A ceiling on the drain-it-all loop. A slicing job that never says it is
+   * finished would otherwise hang the caller, and a hang inside a screenshot
+   * tool is the worst place to discover one. */
+  const CEIL = 4000;
   do {
-    const job = st.pending.shift();
-    try { job.run(); } catch (e) { console.error(`station: ${job.name} failed to build`, e); }
+    const job = st.pending[0];
+    let again = false;
+    try { again = job.run() === true; } catch (e) { console.error(`station: ${job.name} failed to build`, e); }
+    if (!again) st.pending.shift();
     n++;
-  } while (st.pending.length && (all || _now() - t0 < BUILD_SLICE));
+  } while (st.pending.length && n < CEIL && (all || _now() - t0 < BUILD_SLICE));
   return n;
 }
 
@@ -3273,6 +3361,14 @@ export function stepStation(world, dt) {
   /* THE JUMP, if one is running. It drives a shader and a fleet and nothing
    * else, which is why it can run while the player walks about — see Warp.js. */
   if (world._warp && !world._warp.done) world._warp.step(dt);
+  /* AND THE COOK, on the same line and the same terms (V16 §B5). A no-op
+   * until somebody orders something, which is one property read a frame; when
+   * one is running it moves eight meshes and one man's arms, and it runs HERE
+   * rather than off a timer so that what the player watches is the world's own
+   * clock — see `StationKit.CookSet`. Step 8 of the frame, after every body
+   * has posed itself at step 2, which is what lets it write the keeper's arms
+   * at all. */
+  stepCook(world, dt);
   /* THE SORTIE, on the same terms and for the same reason (§7). A no-op until
    * somebody launches, which is one property read a frame. */
   if (world._sortie || world._flying) stepSortie(world, st, dt);

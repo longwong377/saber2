@@ -105,12 +105,12 @@ export const TEMPERS_WORN = 6;
  * `enlistBody` at all. And `kindOfArmy` derives kind from an ARMY id a rancor
  * pup does not have, so `traitsFor` would deal a hawk the clone table.
  *
- * EACH SWINGS ONLY THE COMPANION'S OWN TWO BEHAVIOUR NUMBERS — how long it
- * holds an order (`hold`, seconds) and how far it will break from station to
- * take one (`brk`, metres). Neither is health, damage, armour or pace: see
- * COMPANION_RANKS' note on why no rung row carries a multiplier at all. A
- * temper that raised any of those four would be the ladder's refusal reopened
- * one table across.
+ * EACH SWINGS ONLY THE COMPANION'S OWN BEHAVIOUR NUMBERS — the five metres
+ * and seconds `TEMPER_AXES` prices, each of which has a reader in the
+ * simulation and is checked to have one. Not one of them is health, damage,
+ * armour or pace: see COMPANION_RANKS' note on why no rung row carries a
+ * multiplier at all. A temper that raised any of those four would be the
+ * ladder's refusal reopened one table across.
  *
  * AND EVERY ONE IS PRICED NET ≤ 0. That is what "two-sided" has to mean to be
  * worth anything: the gain and the cost are both real, both felt, and the sum
@@ -268,6 +268,30 @@ export const rangedRun = (far, near) => far > near;
  *   recall    metres from which it comes home fast.              span 20 m
  *   ward      metres of standing ring round YOU.                 span 20 m
  *   exposure  metres of extra distance-from-you, as a liability. span 20 m
+ *
+ * ── AND EVERY ONE OF THEM IS READ BY SOMETHING THAT IS NOT THIS TABLE ─────
+ *
+ * Three of the five were not, for four rounds, and the check that prices them
+ * could not see it: it weighs `TEMPERS` against `TEMPER_AXES`, a table against
+ * a table, and never asks whether the simulation reads the axis at all.
+ * Measured by mutation — `{ hold: 999, ward: 999, exposure: 999 }` on a
+ * fielded massiff moved not one number. So the row is named beside the axis
+ * and `companion: every temper axis is read by something that is not the price
+ * table` greps `src/` for it rather than trusting this list:
+ *
+ *   hold      `Companions.holdOf`   — the grace on the leash going taut.
+ *   reach     `Companions.leashOf`  — the rope, one half.
+ *   recall    `Companions.leashOf`  — the rope, the other half.
+ *   ward      `CompanionKinds.wardOf` — the ring `dutyAllows` defends, the
+ *                                     ring the gaze watches, the ring the
+ *                                     wheel prints.
+ *   exposure  `Companions.standoffOf` — metres further off your back it heels.
+ *
+ * `exposure` IS THE ONE AXIS WHOSE POSITIVE DIRECTION IS BAD, which is what
+ * the word "liability" in its row means and is the one thing a reader of it
+ * has to get right: `temperSwing` signs a `down` negative, so a temper that
+ * COSTS four metres of exposure arrives as −4 and `standoffOf` negates it
+ * once, in one place, with the reason written on it.
  *
  * `reach`, `recall`, `ward` and `exposure` share one span because they are all
  * metres on the same ground. That is the point of the table: they are
@@ -622,11 +646,13 @@ export function applyTempers(rec) {
 }
 
 /**
- * THE TWO BEHAVIOUR NUMBERS, AFTER EVERY TEMPER IT WEARS.
+ * THE FIVE BEHAVIOUR NUMBERS, AFTER EVERY TEMPER IT WEARS.
  *
  * One reader, so nothing anywhere adds up a temper's swing itself. Returns the
  * DELTAS; the pack adds them to the kind's own numbers, which is where the
- * base belongs.
+ * base belongs. Every key that comes back is read by something on the field —
+ * see the note on `TEMPER_AXES` for which reader owns which, and the check
+ * that greps for them rather than believing the list.
  */
 export function temperSwing(rec) {
   const out = { hold: 0, reach: 0, recall: 0, ward: 0, exposure: 0 };

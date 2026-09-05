@@ -73,11 +73,32 @@ async function instrumentSteps() {
 }
 
 async function buildStation(tag, boot) {
+  const { window_, cpuMs } = await import('./checks/_cpuclock.mjs');
+  /* Every body the station builds, metered: ARCHETYPES rows are plain objects
+   * so their `build` is patchable, which module exports are not. */
+  const { ARCHETYPES } = await import('../src/game/Enemy.js');
+  const bodyCost = { ms: 0, n: 0 };
+  const undo = [];
+  for (const k of Object.keys(ARCHETYPES)) {
+    const row = ARCHETYPES[k]; const real = row.build;
+    if (typeof real !== 'function') continue;
+    row.build = function (...a) { const c = cpuMs(); try { return real.apply(this, a); } finally { bodyCost.ms += cpuMs() - c; bodyCost.n++; } };
+    undo.push(() => { row.build = real; });
+  }
   stepTag = tag;
+  const win = window_();
   const t = performance.now();
   const { world } = await boot({ level: 'station', settings: { mode: 'station', level: 'station', allies: 0 },
-    onWorld: (w) => { w._stationFloor = 40; w._stationShaft = 'arrivals'; } });
-  mark(`buildWorld station [${tag}] TOTAL`, performance.now() - t);
+    onWorld: (w) => { w._stationFloor = Number(process.env.DECK || 40); w._stationShaft = 'arrivals'; } });
+  const r = win.stop();
+  for (const f of undo) f();
+  mark(`  [${tag}] of which: ${bodyCost.n} bodies built, cpu`, bodyCost.ms);
+  const { finishStationBuild } = await import('../src/game/Station.js');
+  const { window_: w2 } = await import('./checks/_cpuclock.mjs');
+  const dw = w2(); const n = finishStationBuild(world); const dr = dw.stop();
+  mark(`  [${tag}] deferred build (${n} jobs) cpu`, dr.cpu);
+  mark(`buildWorld station [${tag}] TOTAL wall`, performance.now() - t);
+  mark(`buildWorld station [${tag}] TOTAL cpu (contention x${r.contention.toFixed(2)})`, r.cpu);
   return world;
 }
 
