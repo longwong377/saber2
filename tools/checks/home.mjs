@@ -1106,9 +1106,9 @@ export async function run({ check, assert, near, THREE }) {
     const fits = before.pad.rows.filter((r) => r.fits).map((r) => r.id);
     assert(fits.length === 1 && fits[0] === 'perch',
       `the habitat says ${JSON.stringify(fits)} suits a hawk`);
-    /* …AND NONE OF THEM IS REFUSED. The sentence gives the choice and names no
-     * condition; `fits` is a label, not a gate. */
-    assert(before.pad.rows.every((r) => !r.disabled), 'the habitat refuses one of the three');
+    /* …AND `fits` IS A LABEL AND NOT A GATE, which is proved further down by
+     * choosing a BASKET for a bird and reading the basket back out of the
+     * room — not by an assertion on a field the row does not carry. */
 
     HAB.choosePad('perch');
     assert(S.homeState()?.pad === 'perch',

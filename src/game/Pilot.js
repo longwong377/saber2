@@ -202,26 +202,8 @@ export class CircuitPilot {
   /** How fast it is actually going, m/s. */
   get speed() { return this.craft.speed; }
 
-  /**
-   * ══ WHERE ON THE TRACK THE CRAFT IS ══════════════════════════════════════
-   *
-   * A local search rather than a solve: forty samples at 3 m, from a little
-   * behind to 120 m ahead, which is wider than anything a 1/60 s step can
-   * cover and narrow enough that the far side of the loop cannot win. The
-   * window is one-sided on purpose — a craft cannot go round backwards, and a
-   * symmetric search on a track that passes near itself at the mouth can.
-   */
-  _project() {
-    let best = this.u, bd = Infinity;
-    const [x, y, z] = this.craft.position;
-    for (let k = -8; k <= 40; k++) {
-      const u = this.u + k * (3 / CIRCUIT_LENGTH);
-      const p = sample(u);
-      const d = (p.x - x) ** 2 + (p.y - y) ** 2 + (p.z - z) ** 2;
-      if (d < bd) { bd = d; best = u; }
-    }
-    return best;
-  }
+  /** Where the craft is on the track — see `projectOnto`, which both pilots
+   *  share so neither can disagree about which lap it is on. */
 
   /**
    * One frame. Returns how far round the loop the craft now is, 0..1, and
@@ -241,7 +223,7 @@ export class CircuitPilot {
   step(dt) {
     if (!(dt > 0)) return this.u;
     const craft = this.craft;
-    const next = this._project();
+    const next = projectOnto(craft.position, this.u);
     /* Distance round the loop, accumulated from the wrapped step rather than
      * read off `u` — `u` is a position and 0.99 → 0.01 is a metre of travel,
      * not a lap gone backwards. `lap` is what the sortie's recovery waits on,
@@ -250,40 +232,82 @@ export class CircuitPilot {
     this.u = ((next % 1) + 1) % 1;
     while (this.travelled >= 1) { this.travelled -= 1; this.lap++; }
 
-    /* The aim point, and the heading and the corner it is asking for. */
-    const at = this.u + LEAD / CIRCUIT_LENGTH;
-    const aim = P(sample(at));
-    const T = tangentAt(at);
-    const aMax = craft.maxLinearAccel();
-    const hold = Math.min(TOP_SPEED, Math.sqrt(aMax * turnRadius(at) * MARGIN));
-
-    /**
-     * CROSS-TRACK AND ALONG-TRACK, SEPARATELY. Steering at the aim point
-     * alone cuts every corner, because a straight line to a point on a bend
-     * is inside the bend; what is wanted is the track's heading PLUS a pull
-     * back onto the line, and only the component across the line is an error.
-     */
-    const off = sub(craft.position, aim);
-    const lateral = sub(off, scale(T, dot(off, T)));
-    const want = sub(scale(T, hold), scale(lateral, CROSS));
-    const accel = capped(scale(sub(want, craft.velocity), 1 / TAU), aMax);
-
-    /**
-     * AND THE NOSE GOES WHERE THE THRUST IS WANTED, which is the whole reason
-     * a Starfury is not an aeroplane: the mains are the only authority worth
-     * anything (68 kN each against an RCS quad's 4.2), so the craft points at
-     * its own acceleration and lets its velocity do whatever it is doing.
-     * Round the drum that means flying half sideways, which is correct and is
-     * what the source calls normal operation.
-     */
-    const dir = norm(accel) > 1e-6 ? unit(accel) : unit(craft.velocity);
-    const axisBody = craft.worldToBody(cross(craft.forward, dir));
-    const spin = capped(sub(scale(axisBody, K_POINT), scale(craft.angularVelocity, K_RATE)), 1);
-
-    craft.allocate(scale(craft.worldToBody(accel), 1 / aMax), spin, this.throttles);
-    craft.step(dt, this.throttles);
+    guideRound(craft, this.u, dt, this.throttles);
     return this.u;
   }
+}
+
+/**
+ * ══ WHERE ON THE TRACK A POINT IS ═════════════════════════════════════════
+ *
+ * A local search rather than a solve: forty samples at 3 m, from a little
+ * behind to 120 m ahead, which is wider than anything a 1/60 s step can cover
+ * and narrow enough that the far side of the loop cannot win. The window is
+ * one-sided on purpose — a craft cannot go round backwards, and a symmetric
+ * search on a track that passes near itself at the mouth can.
+ *
+ * A FUNCTION AND NOT A METHOD, because two pilots ask it now: `CircuitPilot`
+ * and the seat below. Two copies of a search that has this many opinions in it
+ * is how the two would come to disagree about which lap they were on.
+ */
+export function projectOnto(position, from) {
+  let best = from, bd = Infinity;
+  const [x, y, z] = position;
+  for (let k = -8; k <= 40; k++) {
+    const u = from + k * (3 / CIRCUIT_LENGTH);
+    const p = sample(u);
+    const d = (p.x - x) ** 2 + (p.y - y) ** 2 + (p.z - z) ** 2;
+    if (d < bd) { bd = d; best = u; }
+  }
+  return best;
+}
+
+/**
+ * ══ ONE FRAME OF GUIDANCE, AND IT IS THE ONLY COPY OF IT ══════════════════
+ *
+ * Everything `CircuitPilot` knows about flying round this station, as a
+ * function of a craft and a place on the track. `PlayerPilot.autoStep` uses it
+ * too — a sortie whose seat is getting no frames still has to come home, and
+ * an autopilot written twice is two ships that fly differently depending on
+ * who is not flying them.
+ *
+ * It decides WHAT TO ASK FOR and hands it to `Starfury.allocate`; nothing here
+ * integrates a position, damps a velocity or clamps a rotation.
+ */
+export function guideRound(craft, u, dt, throttles) {
+  /* The aim point, and the heading and the corner it is asking for. */
+  const at = u + LEAD / CIRCUIT_LENGTH;
+  const aim = P(sample(at));
+  const T = tangentAt(at);
+  const aMax = craft.maxLinearAccel();
+  const hold = Math.min(TOP_SPEED, Math.sqrt(aMax * turnRadius(at) * MARGIN));
+
+  /**
+   * CROSS-TRACK AND ALONG-TRACK, SEPARATELY. Steering at the aim point
+   * alone cuts every corner, because a straight line to a point on a bend
+   * is inside the bend; what is wanted is the track's heading PLUS a pull
+   * back onto the line, and only the component across the line is an error.
+   */
+  const off = sub(craft.position, aim);
+  const lateral = sub(off, scale(T, dot(off, T)));
+  const want = sub(scale(T, hold), scale(lateral, CROSS));
+  const accel = capped(scale(sub(want, craft.velocity), 1 / TAU), aMax);
+
+  /**
+   * AND THE NOSE GOES WHERE THE THRUST IS WANTED, which is the whole reason
+   * a Starfury is not an aeroplane: the mains are the only authority worth
+   * anything (68 kN each against an RCS quad's 4.2), so the craft points at
+   * its own acceleration and lets its velocity do whatever it is doing.
+   * Round the drum that means flying half sideways, which is correct and is
+   * what the source calls normal operation.
+   */
+  const dir = norm(accel) > 1e-6 ? unit(accel) : unit(craft.velocity);
+  const axisBody = craft.worldToBody(cross(craft.forward, dir));
+  const spin = capped(sub(scale(axisBody, K_POINT), scale(craft.angularVelocity, K_RATE)), 1);
+
+  craft.allocate(scale(craft.worldToBody(accel), 1 / aMax), spin, throttles);
+  craft.step(dt, throttles);
+  return craft;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -402,8 +426,13 @@ export class PlayerPilot {
     const spin = opts.spin ?? Math.sqrt(9.81 / radius);
     this.craft = new Starfury();
     this.u = 0;
+    /** Where it was on the last frame, so the station can name a sight as it
+     *  goes past rather than every frame it is near one. */
+    this.lastU = 0;
     this.travelled = 0;
     this.lap = 0;
+    /** Was the seat driven on this frame? See `autoStep`. */
+    this.tick = false;
     /** Seconds at the stick — the ceiling the bay recovers you at. */
     this.t = 0;
     this.throttles = new Map();
@@ -559,7 +588,23 @@ export class PlayerPilot {
       const v = this.craft.velocity;
       if (norm(v) > 0.05) {
         const back = this.craft.worldToBody(scale(unit(v), -1));
-        const axisB = [-back[1], back[0], 0];
+        /**
+         * THE FLIP HAS A SINGULARITY AND IT IS THE COMMON CASE.
+         *
+         * The axis that swings the nose onto retrograde is
+         * `cross(nose, back)` — `(−back.y, back.x, 0)` for a nose at body +z —
+         * and it is ZERO both when the craft already points the right way and
+         * when it points EXACTLY the wrong way, which is a ship flying straight
+         * down its own nose: the commonest attitude there is. Measured, a craft
+         * at 90 m/s with the throttle just released held the brake for eight
+         * seconds and stayed at 90.0, because the demand it computed was
+         * nought.
+         *
+         * So a flip that has nowhere to turn is started over the top. Pitch
+         * rather than yaw for no reason but that a pilot pulls.
+         */
+        let axisB = [-back[1], back[0], 0];
+        if (norm(axisB) < 1e-3 && back[2] < 0) axisB = [1, 0, 0];
         rotate = capped(sub(scale(axisB, K_POINT), scale(this.craft.angularVelocity, K_RATE)), 1);
         /* `back[2]` is how much of retrograde is already down the nose: 1 when
          * the burn is exactly against travel, 0 across it, negative when the
@@ -572,29 +617,49 @@ export class PlayerPilot {
     this.craft.step(dt, this.throttles);
 
     /* ── where that put it on the circuit ─────────────────────────────── */
-    const next = this._project();
-    this.travelled += wrapU(next - this.u);
-    this.u = ((next % 1) + 1) % 1;
-    while (this.travelled >= 1) { this.travelled -= 1; this.lap++; }
+    this._advance();
+    /* SOMEBODY DROVE IT THIS FRAME. Read and cleared by `stepSortie`, which is
+     * five steps later in the world's frame — see `autoStep`. */
+    this.tick = true;
 
     this.ride();
     this._frame(dt, ctx);
     return true;
   }
 
-  /** `CircuitPilot._project`, and it is the same search for the same reason —
-   *  a craft cannot go round backwards and a symmetric window on a track that
-   *  passes near itself at the mouth can pick the far side. */
-  _project() {
-    let best = this.u, bd = Infinity;
-    const [x, y, z] = this.craft.position;
-    for (let k = -8; k <= 40; k++) {
-      const u = this.u + k * (3 / CIRCUIT_LENGTH);
-      const p = sample(u);
-      const d = (p.x - x) ** 2 + (p.y - y) ** 2 + (p.z - z) ** 2;
-      if (d < bd) { bd = d; best = u; }
-    }
-    return best;
+  /**
+   * ══ AND A SEAT NOBODY IS STEPPING STILL FLIES ═════════════════════════
+   *
+   * `update` is called out of `Player.update`, which is step 1 of a world's
+   * frame. Anything that drives the STATION alone — `flightops.mjs`'s seam
+   * check, a headless probe, a host running a station for a player whose body
+   * is not being ticked — turns the whole sortie into a craft frozen at the
+   * mouth with `_flying` true, which is finding (2) in a different costume.
+   *
+   * So `stepSortie` asks whether the seat was driven this frame, and if it was
+   * not, the station flies it. `guideRound` is the SAME law `CircuitPilot`
+   * uses — one copy, so a sortie nobody is flying does not fly differently
+   * from one nobody was ever going to fly.
+   */
+  autoStep(dt) {
+    if (this.left || !(dt > 0)) return this.u;
+    this.t += dt;
+    guideRound(this.craft, this.u, dt, this.throttles);
+    this._advance();
+    this.ride();
+    return this.u;
+  }
+
+  /** Where the craft has got to on the circuit, and how many laps that is.
+   *  `lastU` is kept because the station names the sights off the STEP — a
+   *  sight is a thing you go past, not a thing you are near. */
+  _advance() {
+    const next = projectOnto(this.craft.position, this.u);
+    this.lastU = this.u;
+    this.travelled += wrapU(next - this.u);
+    this.u = ((next % 1) + 1) % 1;
+    while (this.travelled >= 1) { this.travelled -= 1; this.lap++; }
+    return this.u;
   }
 
   /**

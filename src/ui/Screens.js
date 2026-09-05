@@ -124,8 +124,19 @@ export const SEAM_LIGHTS = 'seam-lights';
 function seamMotion(el, on) {
   if (!el) return;
   el.classList.toggle('seam', !!on);
-  let band = el.querySelector?.(`.${SEAM_LIGHTS}`) || null;
-  if (!on) { band?.parentNode?.removeChild(band); return; }
+  /**
+   * THE BAND IS FOUND BY WALKING THE CHILDREN, NOT BY `querySelector`.
+   *
+   * The first cut asked `el.querySelector('.seam-lights')`, which is right in
+   * a browser and answers `null` for ever under `tools/dom-shim.mjs` — so the
+   * band was created on the way in and never found on the way out, and the
+   * menu wore a drifting light band for the rest of the session. The clause
+   * in station.mjs that says so caught it. `children` is a real list on both
+   * sides, and the DOM stays the only record of whether the band is up.
+   */
+  let band = null;
+  for (const c of (el.children || [])) if (c && c.className === SEAM_LIGHTS) { band = c; break; }
+  if (!on) { if (band) el.removeChild ? el.removeChild(band) : band.parentNode?.removeChild(band); return; }
   if (!band && typeof document !== 'undefined' && document.createElement) {
     band = document.createElement('div');
     band.className = SEAM_LIGHTS;

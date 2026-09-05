@@ -2197,9 +2197,13 @@ function showHabitat() {
    * #28 with #27 two decks away, so there is nowhere else the control could be
    * and still be the thing that was asked for.
    *
-   * All three are always offered and none is ever disabled. The sentence gives
-   * the choice and states no condition, so `fits` is a LABEL — it says which
-   * one the animal you have is built for — and it is not a gate.
+   * All three are always offered and none is ever refused for being the wrong
+   * shape. The sentence gives the choice and states no condition, so `fits` is
+   * a LABEL — a tick saying which one the animal you have is built for — and
+   * never a gate. The only inert button is the one you already have, because
+   * pressing that one does nothing; `home: the cabin gets a perch…` proves the
+   * rest by choosing a BASKET for a bird and reading the basket back out of
+   * the room.
    */
   html += `<h3>Your cabin${p.pad.chosen ? '' : ' — nothing chosen'}</h3>`;
   if (p.pad.why) html += `<p class="sub">${esc(p.pad.why)}</p>`;
@@ -2359,14 +2363,22 @@ function pitStake() {
   return Math.max(0, Math.min(MAX_STAKE, v));
 }
 
-function pitStakeHtml(word) {
-  return `<div class="acts"><label>${esc(word)} <input id="pit-stake" type="number" min="0" `
+/**
+ * ONE WINDOW ON THE SCREEN, AND EXACTLY ONE.
+ *
+ * The door you fight through and the button beside every animal on tonight's
+ * card both read `#pit-stake`, so it is drawn once per panel or the second one
+ * is a field the player can type into that `getElementById` never returns.
+ */
+function pitStakeHtml() {
+  return `<div class="acts"><label>stake <input id="pit-stake" type="number" min="0" `
     + `max="${MAX_STAKE}" value="${pit.stake}"></label></div>`
-    + `<p class="sub">${purse()} credits on you. The rail takes ${MAX_STAKE} at most.</p>`;
+    + `<p class="sub">${purse()} credits on you. The rail takes ${MAX_STAKE} at most, `
+    + 'and it takes nothing at all if you leave it at zero.</p>';
 }
 
 /** THE NIGHT'S CARD — the people who live here, and the button beside them. */
-function pitCardHtml() {
+function pitCardHtml(window_ = true) {
   const night = pitNight(pit.placeId);
   if (!night) return '';
   if (!night.card) return `<p class="sub">In the sand tonight — ${esc(night.why)}</p>`;
@@ -2393,11 +2405,11 @@ function pitCardHtml() {
     const said = pit.watched.result.events.map((ev) => pitCall(ev, night.card)).filter(Boolean);
     html += '<div class="rows">' + said.slice(-5).map((line) =>
       `<div class="row"><span>${esc(line)}</span></div>`).join('') + '</div>';
-    if (pit.railed?.staked) {
-      html += `<p class="sub">${pit.railed.staked} down, ${Math.round(pit.railed.returned)} back.</p>`;
+    if (pit.cardLed?.staked) {
+      html += `<p class="sub">${pit.cardLed.staked} down, ${Math.round(pit.cardLed.returned)} back.</p>`;
     }
   } else {
-    html += pitStakeHtml('on the card');
+    if (window_) html += pitStakeHtml();
     html += '<div class="acts"><button class="care" data-do="watch">Watch it</button></div>';
   }
   return html;
@@ -2415,7 +2427,7 @@ function showPit(placeId) {
       placeId, venue: got.venue || pitAtPlace(placeId), why: got.why || null,
       offer: got.offer || null, bout: null, last: null, t0: 0,
       /* The one window, its default, and what has been put through it. */
-      stake: 25, tickets: [], wager: 0, railed: null,
+      stake: 25, tickets: [], wager: 0, railed: null, cardLed: null,
       night: null, watched: null,
     };
   }
@@ -2451,7 +2463,7 @@ function showPit(placeId) {
     /* AND YOU CAN BE ON IT. The stake goes on YOUR animal — there is no button
      * to back the other one, because a handler betting against the animal he
      * is cornering is a fight nobody in that room would let happen. */
-    html += pitStakeHtml('on yours');
+    html += pitStakeHtml();
     html += '<div class="acts">';
     /* TWO DOORS AND THEY ARE NOT A YES AND A CANCEL. Declining the stake still
      * fights — for the smaller purse, with no doctor — which is what makes the
@@ -2468,7 +2480,8 @@ function showPit(placeId) {
      * and this line does not appear there. */
     if (book) html += `<button class="care" data-do="book">The card at ${esc(book.name)}</button>`;
     html += '<button class="care" data-do="leave">Walk away</button></div>';
-    html += pitCardHtml();
+    /* THE SAME WINDOW SERVES THE CARD BELOW — see `pitStakeHtml`. */
+    html += pitCardHtml(false);
   } else if (bout.over) {
     const O = bout.outcome;
     html += `<p class="sub">${O.won ? 'Won' : 'Lost'} in ${O.rounds} — ${esc(O.how)}.`
@@ -2488,6 +2501,10 @@ function showPit(placeId) {
     if (pit.fold && !pit.fold.kept && !pit.fold.died) {
       html += '<p class="sub">That is not the animal that fought.</p>';
     }
+    /* AND THE CARD IS STILL THERE. A ticket bought on somebody else's bout
+     * before you took your own is a ticket that still has to be watchable —
+     * hiding the card while you fought would have eaten it. */
+    html += pitCardHtml();
     html += '<div class="acts">'
       + (book ? `<button class="care" data-do="book">The card at ${esc(book.name)}</button>` : '')
       + '<button class="care" data-do="leave">Leave</button></div>';
@@ -2537,10 +2554,10 @@ function showPit(placeId) {
          * engine's `settle`, and the credits move here and nowhere else. */
         const night = pitNight(placeId);
         pit.watched = night?.races?.[0] || null;
-        pit.railed = pit.watched ? settlePitCard(night, pit.tickets, 0) : null;
-        const back = Math.round(pit.railed?.returned || 0);
+        pit.cardLed = pit.watched ? settlePitCard(night, pit.tickets, 0) : null;
+        const back = Math.round(pit.cardLed?.returned || 0);
         if (back) pay(back, 'pit');
-        if (pit.railed?.staked) say(back ? `${back} credits at the rail` : 'nothing on that one');
+        if (pit.cardLed?.staked) say(back ? `${back} credits at the rail` : 'nothing on that one');
         showPit(placeId);
         return;
       }
@@ -2709,8 +2726,9 @@ screens.card('pit', () => { clearPitTimer(); pit = null; closePane('pit'); });
  *
  * `Station.stakeAtDrum` and `payAtDrum` are the two lines where the purse
  * moves, beside `stakeAtTote` and `payAtTote`, under the same `PER_RUN_CAP`.
- * A ticket lives as long as the screen and the hour it is on, which is what a
- * chip on a table does.
+ * A ticket lives until the turn it rides comes round — see `drumHeld`, and
+ * `Games.drumTicket` for why the turn it rides and the thing it backs are two
+ * fields and not one.
  *
  * ── ITS OWN ROOT, WHICH IS THE ONLY SHAPE SAFE AGAINST `Screens.clear()` ──
  *
@@ -3940,7 +3958,11 @@ function cookBeat(cook) {
   const TICK = 0.25;
   const beat = () => {
     cookTimer = null;
-    if (cook.done || cook.step(TICK) === 'done') return;
+    /* THE FLAG, NOT THE ID `step` RETURNS — see `Food.PREP.live`, where a
+     * step called 'done' ended this loop three lines early and lost the dish. */
+    if (cook.done) return;
+    cook.step(TICK);
+    if (cook.done) return;
     cookTimer = setTimeout(beat, TICK * 1000);
   };
   beat();

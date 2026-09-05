@@ -434,6 +434,12 @@ export async function run({ check, assert }) {
     const F = await import('../../src/game/Food.js');
     const { CookSet } = await import('../../src/game/StationKit.js');
     const { Rig, humanoidSkeleton } = await import('../../src/game/Rig.js');
+    /* THE SAME COPY THE GAME LOADS, by the path `src/` itself imports — the
+     * loader maps the bare specifier onto this file, so a check that reached
+     * for `three` and a module that reached for the vendor path would be one
+     * module instance either way. Taken here rather than off `run`'s argument
+     * so this clause does not depend on which harness invoked it. */
+    const THREE = await import('../../vendor/three/three.module.js');
 
     /* The nine materials a deck publishes, by the keys `CookSet` names. Real
      * materials rather than stubs, because a mesh is what is being measured. */
@@ -468,7 +474,7 @@ export async function run({ check, assert }) {
     const rows = [...F.dishes(), ...F.CHARGES];
     const DT = 1 / 60;
     const worst = { jump: 0, id: null };
-    let leastTravel = Infinity, leastId = null, leastBusy = 1, poorestHand = Infinity;
+    let leastTravel = Infinity, leastId = null, leastBusy = 1, leastAny = 1, poorestHand = Infinity;
     let cooked = 0, piecesSeen = 0;
 
     for (const d of rows) {
@@ -479,15 +485,24 @@ export async function run({ check, assert }) {
       const cook = new F.Cook(d, { say: () => {}, done: () => {} });
       const set = new CookSet(world, counter, cook, prep.id);
       assert(!set.done, `${d.id} built no cook set at a desk that exists`);
+      /* HELD BY REFERENCE, because the last frame of a cook DISPOSES the set —
+       * `parts` is empty by the time the loop ends, which is the whole point
+       * of it, and the meshes are still readable. */
       const pieces = [...Object.values(set.parts), ...set.puffs];
+      const dishMesh = set.parts.dish;
       assert(pieces.length >= 3, `${d.id} put ${pieces.length} pieces on the counter`);
       piecesSeen += pieces.length;
 
       const at = (m) => { m.updateWorldMatrix(true, false); return new THREE.Vector3().setFromMatrixPosition(m.matrixWorld); };
       const prev = new Map(pieces.map((m) => [m, at(m)]));
+      /* A PIECE THAT IS NOT DRAWN CANNOT POP. The steam recycles at the top of
+       * its climb and the dish does not exist until it is made, so both are
+       * hidden across the frame they jump on; counting a delta the player
+       * could not see would be this check inventing its own defect. */
+      const seen = new Map(pieces.map((m) => [m, m.visible]));
       let hL = rig.worldPos('handL', new THREE.Vector3());
       let hR = rig.worldPos('handR', new THREE.Vector3());
-      let travel = 0, handTravel = 0, frames = 0, busy = 0, jump = 0;
+      let travel = 0, handTravel = 0, frames = 0, busy = 0, busyAny = 0, jump = 0;
       /* Per MOVE, so the last clause can ask whether the pan moved where the
        * line said it would. */
       const byMove = new Map();
@@ -497,19 +512,21 @@ export async function run({ check, assert }) {
         frames++;
         let thisFrame = 0;
         for (const m of pieces) {
-          if (!m.visible) continue;
           const p = at(m);
-          const dd = p.distanceTo(prev.get(m));
+          const dd = m.visible && seen.get(m) ? p.distanceTo(prev.get(m)) : 0;
           prev.set(m, p);
+          seen.set(m, m.visible);
           thisFrame += dd;
           if (dd > jump) jump = dd;
         }
         const nL = rig.worldPos('handL', new THREE.Vector3());
         const nR = rig.worldPos('handR', new THREE.Vector3());
-        handTravel += nL.distanceTo(hL) + nR.distanceTo(hR);
+        const hands = nL.distanceTo(hL) + nR.distanceTo(hR);
+        handTravel += hands;
         hL = nL; hR = nR;
         travel += thisFrame;
         if (thisFrame > 0.0001) busy++;
+        if (thisFrame + hands > 0.0001) busyAny++;
         byMove.set(move, (byMove.get(move) || 0) + thisFrame);
       }
       assert(cook.done, `${d.id} never finished`);
@@ -518,20 +535,43 @@ export async function run({ check, assert }) {
        * the one move that crosses the middle, and a bowl that ends up behind
        * the counter is a bowl the cook kept. */
       assert(set.made > 0.98, `${d.id} finished with the dish ${(set.made * 100) | 0}% made`);
-      const dish = at(set.parts.dish);
+      const dish = at(dishMesh);
       const toward = dish.z - DESK.at.z;
       assert(toward < -0.1, `${d.id}'s dish finished ${toward.toFixed(2)} m from the middle of the top, on the cook's side`);
 
       if (travel < leastTravel) { leastTravel = travel; leastId = d.id; }
       if (handTravel < poorestHand) poorestHand = handTravel;
       leastBusy = Math.min(leastBusy, busy / frames);
+      leastAny = Math.min(leastAny, busyAny / frames);
       if (jump > worst.jump) { worst.jump = jump; worst.id = d.id; }
 
       assert(travel > 0.5, `${d.id} moved ${(travel * 1000).toFixed(0)} mm of geometry over ${frames} frames — the stall stood still`);
       assert(handTravel > 0.4, `${d.id} moved the cook's hands ${(handTravel * 1000).toFixed(0)} mm — nobody made it`);
-      assert(busy / frames > 0.75,
-        `${d.id} moved something on only ${busy} of ${frames} frames — a cook is not one busy frame`);
-      assert(jump < 0.45, `${d.id} moved a piece ${(jump * 1000).toFixed(0)} mm in one frame — that is a teleport, not a cook`);
+      /**
+       * SPREAD, AND IT IS TWO BOUNDS BECAUSE ONE OF THE ELEVEN PREPS IS QUIET
+       * ON PURPOSE. `pass` is the kitchen behind #15's hatch — its own line is
+       * *"you can hear more of it than you can see"* — so for 1.8 s of it the
+       * only thing moving is the man at the pass, and a single 75% bound over
+       * the meshes would be a check demanding that a deliberately still step
+       * fidget. So: something the player can see moves on nearly every frame,
+       * counting his hands, which are geometry too — they drive the merged
+       * skin — and the counter itself is working for at least a third of it.
+       */
+      assert(busyAny / frames > 0.9,
+        `${d.id} moved nothing at all on ${frames - busyAny} of ${frames} frames`);
+      assert(busy / frames > 0.35,
+        `${d.id} moved a piece of the stall on only ${busy} of ${frames} frames — a cook is not one busy frame`);
+      /* AND NO FRAME CARRIES THE COOK. Measured across the table the worst
+       * single frame is 1.7% of its own cook's travel; a piece that arrived
+       * in one jump and sat still would be most of it. */
+      assert(jump / travel < 0.08,
+        `${d.id} did ${(jump / travel * 100).toFixed(0)}% of its whole travel in one frame`);
+      /* 150 mm AND NOT 450. The measured worst frame in the whole table is
+       * 105 mm — the droid's cable, easing across the counter — so this is
+       * the real number with headroom rather than a bound nothing could ever
+       * hit. It is what caught the eleven step boundaries that used to cut
+       * from one move straight into the next: 155 to 884 mm, in a frame. */
+      assert(jump < 0.15, `${d.id} moved a piece ${(jump * 1000).toFixed(0)} mm in one frame — that is a teleport, not a cook`);
 
       /* AND THE MOTION IS WHERE THE LINE IS. Every prep has at least one step
        * that does something and the doing steps beat the standing ones. */
@@ -557,7 +597,8 @@ export async function run({ check, assert }) {
     return `${cooked} cooks driven at 1/60 on a real desk and a real skeleton; `
       + `${piecesSeen} pieces built between them; the quietest (${leastId}) still travelled `
       + `${(leastTravel * 1000).toFixed(0)} mm with ${(poorestHand * 1000).toFixed(0)} mm of hand, `
-      + `something moved on ${(leastBusy * 100).toFixed(0)}% of frames and the worst single frame was `
+      + `the stall itself worked on ${(leastBusy * 100).toFixed(0)}% of frames and something moved on `
+      + `${(leastAny * 100).toFixed(0)}% of them; the worst single frame was `
       + `${(worst.jump * 1000).toFixed(0)} mm`;
   });
 
@@ -602,6 +643,13 @@ export async function run({ check, assert }) {
       for (const s of prep.steps) {
         assert(F.MOVES.includes(s.move),
           `${id}.${s.id} moves by '${s.move}', which is not one of the ${F.MOVES.length} moves a stall can make`);
+        /* AND NO STEP MAY SPELL ITSELF LIKE THE SENTINEL. `Cook.step` hands
+         * back the step's id and reserves 'done' for "it is over the counter",
+         * so `PREP.live`'s fourth step — which really was called `done` — ended
+         * every loop driving it three quarters of the way through: live spoo
+         * said four of five lines and never reached anybody's larder. */
+        assert(s.id !== 'done',
+          `${id} has a step called 'done', which is the string Cook.step returns when a cook is OVER`);
         steps++;
       }
     }

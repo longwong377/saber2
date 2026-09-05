@@ -3273,6 +3273,8 @@ export class CookSet {
     this.puffs = [];
     this.geos = [];
     this.made = 0;
+    this.dishZ = undefined;
+    this.dishX = 0;
     this.done = !cook || !this.gear;
     this.keeper = null;
     this.wantYaw = null;
@@ -3360,6 +3362,7 @@ export class CookSet {
     else if (V === 'jar') add('vessel', cylGeo(0.075, 0.08, 0.17, 10), M.glass);
     else if (V === 'tank') add('vessel', cylGeo(0.22, 0.22, 0.27, 12, 1.2, true), M.glass);
     else if (V === 'post') add('vessel', cylGeo(0.10, 0.12, 0.46, 10), M.dark);
+    else if (V === 'bell') add('vessel', cylGeo(0.018, 0.075, 0.075, 10), M.wing);
     if (this.gear.lid) add('lid', cylGeo(0.20, 0.205, 0.03, 12), M.wing);
     const T = this.gear.tool;
     if (T === 'knife') add('tool', slabGeo(0.035, 0.014, 0.26), M.wing);
@@ -3383,7 +3386,30 @@ export class CookSet {
     }
     world.scene.add(g);
     world.statics.push(g);
-    this.place(Food.cookPose(prep, cook.move, 0, 0));
+    this.move = cook.move;
+    this.blend = 1;
+    this.from = null;
+    this.last = Food.cookPose(prep, cook.move, 0, 0);
+    this.place(this.last);
+  }
+
+  /**
+   * The pose to draw this frame: the move's own, eased out of whatever was on
+   * screen when the step changed. See `Food.blendPose` for the measurement
+   * that made this necessary — a cut between two moves is a 155–884 mm jump.
+   */
+  blended(cook, dt) {
+    const raw = Food.cookPose(this.prep, cook.move, cook.within, cook.elapsed);
+    if (cook.move !== this.move) {
+      this.move = cook.move;
+      this.from = this.last;
+      this.blend = this.from ? 0 : 1;
+    }
+    if (this.blend < 1) {
+      this.blend = Math.min(1, this.blend + dt / Food.BLEND);
+      this.last = Food.blendPose(this.from, raw, this.blend);
+    } else this.last = raw;
+    return this.last;
   }
 
   /** A point in the stall's frame, into the world. `y` is above the TOP. */
@@ -3405,8 +3431,12 @@ export class CookSet {
     /* THE ONE CLOCK. The banner's lines and the geometry come out of the same
      * `Cook.step`, so a stall cannot be tossing a pan while the line on screen
      * says he is still reaching under the counter. */
-    const over = cook.step(dt) === 'done';
-    this.place(Food.cookPose(this.prep, cook.move, cook.within, cook.elapsed));
+    /* `cook.done` AND NOT the id `step` hands back: the id is a STEP's name
+     * and one of them used to be spelled 'done' — see PREP.live. The flag is
+     * the only thing that means the sequence is over. */
+    cook.step(dt);
+    const over = cook.done;
+    this.place(this.blended(cook, dt));
     if (over) { this.dispose(); return false; }
     return true;
   }
@@ -3435,7 +3465,17 @@ export class CookSet {
        * that does not make anything returns nothing made, so the monotone is
        * kept here rather than by giving the pose a memory. */
       this.made = Math.max(this.made, p.dish.size);
-      this.at(p.dish.x, p.dish.y + 0.03, p.dish.z, P.dish.position);
+      /* …AND IT DOES NOT COME BACK OVER THE COUNTER EITHER. `serve` runs its
+       * own 0..1 and four of the eleven preps end on TWO steps that both serve
+       * — the thing is set down and then handed over — so a stateless pose
+       * springs the bowl back to the cook's side and slides it out twice: a
+       * measured 468 mm jump on `f-pickle`, the largest single-frame movement
+       * in the whole table. The plate's progress across the top is monotone
+       * for the same reason its size is. */
+      if (this.dishZ === undefined || p.dish.z > this.dishZ) {
+        this.dishZ = p.dish.z; this.dishX = p.dish.x;
+      }
+      this.at(this.dishX, p.dish.y + 0.03, this.dishZ, P.dish.position);
       const s = Math.max(0.001, this.made);
       P.dish.scale.set(s, s, s);
       P.dish.visible = this.made > 0.02;
@@ -3453,7 +3493,15 @@ export class CookSet {
       /* Seeded off the puff's index and the cook's own clock — no die, and
        * two people watching one stall see one column of steam. */
       const ph = (this.cook.elapsed * 0.55 + i / PUFFS) % 1;
-      const s = (0.35 + 0.9 * ph) * p.steam;
+      /* IT DIES BEFORE IT GOES BACK. A puff rising on a sawtooth and recycled
+       * at full size is a 620 mm jump down the column every 1.8 s — measured,
+       * and the one thing in this file a player would read as a bug. The
+       * envelope is zero at both ends of the climb, and the mesh is not drawn
+       * at all while it is nothing, so the wrap happens where nobody is
+       * looking. */
+      const s = (0.35 + 0.9 * ph) * p.steam * Math.sin(Math.PI * ph);
+      m.visible = s > 0.02;
+      if (!m.visible) continue;
       this.at(p.vessel.x + 0.07 * Math.sin(i * 2.4 + ph * 3.1),
         0.16 + ph * 0.62, p.vessel.z + 0.06 * Math.cos(i * 1.7 + ph * 2.6), m.position);
       m.scale.set(s, s, s);

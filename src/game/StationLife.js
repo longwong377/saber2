@@ -261,11 +261,10 @@ const WALK_HEADS = 6;
  * first leg is a radial along ITS OWN bearing — so a seat 2 m off the spine's
  * centreline at r = 53 is 3.2 m off it by the time the walk reaches the ring
  * at r = 85.5, and the spine is 7 m wide. Four metres of scatter keeps the
- * worst case inside the corridor at both ends; `spineAt` holds the same bound
+ * worst case inside the corridor at both ends; `spanAt` holds the same bound
  * from the other side.
  */
 const SPINE_WALK_W = 4;
-const SPINE_WALK_D = 46;
 
 /** How many people are found at each kind of fixture at its busy hour. */
 const WAY_HEADS = {
@@ -322,12 +321,29 @@ export function wayPlacesOn(deck) {
   for (let i = 0; i < RING_WALKS; i++) {
     put(DRUM.ringR, 15 + i * (360 / RING_WALKS), RING_WALK_W, 6, WALK_HEADS, 14, 'walk');
   }
-  for (const deg of DRUM.spines) {
+  /**
+   * ── AND THE SPINES, ON THE PART OF THEM THAT IS ACTUALLY CLEAR ────────
+   *
+   * This used to seat six people at the midpoint of every spine and walk them
+   * its whole length. Nine of the twelve spines have a room across them (see
+   * `spineSpansOn` for the table), so that was people walking through walls on
+   * every deck — never caught, because the trespass clause puts its player on
+   * a RING stretch and never had a spine walker in the sample.
+   *
+   * The stretch is now the span, and its length is the span's: a spine with a
+   * forty-metre clear stub carries people down forty metres of it, and one
+   * with nothing but eleven metres between two rooms carries nobody, because
+   * there is nowhere for them to be going.
+   */
+  for (const sp of spineSpansOn(deck)) {
     /* Deck 40's fourth spine IS #9 The Concourse — a hall with its own census,
      * not a corridor with people passing through it. It is still ROUTED
-     * through (see `spinesOn`); what it does not get is a stretch of its own. */
-    if (deck === 40 && deg === 0) continue;
-    put((DRUM.balcony + DRUM.roomR) / 2, deg, SPINE_WALK_W, SPINE_WALK_D, WALK_HEADS, 14, 'walk');
+     * through (`throughSpines` finds it clear, which it is); what it does not
+     * get is a stretch of its own. */
+    if (deck === 40 && sp.deg === 0) continue;
+    const len = sp.hi - sp.lo;
+    put((sp.lo + sp.hi) / 2, sp.deg, SPINE_WALK_W, Math.max(4, len - 3),
+      WALK_HEADS, 14, 'walk');
   }
   _ways.set(deck, out);
   return out;
@@ -398,40 +414,144 @@ const STAND_R = {
 /** Signed shortest way round, in radians. */
 function wrapPi(a) { return ((a + Math.PI * 3) % (Math.PI * 2)) - Math.PI; }
 
-/** The four spines of a deck, in radians. */
-const _spines = new Map();
-function spinesOn(deck) {
-  let hit = _spines.get(deck);
+/**
+ * ══ AND A SPINE IS NOT A CLEAR CORRIDOR, WHICH THE PLAN DOES NOT SAY ══════
+ *
+ * §3.1 rule 3 declares four radial spines at 0/90/180/270 on every deck, and
+ * `wayPlacesOn` used to seat people on all of them and walk them the length.
+ * MEASURED against the room rectangles — the same yawed boxes `station.mjs`
+ * tests overlap and trespass with — the spines are not clear. A SNAPSHOT of
+ * it, on the gazetteer as it stood when this was written; the derivation below
+ * is live, so the table moves the day a bearing in `PLACES` does and nothing
+ * here has to be kept in step by hand:
+ *
+ *     deck 40 spine  90  #59 The Ascendant [26.6..38.4], #60 The Wheelhouse [65.1..81.0]
+ *     deck 40 spine 180  #7  Arrivals hall [61.2..81.1]
+ *     deck 40 spine 270  #21 Gym [27.0..38.6], #20 The Arena [54.7..62.0]
+ *     deck 44 spine   0  #27 Your cabin [26.0..36.9], #61 Underlift Pit [67.4..76.5]
+ *     deck 44 spine 180  #34 Minbari quarter [60.6..81.7]
+ *     deck 48 spine   0  #51 Droid pool [26.0..37.9], #48 Reactor hall [49.0..81.0]
+ *     deck 48 spine  90  #52 Cargo hold [58.8..70.2]
+ *     deck 48 spine 180  #41 Command / CIC [68.0..81.0]
+ *     deck 48 spine 270  #45 Morgue & memorial [69.2..81.1]
+ *
+ * A room declares a bearing and a width and `layout()` builds it a BOX, and a
+ * wide box at 176° has a corner over 180°. So most of the twelve spines are
+ * blocked somewhere along their length, and the old spine walkers paced
+ * straight through those rooms — silently, because the trespass clause seats
+ * its bodies on a RING stretch and never had a spine walker in the sample.
+ *
+ * NOT FIXED HERE, because the fix is a bearing in `StationPlan.PLACES` and
+ * that table is the gazetteer. What is done here is to stop walking through
+ * it: this derives the part of each spine that IS clear, and nothing walks
+ * anywhere else. A blocked spine keeps the stub that reaches an annulus and
+ * carries people up and down it; a deck with no spine clear END TO END has no
+ * walk between its balcony and its ring at all, which is a true thing about
+ * that deck's plan and is why `pickDest` will not offer one.
+ *
+ * THE SAME RECTANGLES AND THE SAME EXCLUSION `station.mjs` USES: a room the
+ * ring runs THROUGH is a hall you walk down rather than a room you walk into,
+ * so #9 The Concourse — deck 40's fourth spine — is not an obstruction, and
+ * bearing 0 on deck 40 comes out clear because that is what it is.
+ */
+function boxHas(p, x, z) {
+  const dx = x - p.x, dz = z - p.z;
+  const c = Math.cos(p.yaw), sn = Math.sin(p.yaw);
+  return Math.abs(dx * c - dz * sn) <= p.w / 2 && Math.abs(dx * sn + dz * c) <= p.d / 2;
+}
+
+/** A stub shorter than this is not a corridor anybody walks. */
+const SPAN_MIN = 8;
+
+const _spans = new Map();
+function spineSpansOn(deck) {
+  const hit = _spans.get(deck);
+  if (hit) return hit;
+  const rooms = PLACES.filter((p) => p.deck === deck && !p.external && p.band !== 'ring' && p.w
+    && !(p.rIn <= DRUM.ringR && p.rOut >= DRUM.ringR));
+  const out = [];
+  for (const deg of DRUM.spines) {
+    const a = deg * Math.PI / 180;
+    const sn = Math.sin(a), cs = Math.cos(a);
+    /* The clear runs along this spine, at a quarter-metre. */
+    const runs = [];
+    let lo = null;
+    for (let r = BALC_WALK; r <= RING_WALK + 1e-9; r += 0.25) {
+      let blocked = false;
+      for (const p of rooms) if (boxHas(p, r * sn, r * cs)) { blocked = true; break; }
+      if (!blocked) { if (lo === null) lo = r; continue; }
+      if (lo !== null) { runs.push([lo, r - 0.25]); lo = null; }
+    }
+    if (lo !== null) runs.push([lo, RING_WALK]);
+    /* ONLY A RUN THAT REACHES AN ANNULUS IS A WAY ANYWHERE. A clear stretch
+     * in the middle of a spine with a room at each end is a room with no
+     * door: people could stand in it and never leave. */
+    let best = null;
+    for (const [l, h] of runs) {
+      const touchIn = l <= BALC_WALK + 0.3, touchOut = h >= RING_WALK - 0.3;
+      if (!touchIn && !touchOut) continue;
+      if (h - l < SPAN_MIN) continue;
+      const ends = touchIn && touchOut ? 'both' : touchIn ? 'in' : 'out';
+      if (!best || (ends === 'both' && best.ends !== 'both') || (h - l > best.hi - best.lo && best.ends !== 'both')) {
+        best = { a, deg, lo: l, hi: h, ends };
+      }
+    }
+    if (best) out.push(best);
+  }
+  _spans.set(deck, out);
+  return out;
+}
+
+/** The spines of a deck that join the balcony to the ring. */
+const _through = new Map();
+function throughSpines(deck) {
+  let hit = _through.get(deck);
   if (!hit) {
-    hit = DRUM.spines.map((d) => d * Math.PI / 180);
-    _spines.set(deck, hit);
+    hit = spineSpansOn(deck).filter((s) => s.ends === 'both');
+    _through.set(deck, hit);
   }
   return hit;
 }
 
 /**
- * Is this bearing ON a spine — near enough that a radial walk along it stays
- * inside the corridor for its whole length?
+ * The walkable span this position is standing in, or null for a body already
+ * on one of the two annuli.
  *
- * The bound is METRES AT THE WIDE END. A radial line at a bearing `d` off a
- * spine is `d × r` from its centre, which grows with r, so the worst case is
- * at the ring mouth: `d × RING_WALK ≤ spineW/2 − 0.5`. That is what sizes
- * `SPINE_WALK_W` from the other side.
+ * THE BEARING TEST IS IN METRES AT THE WIDE END. A radial line `d` radians off
+ * a spine is `d × r` from its centre and that grows with r, so the worst case
+ * is the ring mouth: `d × RING_WALK ≤ spineW/2 − 0.5`. That is what sizes
+ * `SPINE_WALK_W` from the other side — the scatter a seat is given has to
+ * still be inside the corridor when the walk reaches the far end of it.
  */
-function spineAt(deck, a) {
+function spanAt(deck, a, r) {
   const lim = (DRUM.spineW / 2 - 0.5) / RING_WALK;
-  for (const s of spinesOn(deck)) if (Math.abs(wrapPi(a - s)) <= lim) return s;
+  for (const s of spineSpansOn(deck)) {
+    if (Math.abs(wrapPi(a - s.a)) > lim) continue;
+    if (r >= s.lo - 0.5 && r <= s.hi + 0.5) return s;
+  }
   return null;
 }
 
-/** Which spine makes the shortest crossing between two bearings. */
+/** Which through-spine makes the shortest crossing between two bearings. */
 function bestSpine(deck, a0, a1) {
   let best = null, cost = Infinity;
-  for (const s of spinesOn(deck)) {
-    const c = Math.abs(wrapPi(s - a0)) + Math.abs(wrapPi(a1 - s));
-    if (c < cost) { cost = c; best = s; }
+  for (const s of throughSpines(deck)) {
+    const c = Math.abs(wrapPi(s.a - a0)) + Math.abs(wrapPi(a1 - s.a));
+    if (c < cost) { cost = c; best = s.a; }
   }
-  return best ?? 0;
+  return best;
+}
+
+/** Which annuli a walker standing here can actually reach. */
+function reachFrom(deck, r, a) {
+  const sp = spanAt(deck, a, r);
+  const through = throughSpines(deck).length > 0;
+  if (sp) {
+    if (sp.ends === 'both' || through) return 'both';
+    return sp.ends === 'in' ? 'balcony' : 'ring';
+  }
+  if (through) return 'both';
+  return r > (BALC_WALK + RING_WALK) / 2 ? 'ring' : 'balcony';
 }
 
 /* A leg is `{ arc, r|a, from, to, len }` and nothing else. Pushed only when it
@@ -457,21 +577,27 @@ function radLeg(legs, a, r0, r1) {
  */
 function planRoute(deck, r0, a0, dest, legs) {
   legs.length = 0;
-  const destLvl = STAND_R[dest.on] === STAND_R.ring ? RING_WALK : BALC_WALK;
-  /* STANDING ON A SPINE IS ITSELF A CROSSING. A walker seated on a spine
-   * stretch is mid-band, so "which annulus is it on" has no answer — but its
-   * bearing IS a corridor, so it can simply walk to whichever annulus its
-   * destination is on. Without this a spine walker bound for the ring walked
-   * INWARD to the balcony first and then back out along the same spine. */
-  const mine = spineAt(deck, a0);
-  const lvl0 = mine !== null ? destLvl
+  const destLvl = dest.on === 'ring' ? RING_WALK : BALC_WALK;
+  /* WHICH ANNULUS THIS WALK STARTS FROM. A walker on a spine stub is mid-band,
+   * so "which annulus is it on" has no answer — what it has is an END, and it
+   * walks to that one. A stub clear at both ends can go straight to whichever
+   * the destination is on; without that a spine walker bound for the ring
+   * walked INWARD to the balcony first and back out along the same spine. */
+  const sp = spanAt(deck, a0, r0);
+  const lvl0 = sp
+    ? (sp.ends === 'both' ? destLvl : (sp.ends === 'in' ? BALC_WALK : RING_WALK))
     : (r0 > (BALC_WALK + RING_WALK) / 2 ? RING_WALK : BALC_WALK);
   let a = a0;
   radLeg(legs, a0, r0, lvl0);
   if (lvl0 !== destLvl) {
-    const sp = bestSpine(deck, a0, dest.a);
-    a = arcLeg(legs, lvl0, a, sp);
-    radLeg(legs, sp, lvl0, destLvl);
+    const cross = bestSpine(deck, a0, dest.a);
+    /* NO WAY ACROSS ON THIS DECK. `pickDest` does not offer a destination on
+     * the far annulus when there is no through-spine, so this is the belt to
+     * that brace rather than a case that happens — and it refuses to invent a
+     * route rather than emitting a radial through a room. */
+    if (cross === null) { legs.length = 0; return legs; }
+    a = arcLeg(legs, lvl0, a, cross);
+    radLeg(legs, cross, lvl0, destLvl);
     a = arcLeg(legs, destLvl, a, dest.a);
   } else {
     a = arcLeg(legs, destLvl, a, dest.a);
@@ -538,20 +664,26 @@ function pickDest(deck, hour, body) {
   const list = destsOn(deck);
   if (!list.length) return null;
   const r0 = body.wayR, a0 = body.wayAngle;
+  /* AND ONLY WHERE THIS BODY CAN ACTUALLY GET TO. On a deck whose plan gives
+   * no clear radial between the balcony and the ring — deck 48 is one — the
+   * two annuli are two separate walks, and offering a destination across the
+   * gap would be a route that has to go through a room to exist. */
+  const reach = reachFrom(deck, r0, a0);
   let total = 0;
   for (const d of list) {
     const far = Math.abs(wrapPi(d.a - a0)) * RING_WALK + Math.abs(d.r - r0);
-    d.w = (far >= TRIP.near && far <= TRIP.far && d.id !== body.wayTo)
+    d.w = (far >= TRIP.near && far <= TRIP.far && d.id !== body.wayTo
+      && (reach === 'both' || reach === d.on))
       ? headcount(d.p, hour) + 1 : 0;
     total += d.w;
   }
-  /* NOTHING IN RANGE — take the nearest thing that is not where we are. A
-   * walker with no destination is the defect this whole section is about, so
-   * the fallback is another destination and never `null`. */
+  /* NOTHING IN RANGE — take the nearest reachable thing that is not where we
+   * are. A walker with no destination is the defect this whole section is
+   * about, so the fallback is another destination and never `null`. */
   if (total <= 0) {
     let best = null, cost = Infinity;
     for (const d of list) {
-      if (d.id === body.wayTo) continue;
+      if (d.id === body.wayTo || (reach !== 'both' && reach !== d.on)) continue;
       const far = Math.abs(wrapPi(d.a - a0)) * RING_WALK + Math.abs(d.r - r0);
       if (far > 1 && far < cost) { cost = far; best = d; }
     }
@@ -1060,13 +1192,20 @@ export function primeStationLife(world) {
   const life = world?._stationLife;
   const here = world?._station;
   if (!life || !here || !life.priming) return false;
-  const before = life.live.size;
+  const before = life.spawned;
   const p = world.player?.position;
   reseat(world, here, life, p ? p.x : 0, p ? p.z : 24);
-  /* A re-seat that added nobody has nobody left to add: every candidate
+  /**
+   * A re-seat that BUILT nobody has nobody left to build: every candidate
    * inside the radius is already standing, or the budget is spent. Either way
-   * the prime is over and the pool goes on the walk's own trickle. */
-  if (life.live.size <= before) { life.priming = false; return false; }
+   * the prime is over and the pool goes on the walk's own trickle.
+   *
+   * `life.spawned` and not `life.live.size`, because the same call can drop as
+   * many as it makes — `reseat` culls in the same pass — and a pool that
+   * churned four bodies for four would read as finished when it had not
+   * started. The counter only goes up.
+   */
+  if (life.spawned <= before) { life.priming = false; return false; }
   return true;
 }
 
@@ -1647,12 +1786,19 @@ function stepEvents(world, st, life, dt) {
  */
 const WALK_PACE = 1.35;
 
-/** How far past a walker the player may be before the pool stops paying for
- *  it. A walker's slot key is where it STARTED, so without this a body that
- *  walked a hundred metres away stayed real on the strength of a doorway the
- *  player is standing next to. `DROP_RADIUS`'s own hysteresis, applied to
- *  where the body actually is. */
-const WALK_DROP = DROP_RADIUS + 12;
+/**
+ * How far a walker may get from the player before the pool stops paying for
+ * it — `DROP_RADIUS`, the same distance every other resident is dropped at,
+ * measured against where the BODY is rather than where its slot is.
+ *
+ * There is no hysteresis on it and there must not be: the whole point of the
+ * wider drop radius is that a body on the boundary is not spawned and
+ * despawned every frame, and a walker cannot oscillate across a boundary it is
+ * walking away from. What it does instead is RECYCLE — the slot it left is
+ * inside the live radius, so the next re-seat puts a fresh walker in it, and
+ * the corridor is a flow rather than a fixed cast.
+ */
+const WALK_DROP = DROP_RADIUS;
 
 /**
  * ══ AND SOME OF THEM HAVE AN ANIMAL WITH THEM (V16 §G1) ═══════════════════

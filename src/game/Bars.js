@@ -136,11 +136,12 @@
  * listed in V16 §6 as `#59` and was never built, so half of that sentence was
  * furniture too.
  *
- * `#59 The Ascendant` is the other end: deck 40's inner band at 78°, on the
- * balcony, looking down and across the atrium at #18's door. It is the only
- * bar on the station with a window, the only one that turns anybody away, and
- * an hour in it is worth nearly three times an hour in the Pit. That is the
- * contrast priced rather than described — see `BARS` and `admits`.
+ * `#59 The Ascendant` is the other end: deck 40's inner band at 63°, up on the
+ * balcony BETWEEN the two grimiest rooms on the deck — #14 at 52 and #18 at 76
+ * — looking down over both of them across the void. It is the only bar on the
+ * station with a window, the only one that turns anybody away, and an hour in
+ * it is worth nearly three times an hour in the Pit. That is the contrast
+ * priced rather than described — see `BARS` and `admits`.
  */
 
 import { PLACE } from './StationPlan.js';

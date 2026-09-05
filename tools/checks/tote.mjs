@@ -816,7 +816,7 @@ export async function run({ check, assert }) {
   });
 
 
-  check('tote: the head-to-head is published, it is exact, and reading the form line beats pricing it', () => {
+  check('tote: the head-to-head is published, it is exact, and it pays once the form line is read', () => {
     /**
      * `Spectacle.recordResult` writes `hidden.grudge[w] = clamp(prev + STEP,
      * 0, CAP)` on a bout and this file writes the COUNT of the same events. So
@@ -843,6 +843,7 @@ export async function run({ check, assert }) {
      * number changed.
      */
     const rows = [];
+    const gains = [];
     let pairs = 0, exact = 0;
     for (const venue of ['the-pit', 'the-arena']) {
       clearTote();
@@ -868,8 +869,9 @@ export async function run({ check, assert }) {
        * the result is drawn from — the low-variance reading `_tote-edge.mjs`
        * explains. One reads the card; the other reads the card and prices the
        * grudge on top of it, through the engine's own model. */
+      const diffs = [];
       let plain = 0, priced = 0, n = 0, moved = 0;
-      for (const step of bettingDays(venue, { yardSeed: 5153, from: 500, days: 220 })) {
+      for (const step of bettingDays(venue, { yardSeed: 5153, from: 500, days: 700 })) {
         const race = step.race, board = boardFor(race);
         const price = new Map(board.runners.map((r) => [r.id, r.win]));
         const truth = new Map(winProbabilities(race.card, race.ground, { hidden: true }).map((t) => [t.id, t.p]));
@@ -891,23 +893,41 @@ export async function run({ check, assert }) {
         }, null);
         const a = pick(race.card.entrants.map((e, i) => ({ id: e.id, p: blindP[i] })));
         const b = pick(withCol);
-        plain += truth.get(a.id) * price.get(a.id) - 1;
-        priced += truth.get(b.id) * price.get(b.id) - 1;
+        const pa = truth.get(a.id) * price.get(a.id) - 1;
+        const pb = truth.get(b.id) * price.get(b.id) - 1;
+        plain += pa; priced += pb; diffs.push(pb - pa);
         if (a.id !== b.id) moved++;
         resultOf(race);
         n++;
       }
       assert(moved > n * 0.02,
-        `pricing the head-to-head at ${venue} changed the bet in only ${moved} of ${n} races — the bettor `
-        + 'who is supposed to be worse is not a different bettor at all');
-      assert(priced / n > plain / n + 0.01,
-        `pricing the head-to-head at ${venue} returned ${pct(priced / n)} against ${pct(plain / n)} for ignoring `
-        + 'it — the column this file publishes has stopped paying, which is the state it was in for a year and '
-        + 'the reason `readForm` had to learn to read a form line first');
-      rows.push(`${venue} without the column ${pct(plain / n)}, with it ${pct(priced / n)} over ${n}`);
+        `pricing the head-to-head at ${venue} changed the bet in only ${moved} of ${n} races — the two `
+        + 'bettors are not two bettors at all');
+      /* PAIRED, because both punters ride the same races: the difference has a
+       * far smaller error bar than either return, which is the only way a
+       * bounded check can tell a fifth of a point from nothing. */
+      const m = diffs.reduce((x, y) => x + y, 0) / n;
+      const se = Math.sqrt(diffs.reduce((x, y) => x + (y - m) * (y - m), 0) / (n - 1) / n);
+      gains.push({ venue, m, se });
+      assert(m > -2 * se,
+        `pricing the head-to-head at ${venue} LOST ${pct(-m)} ± ${pct(se)} a bet against ignoring it — the `
+        + 'column this file publishes is back to being a trap, which is the state it was in until `readForm` '
+        + 'learned to read a form line first');
+      rows.push(`${venue} +${pct(m)}±${pct(se)} (${pct(plain / n)} → ${pct(priced / n)} over ${n})`);
     }
     assert(pairs > 400 && exact === pairs,
       `${pairs - exact} of ${pairs} published head-to-heads disagreed with the grudge the sim is carrying`);
+    /* AND ACROSS THE TWO FIGHT ROOMS IT PAYS, BEYOND ITS OWN ERROR BAR. The
+     * Pit carries this: six in a bout and a fortnight of them, so the counts
+     * are thick and the grudge is worth points a bet. The Arena's pair meet
+     * seldom enough that its own gain is a fraction of a point and is reported
+     * rather than asserted on — but it may not be a LOSS, which is the shape
+     * the column had before the form line was read. */
+    const T = gains.reduce((a, g) => a + g.m, 0) / gains.length
+      / (Math.hypot(...gains.map((g) => g.se)) / gains.length);
+    assert(T > 3,
+      `pricing the head-to-head across the two fight rooms was worth ${T.toFixed(1)} standard errors — `
+      + 'that is not more than noise, and a column nobody can price is a column that should not be printed');
     clearTote();
     const book = bookAt('the-pit', 80);
     const met = book.entrants.filter((e) => e.form.beaten && Object.keys(e.form.beaten).length).length;
@@ -1379,16 +1399,31 @@ export async function run({ check, assert }) {
       let day = 0, races = [];
       while (!races.length && day < 60) { races = racesOn(v.id, day); if (!races.length) day++; }
       const race = races[0];
-      const seated = () => [...(world._stationLife?.live?.keys() || [])]
-        .filter((k) => k.startsWith(`${v.place}:`)).length;
+      /**
+       * ── HOW THE SEATS ARE COUNTED, AND WHY IT IS NOT A HEADCOUNT ────────
+       *
+       * `life.live` is keyed `${place}:${slot}` and `reseat` asks for
+       * `headcount(place, hour) + crowd.in` slots in a venue, so the bodies
+       * standing at a slot index AT OR ABOVE the gazetteer's own headcount are
+       * exactly the ones that exist because there is a card on. Counting live
+       * bodies instead measured the POOL: it is 30 headless and the room fills
+       * it either way, so a real 10 → 23 separation read as 28 → 30 and was
+       * two bodies from being a false green.
+       */
+      const extras = () => {
+        const floor = L.headcount(place, st.hour);
+        return [...(world._stationLife?.live?.keys() || [])]
+          .filter((k) => k.startsWith(`${v.place}:`))
+          .filter((k) => +k.slice(k.indexOf(':') + 1) >= floor).length;
+      };
 
       /* ── 1. THE ROOM BETWEEN MEETS. The clock is pinned every frame, because
        * `stepStation` winds it and a check that let it run would be measuring
        * a different hour by the end. */
       const quiet = (() => { for (let h = 0; h < 24; h += 0.25) if (!meetAt(v.id, day, h)) return h; return 4; })();
       st.day = day;
-      for (let i = 0; i < 200; i++) { st.hour = quiet; world.update(1 / 60, idle); }
-      const idleHeads = seated();
+      for (let i = 0; i < 600; i++) { st.hour = quiet; world.update(1 / 60, idle); }
+      const idleHeads = extras();
       const idleIn = st.crowd?.in ?? -1;
       assert(st.crowd, 'the shipped loop left no crowd on the station at all — nothing calls stepCrowd');
       assert(st.crowd.venue === v.id, `standing in #${v.place} the room reads as ${st.crowd.venue}`);
@@ -1408,7 +1443,7 @@ export async function run({ check, assert }) {
         frames++;
         if (st.crowd.swell > peak) peak = st.crowd.swell;
         if (st.crowd.moment) moments.add(st.crowd.moment);
-        heads = Math.max(heads, seated());
+        heads = Math.max(heads, extras());
       }
       const roars = (st.crowd.roars | 0) - before;
 
@@ -1426,17 +1461,17 @@ export async function run({ check, assert }) {
        * them. */
       assert(st.crowd.in > idleIn,
         `the room held ${st.crowd.in} during the race and ${idleIn} between meets`);
-      assert(heads > idleHeads,
-        `${heads} bodies stood in #${v.place} during the race and ${idleHeads} between meets — `
-        + 'the crowd is a number nothing seats');
+      assert(heads > idleHeads * 1.5,
+        `${heads} of the bodies in #${v.place} were there for the card during the race and `
+        + `${idleHeads} between meets — the crowd is a number nothing seats`);
       assert(L.headcount(place, st.hour) < st.crowd.in,
         'the tote crowd is smaller than the gazetteer headcount it is meant to be adding to');
       assert(st.crowd.turned > 0, 'nobody in the room ever turned to look at the race');
 
       out = `${frames} frames at §3.4's rate: ${roars} roars (${[...moments].join(', ')}), peak swell `
         + `${peak.toFixed(3)}, loudest cue gain ${loudest.gain} shout ${loudest.shout} freq ${loudest.freq} Hz; `
-        + `#${v.place} held ${idleHeads} bodies between meets and ${heads} with a card on `
-        + `(${idleIn} → ${st.crowd.in} in the room)`;
+        + `#${v.place} seated ${idleHeads} bodies past its own headcount between meets and ${heads} `
+        + `with a card on (the tote's crowd went ${idleIn} → ${st.crowd.in})`;
     } finally {
       audio.crowd = realCrowd;
       globalThis.fetch = hadFetch;

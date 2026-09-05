@@ -265,7 +265,15 @@ export const PREP = {
       { id: 'order', t: 0.8, move: 'still', say: 'He asks once whether you are sure.' },
       { id: 'lift', t: 1.1, move: 'lidoff', say: 'The lid comes off the tank and the noise out of it changes.' },
       { id: 'still', t: 1.6, move: 'shudder', say: 'It is better if you do not watch this part. He does not hurry it.' },
-      { id: 'done', t: 0.9, move: 'lift', say: 'It stops moving. He waits a moment longer than he needs to.' },
+      /* `gone` AND NOT `done`, AND THAT ONE WORD WAS A DISH NOBODY GOT.
+       * `Cook.step` returns the step's id and reserves the string 'done' for
+       * "it is over the counter" — so a step CALLED done ended every caller's
+       * loop three quarters of the way through the sequence. Measured: live
+       * spoo said four of its five lines, `sink.done` never fired, and the
+       * thing you paid for never reached the larder. The sentinel is the
+       * contract; a step may not spell itself the same way, and `food.mjs`
+       * now refuses one that does. */
+      { id: 'gone', t: 0.9, move: 'lift', say: 'It stops moving. He waits a moment longer than he needs to.' },
     ],
   },
   /**
@@ -320,7 +328,12 @@ export const GEAR = {
   pot: { vessel: 'pot', tool: 'ladle', lid: true, fire: 'burner' },
   steam: { vessel: 'basket', tool: null, lid: true, fire: 'burner' },
   grill: { vessel: 'grate', tool: 'brush', lid: false, fire: 'coals' },
-  pass: { vessel: null, tool: 'paper', lid: false, fire: null },
+  /* THE ONE STALL WITH NOTHING ON IT TO COOK WITH, so what it has is the BELL
+   * — `fixed`, meaning it is furniture the moves leave alone rather than
+   * something he picks up. #15's kitchen is behind the hatch and the whole
+   * point of this prep is that you do not see it; the bell is the half of it
+   * that reaches the counter, and it is what the `ring` step rings. */
+  pass: { vessel: 'bell', fixed: true, tool: 'paper', lid: false, fire: null },
   poured: { vessel: 'bottle', tool: null, lid: false, fire: null },
   cold: { vessel: 'board', tool: 'knife', lid: false, fire: null },
   sealed: { vessel: 'jar', tool: null, lid: false, fire: null },
@@ -578,9 +591,11 @@ export function cookPose(prep, move, u = 0, t = 0) {
     /* He reaches under the counter, or into the tray, and comes up with it. */
     case 'take': {
       const a = smooth(k);
-      p.vessel.y = mix(UNDER, 0.055, a);
+      /* `fixed` gear stays on the counter: the bell on #15's pass does not
+       * rise out of it when he takes the order off the paper. */
+      if (!g.fixed) p.vessel.y = mix(UNDER, 0.055, a);
       p.tool.y = mix(UNDER, 0.10, a);
-      grip(g.vessel ? p.vessel : p.tool, 0.11, 0.05, -0.08);
+      grip(g.vessel && !g.fixed ? p.vessel : p.tool, 0.11, 0.05, -0.08);
       p.lean = 0.06 + 0.40 * (1 - a);
       p.bow = 0.14 + 0.34 * (1 - a);
       break;
@@ -614,10 +629,14 @@ export function cookPose(prep, move, u = 0, t = 0) {
     /* A circle in the pot, three times round. */
     case 'stir': {
       const a = 2 * Math.PI * k * 3;
-      p.tool.x = WORK.x + 0.09 * Math.cos(a);
-      p.tool.z = WORK.z + 0.07 * Math.sin(a);
-      p.tool.y = 0.04;
-      p.tool.tilt = 0.55;
+      /* The circle FADES IN AND OUT of the rest pose — same reason `pour`
+       * arcs: he picks the ladle up, stirs, and puts it back rather than
+       * teleporting it to the rim on the first frame and off it on the last. */
+      const env = Math.sin(Math.PI * k);
+      p.tool.x = mix(p.tool.x, WORK.x + 0.09 * Math.cos(a), env);
+      p.tool.z = mix(p.tool.z, WORK.z + 0.07 * Math.sin(a), env);
+      p.tool.y = mix(p.tool.y, 0.04, env);
+      p.tool.tilt = mix(p.tool.tilt, 0.55, env);
       grip(p.tool, 0.13, 0.19, -0.15);
       p.fire = g.fire ? 0.8 : 0;
       p.steam = 0.75;
@@ -690,10 +709,16 @@ export function cookPose(prep, move, u = 0, t = 0) {
     /* Tipped over the bowl, and the bowl fills as it goes. */
     case 'pour': {
       const a = smooth(k);
-      p.vessel.tilt = 1.15 * Math.sin(Math.PI * a);
-      p.vessel.x = mix(WORK.x, PLATE.x, 0.55 * a);
-      p.vessel.z = mix(WORK.z, PLATE.z, 0.55 * a);
-      p.vessel.y = 0.055 + 0.13 * Math.sin(Math.PI * a);
+      /* OUT AND BACK, not out and stop. Every offset here is on the same
+       * `sin(pi a)` arc as the tilt, so the pan is over the burner again at
+       * the end of the step — which is where the NEXT step's rest pose has it.
+       * A move that ends somewhere its successor does not begin is a 284 mm
+       * jump on the frame between them, measured on `f-noodle` before this. */
+      const arc = Math.sin(Math.PI * a);
+      p.vessel.tilt = 1.15 * arc;
+      p.vessel.x = mix(WORK.x, PLATE.x, 0.55 * arc);
+      p.vessel.z = mix(WORK.z, PLATE.z, 0.55 * arc);
+      p.vessel.y = 0.055 + 0.13 * arc;
       p.dish.x = mix(WORK.x, PLATE.x, 0.5);
       p.dish.z = mix(WORK.z, PLATE.z, 0.5);
       p.dish.size = smooth((k - 0.2) / 0.8);
@@ -716,8 +741,15 @@ export function cookPose(prep, move, u = 0, t = 0) {
     /* The bell on the pass, twice. */
     case 'ring': {
       const ph = k * 2, fr = ph - Math.floor(ph);
-      p.hand.R.x = 0.26; p.hand.R.z = -0.06;
-      p.hand.R.y = 0.05 + 0.20 * Math.sin(Math.PI * fr);
+      const hit = Math.sin(Math.PI * fr);
+      p.hand.R.x = WORK.x + 0.16; p.hand.R.z = WORK.z - 0.04;
+      p.hand.R.y = 0.09 + 0.20 * hit;
+      /* AND THE BELL ANSWERS. It hops and rocks under the hand rather than
+       * the hand passing through a still dome — which is the difference
+       * between "the bell on the pass goes once" being a line and being a
+       * thing that happened. */
+      p.vessel.y = 0.02 + 0.035 * hit * hit;
+      p.vessel.tilt = 0.22 * Math.sin(2 * Math.PI * fr);
       break;
     }
 
@@ -774,6 +806,18 @@ export function cookPose(prep, move, u = 0, t = 0) {
     }
     default: break;
   }
+  /**
+   * AND STEAM COMES OFF HEAT, WHICH IS THE ONE THING NO MOVE KNOWS.
+   *
+   * Every move above says how much steam its own action makes; whether there
+   * is anything to make it is the GEAR's business. Without this line the
+   * droid's charging post — `fire: 'ring'`, a status light and not a flame —
+   * gently steamed for the whole 5.8 s of a charge, and it was the busiest
+   * thing on the stall during the step whose line is "a handshake with the
+   * station bus". A cold prep does not steam either: nothing is done to a jar
+   * of pickle and nothing can come off it.
+   */
+  if (g.fire !== 'burner' && g.fire !== 'coals') p.steam = 0;
   return p;
 }
 
@@ -892,6 +936,39 @@ export class Cook {
     this.done = true;
     this.sink.done?.(this.of);
   }
+}
+
+/**
+ * ══ AND THE JOIN BETWEEN TWO MOVES, WHICH IS WHERE THEY ALL SHOWED ═══════
+ *
+ * `cookPose` is pure and knows nothing about the move before it, so the frame
+ * a step ends on is a hard cut: the pan is over the bowl on one frame and back
+ * on the burner on the next. Measured across the whole table, that is a jump
+ * of 155–884 mm on eleven of the forty-one boundaries — the droid's cable was
+ * the worst of them, crossing the whole counter in a frame, four times.
+ *
+ * Two ways to fix it. Author every move to start and end at the rest pose,
+ * which is forty-one things to keep true and one of them will be wrong the
+ * first time somebody adds a prep; or blend, which is what an animation
+ * system does and is fourteen lines. This is the second one: a short
+ * cross-fade from whatever was on screen into the new move, so a boundary is
+ * a hand moving quickly rather than a hand teleporting.
+ *
+ * It is HERE and not in the renderer for the reason the rest of this section
+ * is here: it is arithmetic on the numbers, `food.mjs` measures the result in
+ * millimetres, and neither needs a mesh to do it.
+ */
+export const BLEND = 0.14;
+
+/** `a` toward `b` by `k`, over every number in a pose. */
+export function blendPose(a, b, k) {
+  if (!a) return b;
+  const out = {};
+  for (const key of Object.keys(b)) {
+    const v = b[key];
+    out[key] = typeof v === 'number' ? a[key] + (v - a[key]) * k : blendPose(a[key], v, k);
+  }
+  return out;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */

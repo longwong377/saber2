@@ -161,35 +161,48 @@ console.log('\n══ A LAP AT THE STICK ══');
   const m = O.sample(0);
   c.position = [m.x, m.y, m.z];
   c.velocity = [0, 0, 0]; c.angularVelocity = [0, 0, 0];
-  let t = 0, tight = Infinity, top = 0, mouseWork = 0, keyFrames = 0, samples = 0;
-  const LOOK = 110, K_P = 260, K_D = 130;
+  let t = 0, tight = Infinity, top = 0, mouseWork = 0, keyFrames = 0, wide = 0;
+  /* A HAND ON IT, and it is a real one: the pilot looks at where the track
+   * goes, works out which way he wants to be accelerating, PUTS THE NOSE ON
+   * THAT and opens the throttle when it is on. Every number below leaves this
+   * loop as a mouse delta and a W key — nothing here touches the craft. */
+  const LEAD = 90, HOLD = 45, CROSS = 0.5, TAU_V = 0.3, K_P = 300, K_D = 150;
+  const aMax = c.maxLinearAccel();
   while (t < 230 && seat.lap < 1 && world._flying) {
-    /* A HAND ON IT: point the nose at the track ahead and open the throttle.
-     * `b` is where the aim point is in the craft's OWN frame, so the two lines
-     * below are the two things a pilot does with a mouse — pull the nose onto
-     * the mark, and stop pulling as it arrives. */
-    const ahead = O.sample(seat.u + LOOK / O.CIRCUIT_LENGTH);
-    const b = c.worldToBody(V.unit([ahead.x - c.position[0], ahead.y - c.position[1], ahead.z - c.position[2]]));
+    const at = seat.u + LEAD / O.CIRCUIT_LENGTH;
+    const aim = O.sample(at);
+    const t0 = O.sample(at - 0.001), t1 = O.sample(at + 0.001);
+    const T = V.unit([t1.x - t0.x, t1.y - t0.y, t1.z - t0.z]);
+    const off = [c.position[0] - aim.x, c.position[1] - aim.y, c.position[2] - aim.z];
+    const along = V.dot(off, T);
+    const lateral = [off[0] - T[0] * along, off[1] - T[1] * along, off[2] - T[2] * along];
+    const want = [T[0] * HOLD - lateral[0] * CROSS, T[1] * HOLD - lateral[1] * CROSS, T[2] * HOLD - lateral[2] * CROSS];
+    const acc = [(want[0] - c.velocity[0]) / TAU_V, (want[1] - c.velocity[1]) / TAU_V, (want[2] - c.velocity[2]) / TAU_V];
+    const need = V.norm(acc);
+    const dir = need > 1e-6 ? V.scale(acc, 1 / need) : T;
+    const b = c.worldToBody(dir);
     const w = c.angularVelocity;
     input.mouse.dx = Math.max(-60, Math.min(60, K_P * b[0] - K_D * w[1]));
     input.mouse.dy = Math.max(-60, Math.min(60, -K_P * b[1] - K_D * w[0]));
     mouseWork += Math.abs(input.mouse.dx) + Math.abs(input.mouse.dy);
-    samples++;
-    input.ax.y = (c.speed < 48 && b[2] > 0.9) ? 1 : 0;
+    input.ax.y = (b[2] > 0.86 && need > 1.5) ? 1 : 0;
     if (input.ax.y) keyFrames++;
     world.update(dt, input); input.end();
     t += dt;
     const [x, y, z] = c.position;
     tight = Math.min(tight, O.clearanceAt({ x, y, z }));
     top = Math.max(top, c.speed);
+    const on = O.sample(seat.u);
+    wide = Math.max(wide, Math.hypot(on.x - x, on.y - y, on.z - z));
   }
+  input.ax.y = 0; input.ax.x = 0; input.mouse.dx = 0; input.mouse.dy = 0;
   console.log(`  lap=${seat.lap} in ${t.toFixed(1)} s — travelled ${(seat.travelled * 100).toFixed(0)}% of a second`);
   console.log(`  the hand did ${Math.round(mouseWork)} px of stick and held the throttle for ${keyFrames} frames`);
-  console.log(`  top speed ${top.toFixed(1)} m/s, tightest clearance ${tight.toFixed(1)} m (Outside.CLEAR ${O.CLEAR})`);
+  console.log(`  top speed ${top.toFixed(1)} m/s, tightest clearance ${tight.toFixed(1)} m (Outside.CLEAR ${O.CLEAR}), widest of the line ${wide.toFixed(0)} m`);
   console.log(`  after the lap: flying=${world._flying} sortie=${world._sortie?.way}/${world._sortie?.phase}`);
   step(60 * 7);
   console.log(`  recovery done: flying=${world._flying} driving=${!!p.driving} sorties=${world._flight.sorties}`);
-  console.log(`  player is at ${p.position.toArray().map(n => n.toFixed(1)).join(', ')} (bay door is `
+  console.log(`  deck ${st.deck}; player is at ${p.position.toArray().map(n => n.toFixed(1)).join(', ')} (bay door is `
     + `${bay.door[0]}, ${floorOf(bay).toFixed(1)}, ${bay.door[1]})`);
   console.log(`  bay parked: ${JSON.stringify(st.bay)}`);
   console.log('  said:', said.slice(-3));

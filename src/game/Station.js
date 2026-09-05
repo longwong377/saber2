@@ -2922,6 +2922,20 @@ function takeSeat(world, st) {
   });
   world._seat = seat;
   world._pilot = null;
+  /**
+   * WHERE YOU WERE STANDING WHEN YOU GOT IN, so that is where you are put down.
+   *
+   * `parkInBay` used to compute the spot from `floorOf(#5)` and it was 46 m
+   * out: the deck's rooms are dressed at `DECK_Y[12]` and the body that walks
+   * about on them is held by the physics somewhere else entirely — measured, a
+   * player teleported to `floorOf(#5)` was back at y = 0 on the next frame.
+   * The height of a floor and the height a man stands at on it are two
+   * different questions and only one of them has an answer in the plan.
+   *
+   * Remembering it is also simply more true: you launched from the bay, and
+   * the bay is where you come back to.
+   */
+  st.well = { x: p.position.x, y: p.position.y, z: p.position.z };
   world.notify?.('COBRA BAY',
     'She is yours. Stick and throttle, Q and E to roll, guard to kill rotation, '
     + 'sprint to kill velocity — V for the cockpit, and the drive key brings you home.');
@@ -2960,7 +2974,9 @@ function parkInBay(world) {
   const p = world.player;
   const place = PLACE.get(5);
   if (!p || !place) return false;
-  p.position.set(place.door[0], floorOf(place) + 0.05, place.door[1]);
+  const w = world._station?.well;
+  if (w) p.position.set(w.x, w.y, w.z);
+  else p.position.set(place.door[0], floorOf(place) + 0.05, place.door[1]);
   p.velocity.set(0, 0, 0);
   p.body?.position?.copy(p.position);
   return true;
@@ -3114,8 +3130,14 @@ function stepSortie(world, st, dt) {
      * drum's radius is the plan's, so the throw off the rim is the station's
      * own and not a constant typed in a flight file. */
     || world._pilot || (world._pilot = new CircuitPilot({ radius: DRUM.R }));
-  const was = pilot.progress;
-  const u = seat ? pilot.progress : pilot.step(dt);
+  /* AND A SEAT NOBODY DROVE THIS FRAME IS FLOWN BY THE STATION. `tick` is set
+   * by `PlayerPilot.update` out of `Player.update` — step 1 of the frame — and
+   * cleared here, five steps later. Anything that drives `stepStation` without
+   * a player's own tick would otherwise leave the craft frozen at the mouth
+   * with `_flying` true, which is finding (2) wearing a different hat. */
+  if (seat && !seat.tick) seat.autoStep(dt);
+  const was = seat ? seat.lastU : pilot.progress;
+  const u = seat ? (seat.tick = false, seat.u) : pilot.step(dt);
   world._orbitU = u;
   /**
    * ── AND THE BAY COMES AND GETS YOU ────────────────────────────────────
@@ -3427,13 +3449,24 @@ const _crowdAt = new THREE.Vector3();
  * Arena — you hear the bowl from the concourse outside its door.
  */
 function venueInEarshot(world, st, px, pz) {
-  const inside = placeUnder(world, px, pz);
-  if (inside && venueAtPlace(inside.id)) return inside;
+  /* THE THREE ROOMS, FOUND ONCE. `st.places` is every place on the deck and
+   * three of them are venues on exactly one deck; re-filtering it every frame
+   * on the forty-odd decks that have none would be the only expensive line in
+   * this function. Re-derived when the deck's places change, which is while
+   * the build is still draining. */
+  if (st.venueRooms === undefined || st.venueRoomsAt !== st.places.size) {
+    st.venueRoomsAt = st.places.size;
+    st.venueRooms = [...st.places.values()].map((r) => r.place).filter((p) => venueAtPlace(p.id));
+  }
+  if (!st.venueRooms.length) return null;
   let best = null, bestD = CROWD_EAR * CROWD_EAR;
-  for (const rec of st.places.values()) {
-    const p = rec.place;
-    if (!venueAtPlace(p.id)) continue;
-    const dx = p.x - px, dz = p.z - pz;
+  for (const p of st.venueRooms) {
+    /* Inside its footprint wins outright — you are IN the room, and a yawed
+     * rectangle is the same two lines `placeUnder` uses. */
+    const dx = px - p.x, dz = pz - p.z;
+    const c = Math.cos(-p.yaw), sn = Math.sin(-p.yaw);
+    const lx = dx * c + dz * sn, lz = -dx * sn + dz * c;
+    if (Math.abs(lx) <= p.w / 2 && Math.abs(lz) <= p.d / 2) return p;
     const d2 = dx * dx + dz * dz;
     if (d2 < bestD) { bestD = d2; best = p; }
   }
@@ -3561,9 +3594,9 @@ const _now = () => (typeof performance !== 'undefined' ? performance.now() : Dat
 /**
  * Finish what `dressStation` put off. See `pending`.
  *
- * A failed job is reported and dropped rather than retried: it has already
- * been taken out of the queue, and a builder that throws every frame for the
- * rest of a visit is worse than the thing it was going to build.
+ * A failed job is reported and taken off the queue rather than retried: a
+ * builder that throws on every frame for the rest of a visit is worse than the
+ * thing it was going to build, and the throw is on the console either way.
  */
 export function drainStationBuild(world, st = world?._station, all = false) {
   if (!st?.pending?.length) return 0;

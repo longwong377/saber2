@@ -331,29 +331,38 @@ export const PLACES = [
    * plate with chain-link over it. The CONTRAST the player asked for needs
    * both ends and only one of them existed, so the sentence was half built.
    *
-   * ── WHERE IT GOES, AND THE BEARING IS THE ARGUMENT ────────────────────
+   * ── WHERE IT GOES: THE BAND IS THE IDEA, THE BEARING IS MEASURED ──────
    *
-   * Deck 40's INNER band, at 78°. Two facts make that the only siting worth
-   * having:
+   * THE BAND. `inner` is the balcony's outer edge — *"the places that want
+   * the void in the window"*. Everything upscale about this room is the view,
+   * and the drum's own atrium is the only view deck 40 has. Every other bar
+   * on the station faces a wall: `#14` is SUNK below the concourse, `#18` is
+   * a lower room with one exit, `#60` is a deep hall with the wheel at the
+   * end of it. This is the first bar on the station with a window, and that
+   * alone is most of what makes it read as expensive.
    *
-   *   THE BAND. `inner` is the balcony's outer edge — *"the places that want
-   *     the void in the window"*. Everything upscale about this room is the
-   *     view, and the drum's own atrium is the only view deck 40 has. Every
-   *     other bar on the station faces a wall: #14 is SUNK below the
-   *     concourse, #18 is a lower room with one exit, #60 is a deep hall with
-   *     the wheel at the end of it. This is the first one with a window.
-   *   THE ANGLE. `#18 The Pit` is on the OUTER wall at 76° and `#60 The
-   *     Wheelhouse` at 89.85°. So the fanciest room on the station stands on
-   *     the balcony looking down and across at the grimiest, on the same
-   *     bearing, forty metres apart: from the Ascendant's window you can see
-   *     the door you are not going in. The two ends of one evening, and the
-   *     player can walk between them without changing deck.
+   * THE BEARING. 63°, and it is the middle of a measured window rather than
+   * a taste. Run `station.mjs`'s own two tests — the separating-axis test on
+   * the yawed rectangles at 0.5 m slack, and the atrium/skin radius clause —
+   * over every bearing on the inner band at every size, and deck 40's front
+   * arc has exactly three windows:
    *
-   * 16 by 12 at r = 32 subtends 28.6° — 63.7° to 92.3° — and the inner band's
-   * next room is `#15 The Fresh Air` at 112 (96° at its near corner), so this
-   * clears it by 3.7° with the whole of the arc back to `#21` empty behind it.
-   * `station.mjs`'s separating-axis test on the yawed rectangles is what
-   * proves that rather than this note.
+   *     w=18 d=12   -178..-144   -66..-53   52..73
+   *     w=16 d=12   -179.8..-141.8   -68.3..-51.3   **50.25 .. 75.25**
+   *     w=14 d=12   -180..-139.8   -70.3..-49.5   48.5..77.25
+   *
+   * The first cut of this row was 16 × 12 at 78 — chosen to sit opposite
+   * `#18 The Pit` at 76 — and it fouled `#15 The Fresh Air` by 1.8 m. 63 is
+   * the middle of the only window on that side, with about twelve degrees of
+   * clear balcony either way.
+   *
+   * AND THE BEARING TURNS OUT TO BE THE BETTER STORY. 63 stands the fanciest
+   * room on the station on the balcony BETWEEN the two grimiest — `#14 The
+   * Long Night` on the outer wall at 52 and `#18 The Pit` at 76 — looking
+   * down over both of them across the void, with `#24`'s security booth out
+   * on the atrium bridge below the window. The two ends of one evening are
+   * thirty metres apart and the player can walk between them without changing
+   * deck, which is what the contrast is FOR.
    *
    * `peak: 23` and `heads: 18`. Later than the cantina (21) and earlier than
    * the Wheelhouse (1): a room people come to after dinner and leave before
@@ -373,7 +382,7 @@ export const PLACES = [
       + 'nobody can place',
     idle: 'the piano runs all evening; the lamps dim by the hour; nobody raises their voice',
     verb: 'take a table — and see who your company has earned in here',
-    band: 'inner', at: 78, w: 16, d: 12, h: 6.2, peak: 23, heads: 18,
+    band: 'inner', at: 63, w: 16, d: 12, h: 6.2, peak: 23, heads: 18,
   },
   {
     id: 19, deck: 40, name: 'Holo-theatre', shape: 'fanauditorium',

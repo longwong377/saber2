@@ -17,10 +17,85 @@
  * last three need the level and are named as such below.
  */
 
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import {
   Starfury, Thruster, auroraThrusters, mountTable, V, BOOM, AFT, RETRO_Z,
 } from '../../src/game/Starfury.js';
+
+/**
+ * ══ AND THE SECOND HALF, WHICH NEEDS A WORLD ══════════════════════════════
+ *
+ * The header above is right that the SPIKE has no scene, and the first check
+ * below still has none. What follows it could not be more different, and it is
+ * there because of what the spike being green for months actually hid:
+ *
+ *   NOBODY FLEW IT. Driven headless through a complete sortie — the press, the
+ *   six phases of `Launch.OUT`, the lap, the recovery — the player's body moved
+ *   **0.703 m** and stayed standing in the launch well. `Starfury.js` was
+ *   perfect and was being flown by an autopilot with the player watching from
+ *   the floor of the bay. Every assertion in the spike passed throughout,
+ *   because every one of them is about arithmetic.
+ *
+ * So the checks after it are about a PLAYER: a seat that moves the body, axes
+ * that move the attitude, a camera that changes, a landing, and a sortie that
+ * ends when the pilot is killed in the middle of it. None of that is knowable
+ * without a station, and all of it is the half the note was asking for.
+ */
+
+/**
+ * A station on a deck, booted through the door the game uses.
+ *
+ * `Levels.js` FIRST, and that is not decoration: it imports `STATION_LEVEL`
+ * out of `Station.js`, so entering that cycle from `Station`'s side hits the
+ * const in its temporal dead zone. Pre-existing, and every suite that boots a
+ * world enters from the world's side and never sees it.
+ */
+async function station(deck) {
+  await import('../../src/game/Levels.js');
+  const { bootWorld } = await import('./_coop.mjs');
+  const { prepareStation } = await import('../../src/game/Station.js');
+  if (!globalThis.__stationFetch) {
+    const root = new URL('../../', import.meta.url);
+    globalThis.__stationFetch = true;
+    globalThis.fetch = async (url) => {
+      const buf = await readFile(new URL(String(url), root));
+      return { ok: true, arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) };
+    };
+  }
+  await prepareStation();
+  const { world } = await bootWorld({
+    level: 'station',
+    settings: { mode: 'station', level: 'station', allies: 0 },
+    onWorld: (w) => { w._stationFloor = deck; },
+  });
+  return world;
+}
+
+/**
+ * An input device a check can actually fly with.
+ *
+ * `_coop.idleInput` answers false to everything, which is right for a world
+ * nobody is playing and useless here: EVERY assertion below is about a key
+ * being pressed. `hit` is the frame's edge set and `held` the level set —
+ * `Input.actHit` is idempotent within a frame by design, so a "one-shot" read
+ * twice must answer twice, and a set is what says that.
+ */
+function stick() {
+  const hit = new Set(), held = new Set(), ax = { x: 0, y: 0 };
+  return {
+    hit, held, ax,
+    act: (id) => held.has(id) || hit.has(id),
+    actHit: (id) => hit.has(id),
+    actDown: (id) => held.has(id) || hit.has(id),
+    moveAxis: (o) => { if (o) { o.x = ax.x; o.y = ax.y; return o; } return { x: ax.x, y: ax.y }; },
+    mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+    delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 },
+    /* The mouse is a PER-FRAME DELTA and the edge set is one frame wide, so
+     * both are cleared here — exactly as `Input.end` does after every real
+     * frame. A check that forgets this holds a flick down for ever. */
+    end() { hit.clear(); this.mouse.dx = 0; this.mouse.dy = 0; },
+  };
+}
 
 export async function run({ check, assert }) {
   const { clocked } = await import('./_shared.mjs');
@@ -42,16 +117,40 @@ export async function run({ check, assert }) {
     const mounts = mountTable();
     const names = Object.keys(manifest.thruster_mounts);
     assert(names.length === 9, `starfury: the manifest declares nine thruster mounts — got ${names.length}`);
-    assert(Object.keys(mounts).length === 9, `starfury: the flight model has nine thrusters — got ${Object.keys(mounts).length}`);
-    let worst = 0, worstName = '';
-    for (const n of names) {
-      const m = manifest.thruster_mounts[n], p = mounts[n];
-      if (!p) { assert(false, `starfury: the model has no thruster called ${n}`); continue; }
-      const d = Math.hypot(m[0] - p[0], m[1] - p[1], m[2] - p[2]);
-      if (d > worst) { worst = d; worstName = n; }
+    /**
+     * ══ NINE MOUNTS, AND MORE THAN NINE NOZZLES ON THEM ══════════════════
+     *
+     * This used to read `Object.keys(mounts).length === 9`, and the identity
+     * it was really asserting was one nozzle per mount — which is not what the
+     * geometry says. `sections` in the same manifest names `rcs_sponson` AND
+     * `rcs_nozzle` separately, because a sponson is a CLUSTER: the two vertical
+     * sponsons carry the roll couple as well as the heave pair (see
+     * `auroraThrusters`, and the measurement that found the airframe had no
+     * roll axis at all).
+     *
+     * So the property is stated as the property: every nozzle stands at one of
+     * the manifest's nine mounts, and none of the nine is empty. A nozzle
+     * floating off the hull and a sponson with nothing on it both fail; a
+     * second nozzle in a sponson does not, because that is what a sponson is.
+     */
+    let worst = 0, worstName = '', orphan = 0;
+    const occupied = new Set();
+    for (const [n, p] of Object.entries(mounts)) {
+      let near = Infinity, at = null;
+      for (const m of names) {
+        const q = manifest.thruster_mounts[m];
+        const d = Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]);
+        if (d < near) { near = d; at = m; }
+      }
+      if (near > 1e-9) { orphan++; }
+      else occupied.add(at);
+      if (near > worst) { worst = near; worstName = n; }
     }
-    assert(worst < 1e-9,
-      `starfury: every mount is where the geometry was built around it — worst ${worstName} off by ${worst.toExponential(2)} m`);
+    assert(orphan === 0 && worst < 1e-9,
+      `starfury: every nozzle stands at one of the manifest's mounts — ${orphan} do not, worst `
+      + `${worstName} off by ${worst.toExponential(2)} m`);
+    assert(occupied.size === 9,
+      `starfury: and all nine mounts carry something — ${9 - occupied.size} are empty`);
 
     /* The frame the manifest states, held: +z forward, +y up, +x starboard. */
     const craft = new Starfury();
@@ -233,6 +332,46 @@ export async function run({ check, assert }) {
     }
 
     /* ════════════════════════════════════════════════════════════════════════
+     *  7b. AND IT CAN ROLL — the sixth axis, which the port did not have
+     * ════════════════════════════════════════════════════════════════════════
+     *
+     * ── THE DEFECT THIS BLOCK EXISTS FOR ────────────────────────────────────
+     *
+     * The nine mounts as ported give the craft ZERO body-z torque: every one of
+     * them has either its position or its thrust on the axis that zeroes
+     * `p.x·F.y − p.y·F.x`. Nothing had noticed, because this suite tested pitch
+     * and yaw and `CircuitPilot` never rolls — and §4's ask is *"six axes"*.
+     * Driven with a stick on it, Q and E moved the craft 0.000 rad/s.
+     *
+     * The bar is a COUPLE and not a shove: a roll that came with a sideways
+     * push would be a nozzle firing across the hull, which is a translation
+     * with a spin in it and not an axis of control.
+     */
+    {
+      const c = new Starfury();
+      const th = c.allocate([0, 0, 0], [0, 0, 0.6]);
+      const [F, T] = c.net(th);
+      assert(Math.abs(T[2]) > 1e4,
+        `starfury: a roll demand makes ${Math.abs(T[2]).toFixed(0)} N·m about the nose`);
+      assert(Math.hypot(F[0], F[1], F[2]) < 1e-6,
+        `starfury: and it is a couple — ${Math.hypot(F[0], F[1], F[2]).toFixed(1)} N of net force with it`);
+      assert(Math.hypot(T[0], T[1]) < 1e-6,
+        'starfury: and it is pure roll — no pitch or yaw rides on it');
+      /* Both ways round, which four nozzles buy and two would not. */
+      const back = c.net(c.allocate([0, 0, 0], [0, 0, -0.6]))[1];
+      assert(Math.sign(back[2]) === -Math.sign(T[2]) && Math.abs(back[2]) > 1e4,
+        'starfury: and it rolls the other way just as hard');
+      /* One second of stick, integrated, so the number is a rate a pilot would
+       * feel rather than a torque nobody can read. */
+      const d = new Starfury();
+      for (let i = 0; i < 60; i++) d.step(1 / 60, d.allocate([0, 0, 0], [0, 0, 0.6]));
+      assert(Math.abs(d.angularVelocity[2]) > 0.3,
+        `starfury: a second of roll stick reaches ${d.angularVelocity[2].toFixed(3)} rad/s`);
+      assert(Math.hypot(...d.velocity) < 1e-9,
+        `starfury: and a second of rolling has moved it ${Math.hypot(...d.velocity).toExponential(1)} m/s sideways`);
+    }
+
+    /* ════════════════════════════════════════════════════════════════════════
      *  8. THE LAUNCH INHERITS THE DRUM'S SPIN
      * ════════════════════════════════════════════════════════════════════════
      *
@@ -259,6 +398,271 @@ export async function run({ check, assert }) {
      * leaving the list looking complete is the point: a check file that quietly
      * covers six of nine clauses is how a gate stops meaning anything.
      */
-    assert(true, 'starfury: launch/land/hull clearance await LEVELS.orbit — §4 puts the spike first, and this is it');
+    /**
+     * ── AND WHAT USED TO BE HERE ─────────────────────────────────────────
+     *
+     * This line read *"launch/land/hull clearance await LEVELS.orbit — §4 puts
+     * the spike first, and this is it"*, and it was honest when it was written
+     * and stopped being honest the day `Outside.js` and `Launch.js` landed. The
+     * three checks below are those three clauses, plus the one nobody had
+     * thought to write down: that a PLAYER is flying it.
+     */
+    assert(true, 'starfury: the spike stands, and the flying is measured below');
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════
+   *  9. SOMEBODY IS IN IT — §4's "board and launch", measured
+   * ════════════════════════════════════════════════════════════════════════
+   *
+   * One boot, three phases, in the order a sortie happens: board and launch,
+   * fly it at the stick, and be killed in the middle of it. One world because
+   * a station boot is the expensive part of this file by two orders of
+   * magnitude, and because the third phase is destructive and must be last.
+   */
+  check('starfury: the player is at the stick — a seat, six axes, two cameras, and a sortie that ends', async () => {
+    const world = await station(12);
+    try {
+      const { PLACE, floorOf } = await import('../../src/game/StationPlan.js');
+      const { CERT } = await import('../../src/game/FlightOps.js');
+      const st = world._station;
+      const p = world.player;
+      const bay = PLACE.get(5);
+      assert(st && st.deck === 12, `the check is standing on deck ${st?.deck}, not 12`);
+
+      /* The cert, signed straight into the cached fold. The LADDER is
+       * `flightops.mjs`'s subject and driving it again here would be that
+       * suite's assertions in this one's file. */
+      world._flight = { v: 1, cert: CERT.map((c) => c.id), gantries: [0, 1, 2], boards: 3, bells: [], sorties: 0 };
+      p.position.set(bay.door[0], floorOf(bay), bay.door[1]);
+      p.body?.position?.copy(p.position);
+
+      const input = stick();
+      const dt = 1 / 60;
+      const step = (n, before) => {
+        for (let i = 0; i < n; i++) { before?.(i); world.update(dt, input); input.end(); }
+      };
+
+      /* ── PHASE 1: BOARD AND LAUNCH ─────────────────────────────────────
+       *
+       * THROUGH THE KEY, not through the hook. `Input.touchHitSet.add('focus')`
+       * is what a hand on the station key is; this is that set, handed to
+       * `world.update` as the frame's device, and everything from
+       * `Player._readInput` down runs exactly as it does in a browser. A check
+       * that called `cobraBay(world, st)` could not see a seat that never
+       * reaches the player.
+       */
+      step(6);
+      const before = p.position.clone();
+      step(1, () => input.hit.add('focus'));
+      assert(world._sortie && world._sortie.way === 'out',
+        'the station key at #5 did not start a launch');
+      step(60 * 9);
+
+      const seat = world._seat;
+      assert(seat, 'nine seconds after the launch there is nobody in the seat');
+      assert(p.driving === seat, "the seat is not on the player's own `driving` field");
+      assert(world._flying, 'the launch never went outside');
+
+      /**
+       * ══ THE BODY MOVES WITH THE SHIP, AND THIS IS THE MEASUREMENT ══════
+       *
+       * A DISPLACEMENT AND NOT A FLAG. Before this lane the sortie set
+       * `world._flying` true and every other statement about it was that flag
+       * read back: the body moved 0.703 m across a whole sortie and stood in
+       * the launch well for thirty-six seconds while a shader said otherwise.
+       * A hundred metres is well under what a nine-second launch covers — the
+       * drum throws it at 29.7 m/s before the throttle is touched — and well
+       * over anything a man on his feet in a bay could do.
+       */
+      const moved = p.position.distanceTo(before);
+      assert(moved > 100, `the player's body moved ${moved.toFixed(1)} m with the ship — it used to move 0.7`);
+      const craftAt = seat.craft.position;
+      assert(Math.hypot(p.position.x - craftAt[0], p.position.y - craftAt[1], p.position.z - craftAt[2]) < 0.01,
+        'the body is not where the craft is');
+      assert(Math.abs(p.velocity.length() - seat.speed) < 0.01,
+        `the body's velocity is ${p.velocity.length().toFixed(1)} against the craft's ${seat.speed.toFixed(1)} m/s`);
+
+      /* ── PHASE 2: THE SIX AXES ─────────────────────────────────────────
+       *
+       * Each from a stopped, level craft, one axis at a time, for one second.
+       * The mouse is re-armed BEFORE every update because it is a per-frame
+       * delta; a check that set it once measured a single frame and read 0.063
+       * rad/s where the answer is 1.886.
+       */
+      const c = seat.craft;
+      const rest = () => { c.velocity = [0, 0, 0]; c.angularVelocity = [0, 0, 0]; c.orientation = [1, 0, 0, 0]; };
+      const axes = {};
+
+      rest(); step(60, () => { input.ax.y = 1; }); input.ax.y = 0;
+      axes.throttle = c.worldToBody(c.velocity)[2];
+      assert(axes.throttle > 15,
+        `THROTTLE: a second of the move key makes ${axes.throttle.toFixed(2)} m/s down the nose`);
+
+      rest(); step(60, () => { input.ax.x = 1; }); input.ax.x = 0;
+      axes.sway = c.worldToBody(c.velocity)[0];
+      assert(axes.sway > 0.2, `SWAY: a second of it makes ${axes.sway.toFixed(2)} m/s across the hull`);
+
+      rest(); input.held.add('jump'); step(60); input.held.delete('jump');
+      axes.heave = c.worldToBody(c.velocity)[1];
+      assert(axes.heave > 0.2, `HEAVE: a second of it makes ${axes.heave.toFixed(2)} m/s up`);
+
+      rest(); input.held.add('rollR'); step(60); input.held.delete('rollR');
+      axes.roll = c.angularVelocity[2];
+      assert(Math.abs(axes.roll) > 0.3, `ROLL: a second of it makes ${axes.roll.toFixed(3)} rad/s about the nose`);
+      assert(Math.hypot(...c.velocity) < 1e-6, 'ROLL: and it does not shove the craft sideways');
+
+      rest(); step(60, () => { input.mouse.dx = 30; });
+      axes.yaw = c.angularVelocity[1];
+      const yawedTo = c.forward;
+      assert(Math.abs(axes.yaw) > 0.5, `YAW: a second of stick makes ${axes.yaw.toFixed(3)} rad/s`);
+      assert(Math.abs(yawedTo[0]) > 0.3, `YAW: and the nose actually swung — it is at (${yawedTo.map((n) => n.toFixed(2)).join(', ')})`);
+
+      rest(); step(60, () => { input.mouse.dy = 30; });
+      axes.pitch = c.angularVelocity[0];
+      const pitchedTo = c.forward;
+      assert(Math.abs(axes.pitch) > 0.5, `PITCH: a second of stick makes ${axes.pitch.toFixed(3)} rad/s`);
+      assert(pitchedTo[1] < -0.3,
+        `PITCH: and screen-down is nose-down — the nose is at (${pitchedTo.map((n) => n.toFixed(2)).join(', ')})`);
+
+      /* SIX, AND THEY ARE SIX DIFFERENT THINGS. A control scheme where two
+       * keys drive one axis reads as six and is five, which is exactly what
+       * roll was before `auroraThrusters` grew its couple. */
+      assert(Object.values(axes).every((v) => Math.abs(v) > 0.2), 'one of the six axes does nothing');
+
+      /* ── THE TWO BRAKES ────────────────────────────────────────────────── */
+      c.angularVelocity = [0.5, -0.35, 0.22];
+      const spun = Math.hypot(...c.angularVelocity);
+      input.held.add('blade'); step(60 * 6); input.held.delete('blade');
+      const stilled = Math.hypot(...c.angularVelocity);
+      assert(stilled < spun * 0.25,
+        `KILL ROTATION: the guard key took ${spun.toFixed(3)} rad/s down to ${stilled.toFixed(3)} in six seconds`);
+
+      rest(); c.velocity = [0, 0, 90];
+      input.held.add('sprint'); step(60 * 8); input.held.delete('sprint');
+      assert(c.speed < 10,
+        `KILL VELOCITY: eight seconds of it took 90 m/s down to ${c.speed.toFixed(1)}`);
+
+      /* ── THE TWO CAMERAS ───────────────────────────────────────────────
+       *
+       * `view` is the key that already toggles `camera.firstPerson` inside
+       * `Player._readInput`'s driving branch, so what is asserted is not that
+       * a boolean flipped — it is that the LENS actually moved from behind the
+       * airframe into the cockpit, measured against where the craft is.
+       */
+      rest(); step(3);
+      const chase = p.camera.pos.distanceTo(p.position);
+      assert(!p.camera.firstPerson, 'a launch does not start in the chase camera');
+      step(1, () => input.hit.add('view'));
+      step(30);
+      const pit = p.camera.pos.distanceTo(p.position);
+      assert(p.camera.firstPerson && pit < 0.5,
+        `COCKPIT: the lens is ${pit.toFixed(2)} m off the airframe`);
+      assert(chase > 8, `CHASE: and the chase lens was ${chase.toFixed(1)} m behind it`);
+      /* AND THE RIG IS BOLTED TO THE NOSE. A camera the ship's attitude does
+       * not steer is a camera in a different vehicle. */
+      c.orientation = [1, 0, 0, 0]; step(2);
+      const yaw0 = p.camera.yaw;
+      step(30, () => { input.mouse.dx = 30; });
+      assert(Math.abs(p.camera.yaw - yaw0) > 0.2,
+        `the camera follows the airframe — it moved ${(p.camera.yaw - yaw0).toFixed(3)} rad with the nose`);
+      step(1, () => input.hit.add('view'));
+
+      /* ── EVERY KEY OF `st.bay` HAS A READER ────────────────────────────
+       *
+       * ══ THE DEFECT THIS ASSERTION EXISTS FOR ════════════════════════
+       *
+       * `Launch.js` drove five numbers into `st.bay` on every frame of every
+       * launch and NOTHING IN THE TREE READ ANY OF THEM. After a flown sortie
+       * the record read `{canopy:1, lights:0, rams:1, shaft:1, scroll:34}` into
+       * a vacuum, and `sortieSink`'s own comment said the four things they
+       * describe "are the room's to draw" while the room drew none of them.
+       *
+       * BOTH HALVES ARE DERIVED. The keys come off the LIVE record a real
+       * launch just built — not a list typed here, which is the way this
+       * assertion would rot the first time a sixth number joined the sink —
+       * and the readers come off a grep of `src/`, with comments stripped,
+       * excluding the file that WRITES them. A field whose only mention is in
+       * its own writer is exactly the state this is looking for.
+       */
+      {
+        const keys = Object.keys(st.bay || {});
+        assert(keys.length >= 4, `the launch built a bay record of ${keys.length} numbers`);
+        const src = new URL('../../src/', import.meta.url);
+        const files = [];
+        const walk = async (dir) => {
+          for (const e of await readdir(dir, { withFileTypes: true })) {
+            const at = new URL(`${e.name}${e.isDirectory() ? '/' : ''}`, dir);
+            if (e.isDirectory()) await walk(at);
+            else if (e.name.endsWith('.js')) files.push(at);
+          }
+        };
+        await walk(src);
+        const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+        const bodies = new Map();
+        for (const f of files) bodies.set(String(f).split('/src/')[1], strip(await readFile(f, 'utf8')));
+        /* The writer is the sink in `Station.js`: a key mentioned only there is
+         * a key with no reader, which is the whole finding. */
+        const orphans = [];
+        for (const k of keys) {
+          const re = new RegExp(`\\bbay\\??\\.${k}\\b`);
+          const readers = [...bodies].filter(([n, t]) => n !== 'game/Station.js' && re.test(t)).map(([n]) => n);
+          if (!readers.length) orphans.push(k);
+        }
+        assert(orphans.length === 0,
+          `${orphans.length} of the launch's numbers are written to nobody: ${orphans.join(', ')} `
+          + '— either the room draws them or the field goes');
+        /* …and the room really is standing there to draw them on. */
+        assert(st.bayRig && st.bayRig.draws > 0,
+          'the Cobra bay dressed no fighter — `starfury.smesh` is decoded on every visit and drawn by nobody');
+      }
+
+      /* ── PHASE 3: KILLED MID-FLIGHT ────────────────────────────────────
+       *
+       * ══ THE DEFECT, MEASURED ════════════════════════════════════════
+       *
+       * With the player killed outside, the sortie froze at `u = 0.332` and
+       * stayed there for **186 simulated seconds**: `world._flying` true,
+       * `_sortie.done` true, `fold.sorties` never written, and no recovery path
+       * of any kind. It could not have had one where it was looking:
+       * `World._checkWipe` sets `over` on the last player down and
+       * `World.update` gated the whole station director off behind it, so the
+       * clock, the ward, the boards and the shelves stopped with the sortie.
+       *
+       * Both halves are asserted, because either one alone is still a stuck
+       * station: the SORTIE must end, and the STATION must be released.
+       */
+      assert(world._flying, 'the third phase needs a craft that is still outside');
+      const sortiesBefore = world._flight.sorties;
+      const hourAtDeath = st.hour;
+      p.die?.('the check');
+      assert(world.over, 'the wipe flag is not set — the phase is not testing what it says');
+      assert(!world._flying,
+        'the player was killed outside and the sortie did not end on the same frame');
+      assert(!world._seat && !p.driving, 'the seat is still occupied by a corpse');
+      assert(world._flight.sorties === sortiesBefore + 1,
+        `the sortie was never filed — fold.sorties is still ${world._flight.sorties}`);
+      assert(st.mine === null, "the tower's board still carries a movement that is not happening");
+      /* AND SOMEWHERE SANE, which is where it was standing when it got in —
+       * not a height computed off the plan. `floorOf(#5)` is where the ROOM is
+       * dressed; measured, a body teleported to it was somewhere else entirely
+       * on the next frame. See `takeSeat`'s note. */
+      const home = p.position.distanceTo(before);
+      assert(home < 3,
+        `the body was left ${home.toFixed(0)} m from where it boarded, at `
+        + `${p.position.toArray().map((n) => n.toFixed(1)).join(', ')}`);
+      assert(Object.values(st.bay).every((v) => v === 0),
+        `the bay was left mid-launch: ${JSON.stringify(st.bay)}`);
+
+      /* AND THE STATION RUNS AFTERWARDS. Ten seconds of clock is 0.083 of an
+       * hour at `tickStationClock`'s rate; anything above nought is the gate
+       * open, and the exact figure is printed so a regression reads as a
+       * number rather than as a boolean. */
+      step(60 * 10);
+      const ran = st.hour - hourAtDeath;
+      assert(ran > 0.05,
+        `the station clock ran ${(ran * 60).toFixed(1)} minutes in the ten seconds after the death — it used to run 0.0`);
+      return `body moved ${moved.toFixed(0)} m at the stick · six axes live · `
+        + `clock +${(ran * 60).toFixed(1)} min after an interrupted sortie`;
+    } finally { world.dispose?.(); }
   });
 }

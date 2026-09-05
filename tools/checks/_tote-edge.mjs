@@ -146,13 +146,14 @@ export function agreesWithBookAt(venueId, day) {
  *  TWO PUNTERS AT ONE WINDOW
  * ══════════════════════════════════════════════════════════════════════════
  *
- *   THE FORM-READER  reads what the window prints — the board, the rating,
- *                    the finishing record and the going the log can be split
- *                    on — through `researchedProbabilities`, which is handed
- *                    no hidden field at all. He backs the runner his reading
- *                    says is the best PRICE, not the one it says is the best
- *                    runner, and he does not bet when nothing on the board is
- *                    worth `MARGIN` more than it is quoted at.
+ *   THE FORM-READER  reads what the window prints and nothing else — the
+ *                    board, the rating, the finishing record, the going the
+ *                    log can be split on and the head-to-head column — through
+ *                    `researchedProbabilities`, which is handed no hidden
+ *                    field at all. He backs the runner his reading says is the
+ *                    best PRICE, not the one it says is the best runner, and
+ *                    he does not bet at all when nothing on the board is worth
+ *                    `MARGIN` more than it is quoted at.
  *
  *   THE PIN          picks a runner off the card at random. Averaged over
  *                    every runner the pin could have landed on rather than

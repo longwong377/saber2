@@ -243,7 +243,7 @@ const FIGHT_HAZARDS = [
  *               winners AND by requiring the model's own top pick to win as
  *               often as it says. It was WIDE in all three rooms and the Pit
  *               was the worst: the model quoted its favourite at 0.494 and he
- *               won 0.528, which is seven points of relative error sold at the
+ *               won 0.528, which is seven per cent of relative error sold at the
  *               window every night. 0.70 / 0.75 / 0.53.
  *
  *   grudge      what a bout's grudge is worth as strength, and it was MISSING
@@ -733,7 +733,7 @@ function survivalFor(S, who) {
  * ── AND IT ONLY PAYS TO PRICE IT ONCE THE FORM LINE IS READ ─────────────
  *
  * The obvious bettor adds the count to the strength, and for a long time this
- * tree recorded that he LOST by it — four and a half points in the Pit — with
+ * tree recorded that he LOST by it — four and a half per cent in the Pit — with
  * the right reason attached: being beaten is not independent of being
  * beatable, so the count is loaded with the weakness that produced it, and
  * adding it on top of a rating that never priced that weakness double-counts.
@@ -743,7 +743,7 @@ function survivalFor(S, who) {
  * `readForm` reading the FORM LINE is what changes it. The finishing record is
  * the weakness, said better and said first, so once it is in the model the
  * count is left carrying only what it really is — the grudge — and pricing it
- * is worth ten points a bet in the Pit over ignoring it. `tools/checks/
+ * is worth seven per cent a bet in the Pit over ignoring it. `tools/checks/
  * tote.mjs` drives both bettors and holds that gap, which is the clause that
  * would go red if the two columns ever started saying the same thing again.
  */
@@ -790,7 +790,7 @@ export function grudgeCarried(card, { published = false } = {}) {
  * is worth nothing in a bout that opponent is not in, so it is a property of
  * the FIELD and not of the entrant. It went missing from the model for exactly
  * that reason and it cost the Pit its calibration: measured, the model's own
- * top pick was quoted at 0.494 and won 0.528, which is seven points of
+ * top pick was quoted at 0.494 and won 0.528, which is seven per cent of
  * relative error handed to anybody backing favourites and nothing whatever to
  * do with reading a form book.
  *

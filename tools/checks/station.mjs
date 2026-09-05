@@ -561,12 +561,30 @@ export async function run({ check, assert, THREE }) {
        * So the player is put where the walking is, on the first open stretch
        * the deck declares, and the world is given a moment to seat it.
        */
-      const { wayPlacesOn, headcount, slotIn, LIVE_RADIUS } = await import('../../src/game/StationLife.js');
+      const { wayPlacesOn, headcount, slotIn, LIVE_RADIUS, primeStationLife } =
+        await import('../../src/game/StationLife.js');
+      /* AT MIDDAY. Everything below is counted against what the deck DECLARES
+       * at an hour, and the declaration is a curve over the day — so the hour
+       * is named rather than left to whatever the boot happened to set. */
+      world._station.hour = 13;
       const ways = wayPlacesOn(40);
       const open = ways.find((p) => p.way === 'walk');
       assert(open, 'deck 40 declares no open walking stretch at all');
       world.player.position.set(open.x, world.player.position.y, open.z);
       world.player.body?.setTransform?.(world.player.position, null);
+      /**
+       * AND THE POOL IS RE-SEATED WHERE HE IS NOW, THROUGH THE GAME'S OWN
+       * DOOR. Every re-seat after the prime builds ONE body — a trickle of two
+       * a second, which is a room populating just ahead of a walk and is right
+       * — so a player teleported across the deck stands in a half-empty
+       * corridor for half a minute and a check that measured there would be
+       * measuring the trickle. `primeStationLife` is the slice `dressStation`
+       * queues and `Station.finishStationBuild` drains in one go for a
+       * screenshot; this is that same call, which is why it is not a poke at
+       * private state.
+       */
+      life.priming = true;
+      for (let i = 0; i < 60 && primeStationLife(world); i++) { /* fill it */ }
       for (let i = 0; i < 600; i++) world.update(1 / 60, idle);
 
       /* ── HOW MANY THE DECK DECLARES WITHIN REACH, AND HOW MANY ARE REAL ──
@@ -611,31 +629,46 @@ export async function run({ check, assert, THREE }) {
       for (const [, b] of life.live) {
         seen.set(b, {
           x: b.position.x, z: b.position.z, lx: b.position.x, lz: b.position.z,
-          path: 0, trips: b.wayTrips | 0, way: b.stationWay || null,
+          path: 0, net: 0, trips: b.wayTrips | 0, way: b.stationWay || null, gone: false,
         });
       }
       assert(seen.size >= 6, `only ${seen.size} residents were up to watch`);
 
-      /* SIXTY SIMULATED SECONDS, the same window the audit used, and the PATH
-       * is accumulated a frame at a time because that is the only way to have
-       * a denominator for the ratio below. */
+      /**
+       * ══ SIXTY SIMULATED SECONDS, AND EACH BODY IS FROZEN WHERE IT LEFT ═══
+       *
+       * The audit's window, and the PATH is accumulated a frame at a time
+       * because that is the only way to have a denominator for the ratio.
+       *
+       * A WALKER DOES NOT LAST THE WHOLE MINUTE, AND THAT IS THE FIX WORKING.
+       * A body is real inside 40 m and dropped at 52; a walk is 1.35 m/s; so a
+       * walker that sets off away from the player is culled somewhere around
+       * forty seconds in and a fresh one is seated in the slot it left — the
+       * corridor is a FLOW. Measured with the first cut of this loop, which
+       * read `life.live` at the end: **0 of 5 walkers survived the minute**,
+       * and the check would have concluded that nobody walked at all.
+       *
+       * So each body's numbers are frozen at the frame it leaves the pool. The
+       * distance it covered before it went is a real distance it covered; what
+       * would not be real is sampling `position` on a disposed body, and that
+       * is exactly what the freeze stops.
+       */
       for (let i = 0; i < 3600; i++) {
         world.update(1 / 60, idle);
         for (const [b, a] of seen) {
+          if (a.gone) continue;
+          if (b.disposed || b.alive === false) { a.gone = true; continue; }
           a.path += Math.hypot(b.position.x - a.lx, b.position.z - a.lz);
           a.lx = b.position.x; a.lz = b.position.z;
+          a.net = Math.hypot(b.position.x - a.x, b.position.z - a.z);
+          a.trips2 = b.wayTrips | 0;
         }
       }
       const walk = [], stopped = [];
       let arrivals = 0;
-      for (const [, b] of life.live) {
-        const a = seen.get(b);
-        if (!a) continue;
-        const row = {
-          net: Math.hypot(b.position.x - a.x, b.position.z - a.z),
-          path: a.path,
-        };
-        if (a.way === 'walk') { walk.push(row); arrivals += (b.wayTrips | 0) - a.trips; }
+      for (const [, a] of seen) {
+        const row = { net: a.net, path: a.path };
+        if (a.way === 'walk') { walk.push(row); arrivals += (a.trips2 | 0) - a.trips; }
         else stopped.push(row.net);
       }
       assert(walk.length >= 2,
@@ -680,12 +713,14 @@ export async function run({ check, assert, THREE }) {
        */
       const { PLACE: TABLE } = await import('../../src/game/StationPlan.js');
       const lost = [];
+      let onFoot = 0;
       for (const [, b] of life.live) {
         if (b.stationWay !== 'walk' || !b.wayR) continue;
+        onFoot++;
         if (!b.wayTo || !TABLE.has(b.wayTo)) lost.push(b.stationName || '?');
       }
       assert(lost.length === 0,
-        `${lost.length} of ${walk.length} people on the open stretches are not going anywhere `
+        `${lost.length} of ${onFoot} people on the open stretches are not going anywhere `
         + `(${lost.slice(0, 4).join(', ')}) — a walk with no destination is a pace`);
       /* AND SOMEBODY GOT THERE. A destination nobody reaches is a heading. */
       assert(arrivals >= 1,
@@ -826,10 +861,19 @@ export async function run({ check, assert, THREE }) {
     const { world, idle } = await station(40);
     try {
       const life = world._stationLife;
-      const { wayPlacesOn } = await import('../../src/game/StationLife.js');
+      const { wayPlacesOn, primeStationLife } = await import('../../src/game/StationLife.js');
+      /* AT MIDDAY, and the hour is named rather than taken: `handlerOf` is a
+       * function of WHO is in a slot and who is in a slot is a function of the
+       * hour, so a check on a clock nobody set would pass or fail on whatever
+       * time the boot happened to leave behind. 13:00 is `CENSUS_HOUR` — the
+       * hour every other count in this file is taken at. */
+      world._station.hour = 13;
       const open = wayPlacesOn(40).find((p) => p.way === 'walk');
       world.player.position.set(open.x, world.player.position.y, open.z);
       world.player.body?.setTransform?.(world.player.position, null);
+      /* The pool, re-seated where he is now — see the clause above. */
+      life.priming = true;
+      for (let i = 0; i < 60 && primeStationLife(world); i++) { /* fill it */ }
       for (let i = 0; i < 900; i++) world.update(1 / 60, idle);
 
       const pairs = [];
@@ -1603,8 +1647,8 @@ export async function run({ check, assert, THREE }) {
      * bound — not a number read off today's run — and at the 23 s the audit
      * reported it is red by a factor of six.
      */
-    const { meterCpu, loadPhrase } = await import('./_cpuclock.mjs');
-    const { bootWorld, run: step } = await import('./_coop.mjs');
+    const { cpuMs, loadPhrase } = await import('./_cpuclock.mjs');
+    const { bootWorld, run: step, idleInput } = await import('./_coop.mjs');
     const { SEAM_QUIET } = await import('../../src/ui/Screens.js');
     const { RIDE } = await import('../../src/game/DeckLift.js');
     const { prepareStation, finishStationBuild } = await import('../../src/game/Station.js');
@@ -1615,7 +1659,20 @@ export async function run({ check, assert, THREE }) {
     const deck = await bootWorld({ level: 'hangar', settings: { mode: 'hangar', level: 'hangar', allies: 0 } });
     /* …AND THE ROOMS, WHICH `main.warmStation` READS WHILE THE DECK IS UP. */
     await prepareStation();
+    /**
+     * THE DECK GOING AWAY IS MEASURED AND PRINTED, AND IT IS NOT ASSERTED.
+     *
+     * `buildWorld` disposes the old world before it builds the new one, so in
+     * the game this is inside the seam too. It is not part of the bound below
+     * because it is not the station's: what it costs is a fact about how much
+     * the FLIGHT DECK built, and a bound here would go red for a change made
+     * two files away with nothing this check could say about it. Printed
+     * instead, beside the number it sits next to, so a deck that doubles its
+     * teardown is visible here on the day it happens.
+     */
+    const dt0 = cpuMs();
     deck.world.dispose?.();
+    const teardown = cpuMs() - dt0;
 
     /**
      * ── AND THE WINDOW IS ROUND THE SYNCHRONOUS BUILD, NOTHING ELSE ──────
@@ -1625,8 +1682,14 @@ export async function run({ check, assert, THREE }) {
      * whatever the other twenty-nine were doing while it was suspended.
      * `World.loadLevel` is `for (const step of this._loadSteps(...)) step.run()`
      * and nothing else: one uninterruptible statement, which is exactly the
-     * interval the player is frozen for. `meterCpu` is `_cpuclock`'s own tool
-     * for this and it puts the method back in the `finally`.
+     * interval the player is frozen for, so a meter round THAT cannot be
+     * charged for anybody else's work.
+     *
+     * `_cpuclock.meterCpu` is not used, for the same reason and one turn
+     * further out: it sums EVERY call through the patched method, and the
+     * peers building their own worlds in the same process go through the same
+     * prototype. The world is identified instead — `onWorld` hands it over
+     * before the build starts — so only this one's build is counted.
      *
      * The game reaches the same list through `loadLevelAsync`, which awaits a
      * frame between the seven stages. That yield does not make the work
@@ -1634,14 +1697,26 @@ export async function run({ check, assert, THREE }) {
      * running (see `Screens.seamMotion`), and the sum of the stages is the
      * same number either way.
      */
-    const sink = {};
-    const undo = meterCpu(World.prototype, 'loadLevel', sink, 'build');
-    let world, idle;
-    try { ({ world, idle } = await station(40)); } finally { undo(); }
+    let mine = null, cpu = 0;
+    const real = World.prototype.loadLevel;
+    World.prototype.loadLevel = function (...a) {
+      const t0 = cpuMs();
+      try { return real.apply(this, a); } finally { if (this === mine) cpu += cpuMs() - t0; }
+    };
+    let world;
     try {
-      const t = { cpu: sink.build };
-      /* THE FROZEN INTERVAL. Everything between the last frame of the deck and
-       * the first frame of the station: `World._loadSteps` end to end. */
+      ({ world } = await bootWorld({
+        level: 'station',
+        settings: { mode: 'station', level: 'station', allies: 0 },
+        onWorld: (w) => { mine = w; w._stationFloor = 40; },
+      }));
+    } finally { World.prototype.loadLevel = real; }
+    const idle = idleInput();
+    try {
+      const t = { cpu };
+      /* THE FROZEN INTERVAL, less the deck's teardown above: `World._loadSteps`
+       * end to end, which is every stage of the build the player waits through
+       * and the only part of the wait this file is the owner of. */
       assert(t.cpu <= SEAM_QUIET * 1000,
         `the seam freezes for ${(t.cpu / 1000).toFixed(2)} s of CPU against Screens.SEAM_QUIET's `
         + `${SEAM_QUIET} s — past that the screen itself starts telling the player the car is `
@@ -1684,7 +1759,8 @@ export async function run({ check, assert, THREE }) {
        * no-op, which is what says the slicing terminates rather than looping. */
       assert(finishStationBuild(world) === 0, 'the deferred queue never empties');
 
-      return `seam ${(t.cpu / 1000).toFixed(2)} s CPU (${await loadPhrase()}) against SEAM_QUIET's `
+      return `seam ${(t.cpu / 1000).toFixed(2)} s CPU + ${(teardown / 1000).toFixed(2)} s `
+        + `putting the deck down (${await loadPhrase()}) against SEAM_QUIET's `
         + `${SEAM_QUIET} s; the rest finished on frame ${done} of the ${frames} the doors take, `
         + `${seated} residents standing`;
     } finally { world.dispose?.(); }

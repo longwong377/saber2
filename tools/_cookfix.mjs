@@ -110,7 +110,9 @@ for (const n of names) {
 console.log(`#   handL    ${((handTotal.L - hmax) * 1000).toFixed(1).padStart(9)}  (first frame's ${(hmax * 1000).toFixed(0)} mm teleport taken off)`);
 console.log(`#   handR    ${((handTotal.R - hmax) * 1000).toFixed(1).padStart(9)}`);
 
-/* ── WHAT IT COSTS. Baseline first, then the same world with a cook on it. */
+/* ── WHAT IT COSTS. Baseline, then the same world with one long cook on it,
+ *    with the build of the set measured separately so the steady frame is a
+ *    steady frame. */
 const bench = (label, n, fn) => {
   for (let i = 0; i < 30; i++) fn();
   const t0 = process.cpuUsage();
@@ -120,22 +122,23 @@ const bench = (label, n, fn) => {
   console.log(`# ${label}: ${ms.toFixed(4)} ms/frame over ${n}`);
   return ms;
 };
-const A = bench('world.update, no cook  ', 600, () => world.update(dt, idle));
-let live = null;
-const fresh = () => {
-  const ck = new Food.Cook(row, { say: () => {}, done: () => {} });
-  return new CookSet(world, counter, ck, Food.prepOf(row).id);
-};
-live = fresh();
-world._cook = live;
-const B = bench('world.update, cooking  ', 600, () => {
-  if (!world._cook) { world._cook = fresh(); }
+const mk = () => new CookSet(world, counter, new Food.Cook(row, { say: () => {}, done: () => {} }), Food.prepOf(row).id);
+const A = bench('world.update, no cook  ', 400, () => world.update(dt, idle));
+/* one set, never allowed to finish, so this is the STEADY cost and not the
+ * build */
+const held = mk();
+world._cook = held;
+const B = bench('world.update, cooking  ', 400, () => {
+  held.done = false; held.cook.done = false;
+  if (held.cook.i >= held.cook.steps.length - 1) { held.cook.i = 0; held.cook.t = 0; held.cook._said = -1; }
+  world._cook = held;
   world.update(dt, idle);
 });
-world._cook?.dispose();
+held.dispose();
 world._cook = null;
-console.log(`# the cook costs ${((B - A) * 1000).toFixed(1)} us/frame (${(B - A).toFixed(4)} ms)`);
-const set2 = fresh();
-const C = bench('CookSet.step alone     ', 2000, () => { if (set2.done) { set2.done = false; set2.cook.done = false; set2.cook.i = 0; set2.cook.t = 0; } set2.step(dt); });
-set2.dispose();
-console.log(`# CookSet.step alone: ${(C * 1000).toFixed(1)} us/frame`);
+console.log(`# the cook costs ${((B - A) * 1000).toFixed(0)} us on a steady frame`);
+const t0 = process.cpuUsage();
+const N = 40;
+for (let i = 0; i < N; i++) { const s2 = mk(); s2.dispose(); }
+const cb = process.cpuUsage(t0);
+console.log(`# building and disposing one set: ${((cb.user + cb.system) / 1000 / N).toFixed(2)} ms, once per order`);
