@@ -5175,6 +5175,22 @@ if (STATION_ENABLED) {
     { n: 40, get label() { return `${stationName()} · Concourse`; }, level: 'station', deck: 40 },
     { n: 44, get label() { return `${stationName()} · Living deck`; }, level: 'station', deck: 44 },
     { n: 48, get label() { return `${stationName()} · Working deck`; }, level: 'station', deck: 48 },
+    /**
+     * ── AND THE DOME, WHICH WAS THE ONE ROOM WITH A VERB AND NO WAY IN ────
+     *
+     * `#54 Observation dome` is on deck 60 — *"the best seat"*, and the room
+     * V16 §A1 nominates for watching the jump from — and no floor stopped
+     * there. Two hostile passes named it: "1 places are on a deck the lift
+     * does not stop at" and "the lift reaches 5 station decks and the
+     * gazetteer has rooms on 6".
+     *
+     * `SHAFTS.atrium` has declared `decks: [40, 44, 48, 60]` since the drum
+     * landed, so the shaft was always there; this list is the table that never
+     * learnt it, exactly as it had never learnt 12 and 32. It rides the ATRIUM
+     * rather than the flight shaft because that is the one the gazetteer gives
+     * it and the only one that reaches above the working deck.
+     */
+    { n: 60, get label() { return `${stationName()} · Observation`; }, level: 'station', deck: 60, shaft: 'atrium' },
   ]);
 }
 

@@ -250,9 +250,62 @@ export async function run({ check, assert, near }) {
         seen.add(who.name); species.add(who.species);
       }
     }
-    /* SEEDED ON (place, day, seat), so the three seats differ TODAY even
-     * though `occupant` does not yet reroll by the day — see the note over
-     * `opponentAt`. A table of one person three times is not a table. */
+    /**
+     * ══ AND THE PERSON IN THE SEAT IS THE PERSON IN THE ROOM, ON EVERY DAY ═
+     *
+     * The paragraph above this check is the claim — *"the face across the
+     * table is somebody you can also walk up to"* — and it was FALSE on every
+     * day but 0. `opponentAt` chose the slot on `(place, day, seat)` and then
+     * read the body out of `occupant(place, slot)` with **no day**, which
+     * `occupant` defaults to 0. Its neighbour `Pits.handlersOn` had already
+     * been repaired to pass `{ day }`; the same fix landed in one file and not
+     * the other. Measured on the shipped build: day 1 seated *Mateo Silva* at
+     * sabacc while the body standing in that slot was *Nadia Cole*, day 2
+     * *Jeffrey Chowdhury* against *Susan Franklin*.
+     *
+     * It did not bite only because `StationSave.stationDay` was structurally
+     * stuck at 0 for every player, so day 0 was the only day the game ever
+     * had. This clause is what makes that impossible to reintroduce: it asks
+     * the ROSTER who is in the slot the seat chose, with the same day, and
+     * requires the two to be the same person by name, species and seed. It
+     * fails on every day but 0 without the `{ day }` argument.
+     *
+     * The pool hands `occupant` an hour, a headcount and the player's company
+     * as well; none of them is passed here because all three are read only by
+     * `Bars.barman`, which answers null for every room that is not one of the
+     * three bars, and #60 is not one. The clause below proves that by asking
+     * with them and without them and requiring the same answer.
+     */
+    const L = await import('../../src/game/StationLife.js');
+    const { PLACE } = await import('../../src/game/StationPlan.js');
+    const hall = PLACE.get(C.WHEELHOUSE);
+    const strangers = [];
+    for (let day = 0; day < 30; day++) {
+      for (let seat = 1; seat <= 3; seat++) {
+        const w = C.opponentAt(C.WHEELHOUSE, day, seat);
+        const body = L.occupant(hall, w.slot, { day });
+        if (body.name !== w.name || body.species !== w.species || body.seed !== w.seed) {
+          strangers.push(`day ${day} seat ${seat}: the table says ${w.name} (${w.species}) and `
+            + `slot ${w.slot} of the room holds ${body.name} (${body.species})`);
+        }
+        /* The pool's full `opts` on the same slot must not move the answer in
+         * this room, or the body you walk up to differs from the one the seat
+         * named for a reason nothing in the panel could ever show. */
+        const asPool = L.occupant(hall, w.slot,
+          { day, hour: hall.peak, heads: L.headcount(hall, hall.peak), company: null });
+        if (asPool.name !== body.name) {
+          strangers.push(`day ${day} seat ${seat}: the pool seats ${asPool.name} in slot ${w.slot} `
+            + `and the table reads ${body.name}`);
+        }
+      }
+    }
+    assert(strangers.length === 0,
+      `${strangers.length} of 90 seatings put somebody at the table who is not in the room:\n      `
+      + strangers.slice(0, 4).join('\n      '));
+
+    /* SEEDED ON (place, day, seat), so the three seats differ TODAY. Now that
+     * `occupant` rerolls by the day as well, both halves turn over. A table of
+     * one person three times is not a table. */
     const today = [1, 2, 3].map((s) => C.opponentAt(C.WHEELHOUSE, 0, s).slot);
     assert(new Set(today).size >= 2, `all three seats drew slot ${today[0]} — the seat seed is not doing anything`);
     assert(seen.size >= 3, `only ${seen.size} distinct people across 90 seatings`);
@@ -280,6 +333,7 @@ export async function run({ check, assert, near }) {
     const half = C.sabaccTable(60, 7, 2, ['draw']);
     assert(!half.done && half.result === null && half.can.length === 3,
       'a hand with one verb in it is showing a showdown it has not played to');
-    return `${seen.size} people, ${species.size} species over 90 seatings; push ${lo.toFixed(1)}..${hi.toFixed(1)}`;
+    return `${seen.size} people, ${species.size} species over 90 seatings, every one of them the body `
+      + `standing in that slot; push ${lo.toFixed(1)}..${hi.toFixed(1)}`;
   });
 }

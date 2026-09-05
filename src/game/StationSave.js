@@ -73,6 +73,47 @@ function blank() {
     name: DEFAULT_NAME,
     /** §3.4's clock, so a return visit is later in the same day. */
     hour: 9,
+    /**
+     * ── HOW MANY MIDNIGHTS THIS STATION HAS CROSSED ────────────────────────
+     *
+     * IT IS A STORED COUNTER AND NOT A DERIVATION, and that is the whole
+     * repair. `stationDay` used to compute `Math.floor(hour / 24) +
+     * seen.length` — and `hour` is the only thing this file stores, wrapped
+     * into [0, 24) by `setStationHour` on every write, so `floor(h / 24)` was
+     * structurally 0; `seen` has one writer, `markSeen`, which has no callers
+     * anywhere in `src/` or `tools/`, so it was structurally 0 too. Measured
+     * in node before this field existed: after +10, +24, +100, +500 and +1000
+     * station hours — 41 in-game days, some 33 real hours of play at §3.4's
+     * rate — `stationDay()` answered 0, 0, 0, 0, 0. In the live build, 80
+     * station hours on deck 40 moved `st.day` 0 → 0 and the clothier's shelf
+     * came back byte-identical.
+     *
+     * Everything V16 rerolls is seeded off that number: the shop shelves, the
+     * keeper behind each counter, the residents' faces, the job board, the
+     * pit's handler card, the tote programme, the casino seats, the bar's
+     * leave roll. Six files thread `day` correctly and all six were being fed
+     * a constant, so *"the shops don't always have the same things"* and
+     * *"the same shop owner doesnt always look the same"* were false for every
+     * player who has ever played it.
+     *
+     * A COUNTER, BECAUSE THE HOUR CANNOT CARRY IT. The wrap is not optional —
+     * the clock is a 24-hour wall clock and every reader wants 0..24 — so the
+     * midnight is an EVENT, and an event that is not recorded when it happens
+     * is gone. `setStationHour` folds whole days out of what it is handed and
+     * `Station.tickStationClock` routes its wrap through that same door, so
+     * there is one place a day is counted.
+     *
+     * IT IS IN THIS FOLD AND NOT A KEY OF ITS OWN, for the reason written over
+     * `flight` above: `session.mjs` counts the durable writers in this tree and
+     * refuses a fourth. `saber.station.v1` already persists, which is also why
+     * the day survives a reload — *"the same day for everyone, and it changes
+     * tomorrow"* is worth nothing if closing the tab puts it back to Monday.
+     *
+     * AND IT ONLY EVER GOES UP. Every writer below is a `+=` behind a `> 0`
+     * guard, so a negative hour, a NaN, a clock set backwards by a screen or a
+     * fold written by an older build cannot un-happen a day the player lived.
+     */
+    day: 0,
     /** §11's consequence. Falls when you hurt a resident; the kiosks read it. */
     standing: 0,
     /** Which places you have walked into, for §14's "the first visit". */
@@ -166,14 +207,50 @@ export function stationHour() { return read().hour; }
  */
 export function stationDay(hour = null) {
   const s = read();
-  const h = Number.isFinite(hour) ? hour : s.hour;
-  return Math.floor((h || 0) / 24) + (s.seen?.length | 0);
+  /* THE HOUR ARGUMENT IS NOT PART OF THE ANSWER ANY MORE, and it is still in
+   * the signature on purpose: six call sites hand in `st.hour` so that the
+   * room they are dressing and the fold agree to the digit, and the way to
+   * keep that promise is for every one of them to get the SAME number back.
+   * The old body derived the day FROM the hour — `Math.floor(h / 24)` — which
+   * is why it never moved: the hour it was handed had already been wrapped
+   * into [0, 24) by the two writers below, so the quotient was always 0. The
+   * day is now counted where midnight actually happens; see `day` in
+   * `blank()`. A caller that passes an hour gets today, which is what it
+   * wanted and what it never got. */
+  void hour;
+  return s.day | 0;
 }
+
+/**
+ * ── THE HOUR, AND THE MIDNIGHTS IT WAS THROWING AWAY ──────────────────────
+ *
+ * This wrapped and stored, full stop, so `passStationHours(30)` — a long
+ * mission — moved the clock from 09:00 to 15:00 and lost the night in between.
+ * The fold is the only thing that knows how many whole days went past, because
+ * it is the only thing that sees the unwrapped number, so this is where they
+ * are counted.
+ *
+ * ONE DOOR, AND ONLY THIS ONE. `tickStationClock` is the frame writer and it
+ * wraps `st.hour` in place, so it hands its unwrapped hour through HERE rather
+ * than getting a midnight-counter of its own — a second writer of the day is
+ * two answers to what day it is, which is the failure the day was centralised
+ * to end, and `markSeen` is this file's own standing reminder of what an
+ * export with no callers is worth.
+ *
+ * WHOLE DAYS ONLY, AND ONLY FORWARD. `Math.floor(raw / 24)` on a negative is
+ * negative, and a screen that set the clock back — `medbay.mjs` drives 23:00
+ * then 01:00 to test the night — must not un-count a day either. Both are the
+ * one `rolled > 0` guard.
+ */
 export function setStationHour(h) {
   const s = read();
-  s.hour = ((Number(h) || 0) % 24 + 24) % 24;
+  const raw = Number(h) || 0;
+  const rolled = Math.floor(raw / 24);
+  if (rolled > 0) s.day = (s.day | 0) + rolled;
+  s.hour = ((raw % 24) + 24) % 24;
   return write(s).hour;
 }
+
 
 /**
  * ══ TIME PASSES WHILE YOU ARE AWAY ════════════════════════════════════════
@@ -190,6 +267,13 @@ export function setStationHour(h) {
  * seconds it took, so coming home from a mission has moved the wall clock by
  * what the mission cost — five to ten hours for a real run, which is most of a
  * tank and exactly the sentence.
+ *
+ * AND IT IS WHERE A DAY ACTUALLY TURNS OVER, which is the other half of the
+ * repair. A run is five to ten station hours, so two or three of them cross a
+ * midnight; `setStationHour` is handed the UNWRAPPED sum and folds the whole
+ * days out of it, so coming home from a long mission is coming home tomorrow —
+ * new shelves, new faces behind the counters, a new job board. Before this the
+ * sum was wrapped and the midnight discarded, and the day was 0 for ever.
  *
  * IT IS HOURS AND NOT A WALL CLOCK, deliberately. Reading `Date.now()` would
  * let a player mend a company by closing the tab for a week, and would put a

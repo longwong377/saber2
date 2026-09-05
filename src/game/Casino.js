@@ -88,13 +88,29 @@ function hashOf(s) {
  * slot `i` of a room — so an opponent is a slot index and nothing more.
  *
  * SEEDED ON (place, day, seat), and the middle term is the one that matters.
- * `occupant` is seeded on `p{id}s{i}` alone today, so the same slot is the
- * same person every day — the audit found that residents do NOT reroll by the
- * day and it is being fixed elsewhere. Seeding the SLOT CHOICE on the day
- * means this file is already asking a different question tomorrow, so the
- * three faces at the table start turning over the moment that fix lands and
- * nothing here has to change. A seat seeded on the place alone would have
- * been a permanent house, which is the opposite of what was asked for.
+ * Seeding the SLOT CHOICE on the day means this file asks a different question
+ * tomorrow; a seat seeded on the place alone would have been a permanent
+ * house, which is the opposite of what was asked for.
+ *
+ * ── AND THE DAY HAS TO REACH `occupant` TOO, NOT JUST THE SLOT CHOICE ─────
+ *
+ * This called `occupant(place, slot)` with no day at all while its neighbour
+ * `Pits.handlersOn` was repaired to pass `{ day }` — the same fix, landed in
+ * one file and not the other. `occupant` defaults a missing day to 0, so the
+ * slot was chosen on today and the PERSON in it was read out of day 0's
+ * roster. That makes the sentence three lines up — "an opponent is somebody
+ * you can also walk up to" — false on every day but the first. Measured on the
+ * shipped build with the day made real: day 1 seated *Mateo Silva* at sabacc
+ * while the body standing in that slot was *Nadia Cole*; day 2 was *Jeffrey
+ * Chowdhury* against *Susan Franklin*. It did not bite only because the day
+ * was stuck at 0 for everybody; the moment `StationSave.stationDay` started
+ * counting midnights it would have.
+ *
+ * NOTHING ELSE OF THE POOL'S `opts` IS HANDED IN, deliberately: `hour`, `heads`
+ * and `company` exist for `Bars.barman`, which answers null for every room
+ * that is not one of the three bars, and the wheelhouse is not one. The seat
+ * has to be stable for a whole day — you can leave the panel and come back —
+ * so an hour in this seed would reroll the table under the player.
  */
 export function opponentAt(placeId, day = 0, seat = 0) {
   const place = PLACE.get(placeId);
@@ -104,7 +120,7 @@ export function opponentAt(placeId, day = 0, seat = 0) {
    * can also walk up to. Never zero: a table needs a dealer even at noon. */
   const n = Math.max(1, headcount(place, place.peak ?? 13));
   const slot = hashOf(`seat:${placeId}:${day | 0}:${seat | 0}`) % n;
-  const res = occupant(place, slot);
+  const res = occupant(place, slot, { day: day | 0 });
   if (!res) return null;
   return {
     seat: seat | 0, slot,

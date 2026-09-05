@@ -704,7 +704,7 @@ export async function run({ check, assert, THREE }) {
   /* ════════════════════════════════════════════════════════════════════════ */
 
   check('station: every place is reachable on foot from a lift', async () => {
-    const { PLACES, SHAFTS, DRUM, DECK_Y } = await import('../../src/game/StationPlan.js');
+    const { PLACES, DRUM, DECK_Y } = await import('../../src/game/StationPlan.js');
     /**
      * ══ THE WALK ════════════════════════════════════════════════════════
      *
@@ -716,11 +716,67 @@ export async function run({ check, assert, THREE }) {
      * its door. What this asserts is that every place's door actually lands
      * on one of those three, because a room whose door opens onto structure
      * is a room you cannot get into and nothing else would say so.
+     *
+     * ══ AND IT USED TO ASK THE WRONG TABLE, AND SKIP THE ROOMS IT MATTERED
+     *    MOST FOR ═══════════════════════════════════════════════════════
+     *
+     * Two defects in six lines, and together they made this check assert the
+     * bug rather than catch it.
+     *
+     * IT ASKED `StationPlan.SHAFTS`, which is the plan's DECLARATION of which
+     * shaft passes which deck — a comment with a data type. What the player
+     * actually rides is `DeckLift.liftFloors()`, a list `Levels.js` hands down
+     * at module scope, and the two have never been checked against each other.
+     * `SHAFTS.atrium` has said `decks: [40, 44, 48, 60]` since the plan was
+     * written; the floor list has never had a deck-60 row, so **#54 the
+     * Observation dome — the "best seat", the room V16 §A1 nominates for
+     * watching the warp from outside — has never been reachable by any means
+     * in the shipped game**, and this check said it was. Measured: `SHAFTS`
+     * serves decks 12, 32, 40, 44, 48, 60; `liftFloors()` stops at 12, 32, 40,
+     * 44, 48. One deck, one room, twenty residents, no door.
+     *
+     * AND IT SKIPPED `deck32`/`deck12` OUTRIGHT — the `continue` was meant to
+     * excuse those bands from the DOOR geometry, which is fair (they are the
+     * hangar's frame and have no ring), but it took the lift clause with it.
+     * So the five §7 flight-ops rooms were exempt from the one test that would
+     * have found them unreachable, which is exactly the defect `Levels.js`'s
+     * own header records having shipped: "five rooms and a traffic board no
+     * player could reach", green 15/15 the whole time.
+     *
+     * SO: the lift clause runs on EVERY place and asks `liftFloors()`; the
+     * door clause runs on the drum's three decks and is gated BY DECK, not by
+     * band, so a new room cannot inherit an exemption by choosing a band.
      */
+    /* The floor list is installed by `Levels.js` at module scope behind
+     * `STATION_ENABLED`; read without importing it first, `liftFloors()` is
+     * `DeckLift`'s one-row `[MENU_FLOOR]` default and this whole check would
+     * pass or fail on import order. */
+    await import('../../src/game/Levels.js');
+    const { liftFloors } = await import('../../src/game/DeckLift.js');
+    const floors = liftFloors().filter((f) => f.deck != null);
+    const served = new Set(floors.map((f) => f.deck));
+    assert(served.size >= 1, 'liftFloors() offers no station deck at all — Levels.js never installed the list');
+
+    /* The drum IS decks 40/44/48 — ring, balcony, four spines. 12 and 32 are
+     * the hangar's own frame and 60 is one room on the axis with the lift
+     * opening straight into it; none of the three has a ring to stand a door
+     * on, so the geometry below cannot be asked of them. Named by deck so the
+     * exemption is a fact about the hull and not a spelling of `band`. */
+    const DRUM_DECKS = new Set([40, 44, 48]);
+
     const unreachable = [];
+    const offTheLift = [];
     for (const p of PLACES) {
-      if (p.external || p.band === 'ring') continue;
-      if (p.band === 'deck32' || p.band === 'deck12') continue;   // the hangar's own frame
+      /* `external` is #1 the flight bay and #55 the outside: one is built by
+       * `Hangar.js` and the other is a level, and neither is a room with a
+       * door. Everything else in the gazetteer is tested, including the bands
+       * that used to `continue` past this. */
+      if (p.external) continue;
+      if (!served.has(p.deck)) {
+        offTheLift.push(`#${p.id} ${p.name} is on deck ${p.deck}, and the lift's floors are `
+          + `${[...served].sort((a, b) => a - b).join(', ')}`);
+      }
+      if (!DRUM_DECKS.has(p.deck) || p.band === 'ring') continue;
       const r = Math.hypot(p.door[0], p.door[1]);
       const onRing = Math.abs(r - DRUM.roomR) < 1.5;
       const onBalcony = Math.abs(r - DRUM.balcony) < 1.5 || r < DRUM.balcony;
@@ -731,16 +787,24 @@ export async function run({ check, assert, THREE }) {
       if (!(onRing || onBalcony || onSkin || inConcourse)) {
         unreachable.push(`#${p.id} ${p.name}: door at r=${r.toFixed(1)}, and the ring is ${DRUM.roomR}, the balcony ${DRUM.balcony}`);
       }
-      /* And a lift stops on its deck. */
-      const served = SHAFTS.some((s) => s.decks.includes(p.deck));
-      if (!served) unreachable.push(`#${p.id} ${p.name} is on deck ${p.deck}, which no shaft serves`);
     }
     assert(unreachable.length === 0,
       `${unreachable.length} places are not on the circulation:\n      ${unreachable.slice(0, 8).join('\n      ')}`);
+    assert(offTheLift.length === 0,
+      `${offTheLift.length} places are on a deck the lift does not stop at:\n      ${offTheLift.slice(0, 8).join('\n      ')}`);
 
-    /* Every deck the gazetteer uses has a height, and every shaft a deck. */
-    const decks = new Set(PLACES.filter((p) => !p.external).map((p) => p.deck));
-    for (const d of decks) assert(DECK_Y[d] !== undefined, `deck ${d} has places on it and no height in DECK_Y`);
+    /* AND THE OTHER DIRECTION: a floor row for a deck with no rooms on it is a
+     * button that opens onto an empty plate, which is the same defect read
+     * backwards and nothing else asks it. */
+    const rooms = new Set(PLACES.filter((p) => !p.external && p.deck != null).map((p) => p.deck));
+    const empty = floors.filter((f) => !rooms.has(f.deck)).map((f) => `${f.n}`);
+    assert(empty.length === 0, `the lift stops at floor(s) ${empty.join(', ')}, which the gazetteer has no rooms on`);
+
+    /* Every deck the gazetteer uses has a height. */
+    for (const d of rooms) assert(DECK_Y[d] !== undefined, `deck ${d} has places on it and no height in DECK_Y`);
+    return `${PLACES.filter((p) => !p.external).length} rooms on decks `
+      + `${[...rooms].sort((a, b) => a - b).join('/')}; the lift stops at `
+      + `${[...served].sort((a, b) => a - b).join('/')}`;
   });
 
   /* ════════════════════════════════════════════════════════════════════════ */
@@ -1783,7 +1847,20 @@ export async function run({ check, assert, THREE }) {
     S.setStationName('Testport');
     try {
       const decks = liftFloors().filter((f) => f.deck);
-      assert(decks.length >= 3, `the lift reaches ${decks.length} station decks`);
+      /* ── AND THE BAR IS THE GAZETTEER, NOT A NUMBER ──────────────────────
+       *
+       * This asserted `decks.length >= 3`, which the three drum decks satisfied
+       * for ever: it could not tell a lift that reaches every deck from one
+       * that reaches half of them, and it sat green through the whole of the
+       * flight-ops decks and the observation dome being unreachable. The bar
+       * is every deck the plan puts a room on — see the reachability check
+       * above, which is the same statement from the room's side. */
+      const { PLACES } = await import('../../src/game/StationPlan.js');
+      const want = [...new Set(PLACES.filter((p) => !p.external && p.deck != null).map((p) => p.deck))];
+      const missing = want.filter((d) => !decks.some((f) => f.deck === d));
+      assert(missing.length === 0,
+        `the lift reaches ${decks.length} station decks and the gazetteer has rooms on `
+        + `${want.length}: nothing stops at deck ${missing.join(', ')}`);
       const blind = decks.filter((f) => !String(f.label).includes('Testport'));
       assert(blind.length === 0,
         `${blind.length} lift floors do not name the station: ${blind.map((f) => f.label).join(', ')}`);
@@ -2051,6 +2128,149 @@ export async function run({ check, assert, THREE }) {
     } finally { world.dispose?.(); }
   });
 
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('station: a day actually passes, the game says so, and it survives a reload', async () => {
+    /**
+     * ══ THE STATION HAD ONLY EVER HAD ONE DAY ═══════════════════════════
+     *
+     * *"the shops don't always have the same things"*, and *"the same shop
+     * owner doesnt always look the same … otherwise it would get stale seeing
+     * the same people always doing the same things."*
+     *
+     * `StationSave.stationDay(h)` was `Math.floor(h / 24) + seen.length`, and
+     * both terms were structurally zero: `setStationHour` wraps the hour into
+     * [0, 24) on every write and `tickStationClock` wraps `st.hour` every
+     * frame, so the quotient was 0; `markSeen` is the only writer of `seen`
+     * and it has no callers anywhere in `src/` or `tools/`, so the sum was 0.
+     * Measured before the fix — driving the shipped doors, in node:
+     *
+     *     +10 h → day 0    +24 h → day 0    +100 h → day 0
+     *     +500 h → day 0   +1000 h → day 0
+     *
+     * That is 1634 station hours, 68 in-game days, some 33 real hours of play,
+     * and the answer never moved. In the live build, 80 station hours on deck
+     * 40 left `st.day` at 0 and the clothier's shelf came back byte-identical.
+     * The shelves, the keepers, the residents' faces, the job board, the pit's
+     * card, the tote programme, the casino seats and the bar's leave roll are
+     * every one of them seeded off that number: six files thread a `day`
+     * correctly and all six were being handed a constant.
+     *
+     * ══ WHY NOTHING CAUGHT IT, AND WHAT THIS CHECK DOES INSTEAD ═════════
+     *
+     * Every existing clause in this tree hands `day` in AS AN ARGUMENT —
+     * `shelfFor(counter, day)`, `occupant(p, i, { day })`, `opponentAt(place,
+     * day, seat)` — and then measures that two different arguments give two
+     * different rooms. Which they do, and always did. Not one of them ever
+     * asked whether the GAME advances the argument. So this check never passes
+     * a day to anything: it drives the clock through the two doors the game
+     * uses — `passStationHours`, which every ending calls with the run's own
+     * seconds, and `world.update`, the shipped frame loop — and then reads the
+     * day the GAME reports back, off `world._station.day` and off the fold.
+     */
+    const S = await import('../../src/game/StationSave.js');
+    const C = await import('../../src/game/Counter.js');
+    const V = await import('../../src/game/Vendors.js');
+    const L = await import('../../src/game/StationLife.js');
+    const { PLACE } = await import('../../src/game/StationPlan.js');
+
+    /* ── 1. A RUN IS THE SOMETHING ELSE, and it is hours, so it is days ────
+     * `record()` calls this with `world.time * HOURS_PER_SECOND` on every
+     * ending. Deltas rather than absolutes because the suite's checks run
+     * concurrently and other station worlds are winding the same clock — the
+     * day is monotone, so a delta is the only safe reading. */
+    const d0 = S.stationDay();
+    const h0 = S.stationHour();
+    S.passStationHours(24);
+    const d1 = S.stationDay();
+    assert(d1 === d0 + Math.floor((h0 + 24) / 24),
+      `+24 station hours from ${h0.toFixed(2)}:00 moved the day ${d0} → ${d1}`);
+    const h1 = S.stationHour();
+    S.passStationHours(100);
+    const d2 = S.stationDay();
+    assert(d2 === d1 + Math.floor((h1 + 100) / 24),
+      `+100 station hours from ${h1.toFixed(2)}:00 moved the day ${d1} → ${d2}`);
+
+    /* ── 2. AND IT NEVER GOES BACKWARDS ───────────────────────────────────
+     * A screen setting the wall clock — `medbay.mjs` drives 23:00 then 01:00
+     * to test the night — must not un-happen a day the player lived. */
+    S.setStationHour(1);
+    assert(S.stationDay() === d2, `setting the clock back to 01:00 moved the day ${d2} → ${S.stationDay()}`);
+    S.setStationHour(-5);
+    assert(S.stationDay() === d2, `a negative hour moved the day ${d2} → ${S.stationDay()}`);
+    S.setStationHour(NaN);
+    assert(S.stationDay() === d2, `a NaN hour moved the day ${d2} → ${S.stationDay()}`);
+
+    /* ── 3. AND THE GAME'S OWN FRAME LOOP CROSSES MIDNIGHT ────────────────
+     * Not `tickStationClock` called by hand: `world.update(1/60, idle)`, which
+     * is what `main.js` runs, through `StationDirector` → `stepStation`. The
+     * clock is set to 23.8 rather than run for 172 800 frames because the rate
+     * is asserted to §3.4's digit by the check above this one; what is unknown
+     * here is what happens AT the wrap, and that is thirty seconds away. */
+    const { world } = await station(40);
+    let frames = 0, beforeDay = 0, afterDay = 0, beforeHour = 0, afterHour = 0;
+    try {
+      const st = world._station;
+      const idle = (await import('./_coop.mjs')).idleInput();
+      st.hour = 23.8;
+      beforeDay = S.stationDay();
+      beforeHour = st.hour;
+      /* Thirty real seconds = 0.25 station hours: enough to pass 24:00. */
+      for (; frames < 1800; frames++) world.update(1 / 60, idle);
+      afterHour = st.hour;
+      afterDay = st.day;
+      assert(afterHour < 1,
+        `1800 frames of the shipped loop left the clock at ${afterHour.toFixed(3)} — it did not reach midnight`);
+      assert(afterDay === beforeDay + 1,
+        `the game crossed midnight and its own day went ${beforeDay} → ${afterDay}`);
+      /* THE WORLD AND THE FOLD ARE ONE NUMBER. Two readers that disagreed
+       * about the date would put two different stations in one hull. */
+      assert(S.stationDay() === afterDay,
+        `the world says day ${afterDay} and the fold says ${S.stationDay()}`);
+
+      /* ── 4. AND THE ROOM IS A DIFFERENT ROOM FOR IT ────────────────────
+       * The day the GAME reports, handed to the readers, must actually change
+       * what they put out — otherwise the counter is turning over a number
+       * nothing reads. Three of the six: the shelf, the keeper, the faces. */
+      const clothier = V.COUNTERS.find((c) => (c.stock || []).length >= 8) || V.COUNTERS[0];
+      const shelfWas = JSON.stringify(C.shelfFor(clothier, beforeDay).map((r) => r.id));
+      const shelfNow = JSON.stringify(C.shelfFor(clothier, afterDay).map((r) => r.id));
+      assert(shelfWas !== shelfNow,
+        `${clothier.id}'s shelf is byte-identical on day ${beforeDay} and day ${afterDay}: ${shelfNow}`);
+      const St = await import('../../src/game/Station.js');
+      const keeperWas = St.keeperOf(clothier.id, null, beforeDay);
+      const keeperNow = St.keeperOf(clothier.id, null, afterDay);
+      assert(keeperWas.name !== keeperNow.name,
+        `${clothier.id}'s keeper is ${keeperNow.name} on both day ${beforeDay} and day ${afterDay}`);
+      const concourse = PLACE.get(9);
+      const faceWas = L.occupant(concourse, 0, { day: beforeDay }).name;
+      const faceNow = L.occupant(concourse, 0, { day: afterDay }).name;
+      assert(faceWas !== faceNow,
+        `slot 0 of the Concourse is ${faceNow} on both day ${beforeDay} and day ${afterDay}`);
+    } finally { world.dispose?.(); }
+
+    /* ── 5. AND IT SURVIVES A RELOAD ──────────────────────────────────────
+     * *"the same day for everyone, and it changes tomorrow"* is worth nothing
+     * if closing the tab puts the station back to Monday. A second module
+     * instance is a reload: its own `_cache` is empty and it re-reads
+     * `saber.station.v1` off the store, which is the path a fresh page takes.
+     * NO FOURTH KEY — `session.mjs` counts the durable writers in this tree
+     * and refuses one — so this asserts the day came back out of the station's
+     * OWN record. */
+    const fresh = await import(`../../src/game/StationSave.js?reload=${Date.now()}`);
+    assert(fresh.stationDay() === afterDay,
+      `a reload read day ${fresh.stationDay()} back out of saber.station.v1 and the game left it on ${afterDay}`);
+    assert(Object.keys(fresh.loadStation()).includes('day'),
+      'the reloaded fold has no day field — the day is being derived again rather than stored');
+
+    return `+24 h: day ${d0}→${d1}; +100 h: →${d2}; a clock set back/negative/NaN: still ${d2}; `
+      + `${frames} frames of world.update from ${beforeHour.toFixed(2)}:00 wrapped to `
+      + `${afterHour.toFixed(2)}:00 and the game reported day ${beforeDay}→${afterDay}; `
+      + `a reload read ${fresh.stationDay()}`;
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
   check('station: #51 charges a droid, and hands a man his own verb back', async () => {
     /**
      * ══ V16 Lane B5's *"instead of"*, and it had no door ══════════════════
@@ -2103,6 +2323,108 @@ export async function run({ check, assert, THREE }) {
       assert(St.stationKey(world), '#51 went dead with no handler installed');
       assert(said && said.includes(p51.verb), `#51 with no handler said "${said}"`);
       return `#51 raised the rack for a droid; refused, it fell through to "${p51.verb}"`;
+    } finally { a.world.dispose?.(); }
+  });
+
+  /**
+   * ══ #25 LOST & FOUND: THE WALL HAS WORDS ON IT ══════════════════════════
+   *
+   * THE DEFECT THIS CLAUSE IS WRITTEN AGAINST. `SHAPES.noticewall` laid forty
+   * blank slabs under a verb that says *"read the notices"* and a look that
+   * says *"notices change daily"*, and V15 §1.3.4 asks this room for the
+   * home's address in as many words — *"printed on the door and on the notice
+   * board (#25)"*. Driven through the real door before `Notices.js`:
+   *
+   *     {"said":[["LOST & FOUND","read the notices"]],"meshes":7,"texts":0}
+   *
+   * ZERO textures in the room and no address anywhere on it. So four things
+   * are asserted and every one of them was false on the tree that shipped it:
+   *
+   *   THE WALL IS WRITTEN ON     `texts > 0` in the room's own group, counted
+   *                              off the merged meshes exactly as a player's
+   *                              eye counts them.
+   *   THE ADDRESS IS ON IT       §1.3.4, and it is `Home.homeAddress`'s own
+   *                              string rather than a second spelling of it.
+   *   IT CHANGES DAILY           two different days are two different boards,
+   *                              which is the gazetteer's own line for #25.
+   *   IT IS THE SAME BOARD FOR EVERYBODY   one day is one board however many
+   *                              times it is asked — `Counter.shelfFor`'s law,
+   *                              and the reason none of this is `Math.random`.
+   *
+   * The draw cost is asserted with them, because §12.2's 400 is what stops the
+   * answer to "the room is empty" being "put four hundred things in it".
+   */
+  check('station: #25 has notices on it, and one of them is your own address', async () => {
+    const N = await import('../../src/game/Notices.js');
+    const { homeAddress } = await import('../../src/game/Home.js');
+    const { PLACE } = await import('../../src/game/StationPlan.js');
+    const St = await import('../../src/game/Station.js');
+    assert(/read the notices/.test(PLACE.get(25).verb), `#25's verb is "${PLACE.get(25).verb}"`);
+
+    /* ── THE CONTENT, WITHOUT A WORLD ─────────────────────────────────── */
+    const day0 = N.noticesFor(0, 13), day1 = N.noticesFor(1, 13);
+    assert(day0.length > 4, `#25's board carries ${day0.length} notices on day 0`);
+    const addr = homeAddress(PLACE.get(27));
+    assert(day0.some((n) => n.rows.includes(addr)),
+      `no notice on day 0 carries the home's address ${addr} — V15 §1.3.4 asks for it by name; `
+      + `the board says ${JSON.stringify(day0.map((n) => n.rows[0]))}`);
+    /* SAME DAY, SAME BOARD — twice, and it is the whole reason nothing here
+     * touches `Math.random`. */
+    assert(JSON.stringify(N.noticesFor(0, 13)) === JSON.stringify(day0),
+      'the board is different the second time it is read on the same day');
+    assert(JSON.stringify(day1) !== JSON.stringify(day0),
+      '#25 reads the same on day 0 and day 1 — the gazetteer says "notices change daily"');
+    /* NOTHING RUNS OFF THE SLAB. `signPanel` neither wraps nor measures, so a
+     * row wider than its canvas is drawn off both edges of the panel; 300 days
+     * of every writer is the sweep that keeps a new line honest. */
+    let widest = 0, over = [];
+    for (let d = 0; d < 300; d++) {
+      for (const n of N.noticesFor(d, 13)) {
+        for (let i = 0; i < n.rows.length; i++) {
+          const w = N.rowWidth(n.rows.length, i === 0);
+          widest = Math.max(widest, n.rows[i].length);
+          if (n.rows[i].length > w) over.push(`day ${d} ${n.id}: "${n.rows[i]}" > ${w}`);
+        }
+      }
+    }
+    assert(!over.length, `${over.length} rows run off the slab: ${over.slice(0, 4).join('; ')}`);
+
+    /* ── AND THE SAME THING, ON GEOMETRY, IN A REAL ROOM ──────────────── */
+    const a = await station(40);
+    try {
+      const { world } = a;
+      const st = world._station;
+      assert(st.notices?.at?.length,
+        'SHAPES.noticewall hands back no slab positions — nothing can write on the wall');
+      const rec = [...st.places.values()].find((r) => r.place.id === 25);
+      assert(rec, 'deck 40 built no #25');
+      let meshes = 0, texts = 0;
+      rec.group.traverse((o) => { if (o.isMesh) { meshes++; if (o.material?.map) texts++; } });
+      assert(texts >= 8,
+        `#25 has ${meshes} meshes and ${texts} of them carry a texture — the room was 7 and 0, `
+        + 'which is forty blank rectangles under a verb that says "read the notices"');
+      const printed = (st.notices.panels || []).flatMap((p) => p.panel._rows || []);
+      assert(printed.includes(addr), `nothing on the wall reads ${addr}; it reads ${JSON.stringify(printed.slice(0, 6))}`);
+      /* §12.2, and the room is charged for what it added. */
+      assert(st.draws <= 400, `deck 40 draws ${st.draws} with the notices up — §12.2's bound is 400`);
+
+      /* THE KEY READS THE WALL RATHER THAN RECITING THE VERB. */
+      let said = null;
+      world.notify = (h, l) => { said = `${h} :: ${l}`; };
+      const p25 = PLACE.get(25);
+      world.player.position.set(p25.x, st.deckY + 1.6, p25.z);
+      assert(St.stationKey(world), '#25 did not answer the key at all');
+      assert(said && said !== `LOST & FOUND :: ${p25.verb}`,
+        `#25 still answers with its own verb: "${said}"`);
+      assert(/LOST & FOUND/.test(said), `#25 answered "${said}"`);
+
+      /* IT RE-CUTS WHEN THE DAY TURNS AND NEVER OTHERWISE — the stamp, which
+       * is what keeps a canvas upload off the frame. */
+      assert(!N.stepNotices(world, st), 'the wall re-cut itself on a day that had not turned');
+      st.day = (st.day ?? 0) + 1;
+      assert(N.stepNotices(world, st), 'the day turned and the wall did not change');
+      return `#25: ${meshes} meshes, ${texts} written, ${st.notices.panels.length} notices, `
+        + `address ${addr} on the wall, deck 40 ${st.draws} draws of 400, widest row ${widest} chars`;
     } finally { a.world.dispose?.(); }
   });
 
