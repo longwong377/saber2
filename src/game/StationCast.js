@@ -59,7 +59,7 @@
 import './CompanionKinds.js';
 import { ARCHETYPES } from './Enemy.js';
 import { TOUGHNESS } from './Combat.js';
-import { buildJedi } from './Bodies.js';
+import { buildJedi, buildPlayerBody } from './Bodies.js';
 import { PLACE } from './StationPlan.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -786,7 +786,24 @@ for (const S of SPECIES) {
      * the hair it does not have" true of the seven species a player can build
      * while fifteen more stand on the station.
      */
-    build: (o = {}) => buildJedi({
+    /**
+     * ── AND THE SEAM, SO A RESIDENT CAN BE HANDED SOMETHING TO WEAR ──────
+     *
+     * `buildPlayerBody` and not `buildJedi` directly. It is the seam
+     * `Bodies.js` already argues for at length — "same arguments, same return
+     * shape, and the choice of builder is made HERE rather than five times" —
+     * and with no `armour` in the options it IS `buildJedi(opts)`, returned
+     * untouched, so every resident on the station comes out of this table
+     * byte-for-byte what it came out of before this line.
+     *
+     * What it buys is the one thing `Vendors.keeper` had been declaring into
+     * the void: `{helm: true, mando: true}` on the Forge's row asked for a
+     * helmeted Mandalorian smith and got a man in robes, because there was no
+     * door between a keeper's row and the builder that puts plate on a body.
+     * `Station.keeperArmour` opens it and `Enemy`'s `armour` spawn option
+     * carries it — see both.
+     */
+    build: (o = {}) => buildPlayerBody({
       ...o,
       species: S.row,
       robe: S.robe,

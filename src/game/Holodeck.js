@@ -53,6 +53,27 @@
  * room. `tools/checks/holodeck.mjs` measures that guarantee rather than
  * asserting it.
  *
+ * ── AND THE GROUND IS THE WHOLE ROSTER, NOT A SHORTLIST ──────────────────
+ *
+ * The ask says the room replaces the SANDBOX menu as well, and the sandbox
+ * menu's own ground column offered `Levels.theatresFor('sandbox')` — every
+ * theatre the mode can load. The ladder and the hand-written rooms name five
+ * of the seven between them, so a rack of curated programs alone is a
+ * REDUCTION of the tab it replaces: the White Pass and Mustafar were on the
+ * tab and were reachable nowhere in the room.
+ *
+ * So `programs()` takes the roster as its second argument and appends one
+ * program per ground, `dials: null` — the ground you asked for, with the
+ * numbers the console is set to. The six curated rooms stay, first, as what
+ * they always were: a featured ordering on top of the roster, each a complete
+ * answer for one lesson's exam. `open:own` is gone from that list because the
+ * roster IS it — a second copy of "the Ember Shelf with your own numbers" is
+ * the twin this file's header refuses everywhere else.
+ *
+ * The roster is HANDED IN for the same reason `LESSONS` is: the display name
+ * of a theatre lives in `Levels.js`, `Levels.js` imports THREE, and a second
+ * copy of seven level names in here would be wrong the day one is renamed.
+ *
  * ── AND NOTHING IN HERE FILES A RUN ───────────────────────────────────────
  *
  * `Progress.js`'s `RECORDED` set leaves training and the sandbox out, with the
@@ -163,17 +184,16 @@ const LESSON_DIALS = { bladeLength: 1.15, unlimitedBlade: false, unlimitedFocus:
  * dials — that is what makes a program addressable, and what lets the check
  * assert that no dial was lost with the tab.
  *
- * `own` is the old sandbox, kept deliberately and kept FIRST among the free
- * ones: its dials are `null`, which means "read them off the blob you were
- * handed". A player who spent an evening building a room keeps it, and the
- * room the pause card's two sliders move is still theirs.
+ * These five are FEATURED and nothing more: the roster below them offers every
+ * ground with the console's own numbers, so nothing here is the only way to
+ * reach anything. That is what makes gating them honest.
  *
  * `needs` is a lesson id that must have been CLEARED. It is not a paywall and
  * it is not difficulty gating: each of these four IS the exam for one lesson,
  * and offering the exam to somebody who has not been taught the verb is how a
- * practice room teaches a player that practice does not work. `empty` and
- * `own` need nothing, so nothing a player could reach on the tab has moved
- * behind a gate.
+ * practice room teaches a player that practice does not work. `empty` needs
+ * nothing and no room on the roster below needs anything, so nothing a player
+ * could reach on the tab has moved behind a gate.
  */
 const OPEN = [
   {
@@ -181,13 +201,6 @@ const OPEN = [
     blurb: 'Nobody. Room to move in and a wall to run at — the setting the sandbox always had at zero.',
     dials: { sandboxCount: 0, sandboxFire: 0, sandboxType: 'mixed', sandboxMix: {},
       bladeLength: 1.15, unlimitedBlade: false, unlimitedFocus: false },
-  },
-  {
-    /* Dials `null` — see the note above. The ground still comes off the
-     * program, because a room with no ground is the tab again. */
-    id: 'open:own', name: 'Your own room', ground: 'scoria', needs: null,
-    blurb: 'The numbers you left on them last time, on the Ember Shelf. Both sliders are still live from the pause card.',
-    dials: null,
   },
   {
     id: 'open:volley', name: 'The volley', ground: 'drifts', needs: 'deflect',
@@ -237,7 +250,7 @@ const OPEN = [
  * lesson is) and the open rooms are `'sandbox'`. Both are outside `RECORDED`,
  * which is the property the whole file is held to.
  */
-export function programs(lessons) {
+export function programs(lessons, grounds = []) {
   const L = Array.isArray(lessons) ? lessons : [];
   const rack = L.map((l, i) => ({
     id: `lesson:${l.id}`,
@@ -263,12 +276,47 @@ export function programs(lessons) {
       dials: o.dials ? { ...o.dials } : null,
     });
   }
+  /**
+   * ══ THE ROSTER ═════════════════════════════════════════════════════════
+   *
+   * One room per ground, and the ground is the only thing the program names —
+   * `dials: null`, so the numbers are the ones on the console. This is the
+   * sandbox tab's ground column and its dials, in the room, and it is why the
+   * six above can be a shortlist without being a limit.
+   *
+   * `grounds` is `[{ key, name, blurb }]`, taken off `Levels.js` by the caller
+   * (see the header). A bare string is accepted and named by its key, because
+   * a check or a probe that only has the keys should not have to invent a
+   * display name to use this.
+   *
+   * NOTHING IS GATED HERE. `needs: null` on every one: the tab let you enter
+   * the sandbox on any theatre on a fresh profile, and a replacement that put
+   * six of the seven behind a lesson would be a smaller game.
+   */
+  const seen = new Set();
+  for (const g of (Array.isArray(grounds) ? grounds : [])) {
+    const key = (typeof g === 'string') ? g : g?.key;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    rack.push({
+      id: `ground:${key}`,
+      name: ((typeof g === 'string') ? null : g.name) || key,
+      kind: 'ground',
+      lesson: null,
+      mode: 'sandbox',
+      ground: key,
+      blurb: ((typeof g === 'string') ? null : g.blurb)
+        || 'The ground on its own, with the numbers you set on the console.',
+      needs: null,
+      dials: null,
+    });
+  }
   return rack;
 }
 
 /** One program by id, or null. */
-export function programById(lessons, id) {
-  return programs(lessons).find((p) => p.id === id) || null;
+export function programById(lessons, grounds, id) {
+  return programs(lessons, grounds).find((p) => p.id === id) || null;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -319,13 +367,13 @@ export function isHeld(program, hold) {
  * subject is a syllabus. The console refuses to RUN an unheld row; it prints
  * every one of them.
  */
-export function rack(lessons, hold) {
-  return programs(lessons).map((p) => ({ ...p, held: isHeld(p, hold) }));
+export function rack(lessons, grounds, hold) {
+  return programs(lessons, grounds).map((p) => ({ ...p, held: isHeld(p, hold) }));
 }
 
 /** Only what can actually be run. This is the list the door is allowed to use. */
-export function heldPrograms(lessons, hold) {
-  return programs(lessons).filter((p) => isHeld(p, hold));
+export function heldPrograms(lessons, grounds, hold) {
+  return programs(lessons, grounds).filter((p) => isHeld(p, hold));
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -372,6 +420,17 @@ export function programSettings(program, base = {}) {
 }
 
 /**
+ * The seven dials as they stand on a settings blob — the value a `dials: null`
+ * program is going to run with. Not a new fact: `DIAL_KEYS` is the list and
+ * this only reads it, so a dial added there is read here on the same commit.
+ */
+function dialsOf(base) {
+  const d = {};
+  for (const k of DIAL_KEYS) d[k] = base[k];
+  return d;
+}
+
+/**
  * What the console reads back before you commit, as lines.
  *
  * `groundName` is handed in because this file may not import `Levels.js` —
@@ -379,10 +438,15 @@ export function programSettings(program, base = {}) {
  * in here would be wrong the day one is renamed. Same argument, same shape, as
  * `Warp`'s sink.
  */
-export function rackLines(program, groundName) {
+export function rackLines(program, groundName, base = null) {
   if (!program) return ['NO PROGRAM'];
   const out = [program.name.toUpperCase(), groundName || program.ground];
-  const d = program.dials;
+  /* A PROGRAM WITH NO DIALS READS BACK THE CONSOLE'S OWN NUMBERS when it is
+   * given them. `dials: null` means "whatever the blob says", and a rack row
+   * that answered "your own numbers" while the console sat on 12 droidekas
+   * would be the one row on the screen that does not say what you are about
+   * to walk into. Handed nothing, it still says what it can. */
+  const d = program.dials || (base ? dialsOf(base) : null);
   if (!d) { out.push('your own numbers'); return out; }
   const named = Object.entries(d.sandboxMix || {}).filter(([, n]) => n > 0);
   if (program.kind === 'lesson') out.push('a lesson — nothing in here can kill you');

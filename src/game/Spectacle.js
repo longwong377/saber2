@@ -236,9 +236,9 @@ export const SKINS = Object.freeze({
   PODRACE: Object.freeze({
     id: 'PODRACE', word: 'race', entrantWord: 'pod', room: 'holo-theatre',
     advance: courseAdvance, mode: 'course',
-    field: 8, vol: 0.20, daySd: 0.60, sigma: 0.74, houseRead: 0.35, leftBlind: 0.65,
+    field: 8, vol: 0.20, daySd: 0.60, sigma: 0.70, houseRead: 0.35, leftBlind: 0.95, grudge: 0,
     terms: POD_TERMS, hazards: POD_HAZARDS,
-    read: [{ key: 'rain', at: 0.4, k: 0.71 }, { key: 'heat', at: 0.62, k: 0.71 }],
+    read: [{ key: 'rain', at: 0.4, k: 0.57 }, { key: 'heat', at: 0.62, k: 0.57 }],
     /* The mean hazard load the market DOES price — every field has wall
      * strikes in it and the board knows that much. */
     take: 0.06,
@@ -251,9 +251,9 @@ export const SKINS = Object.freeze({
   PIT: Object.freeze({
     id: 'PIT', word: 'bout', entrantWord: 'fighter', room: 'the-pit',
     advance: boutAdvance, mode: 'bout',
-    field: 6, vol: 0.20, daySd: 0.52, sigma: 0.78, houseRead: 0.35, leftBlind: 0.90, bite: 7.5, pool: 100,
+    field: 6, vol: 0.20, daySd: 0.52, sigma: 0.75, houseRead: 0.35, leftBlind: 1.00, grudge: 0.75, bite: 7.5, pool: 100,
     terms: FIGHT_TERMS, hazards: FIGHT_HAZARDS,
-    read: [{ key: 'crowd', at: 0.7, k: 0.35 }, { key: 'sand', at: 0.55, k: 0.35 }, { key: 'heat', at: 0.6, k: 0.35 }],
+    read: [{ key: 'crowd', at: 0.7, k: 0.06 }, { key: 'sand', at: 0.55, k: 0.06 }, { key: 'heat', at: 0.6, k: 0.06 }],
     take: 0.08,
   }),
   /**
@@ -265,9 +265,9 @@ export const SKINS = Object.freeze({
   ARENA: Object.freeze({
     id: 'ARENA', word: 'bout', entrantWord: 'companion', room: 'the-arena',
     advance: boutAdvance, mode: 'bout',
-    field: 2, vol: 0.20, daySd: 0.46, sigma: 0.58, houseRead: 0.35, leftBlind: 0.90, bite: 6.0, pool: 100,
+    field: 2, vol: 0.20, daySd: 0.46, sigma: 0.53, houseRead: 0.35, leftBlind: 1.00, grudge: 0.50, bite: 6.0, pool: 100,
     terms: FIGHT_TERMS, hazards: FIGHT_HAZARDS,
-    read: [{ key: 'crowd', at: 0.6, k: 0.35 }, { key: 'sand', at: 0.35, k: 0.35 }, { key: 'heat', at: 0.45, k: 0.35 }],
+    read: [{ key: 'crowd', at: 0.6, k: 0.02 }, { key: 'sand', at: 0.35, k: 0.02 }, { key: 'heat', at: 0.45, k: 0.02 }],
     take: 0.05,
   }),
 });
@@ -597,13 +597,97 @@ export function blindnessOf(ground, { survive = 1 } = {}) {
  */
 const survivalFor = (S, who) => (who === 'read' ? S.leftBlind : 1 - S.houseRead * (1 - S.leftBlind));
 
-/** What the sim would say (`hidden`), and what the board is allowed to say. */
+/* ══════════════════════════════════════════════════════════════════════════
+ *  THE GRUDGE, AND THE COLUMN THAT PUBLISHES IT
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * A bout writes one: `recordResult` gives every beaten entrant a little extra
+ * at the one that beat it, `boutAdvance` adds it straight onto the attack
+ * edge, and it is worth up to `GRUDGE_CAP` on a scale where a whole rating
+ * point is 1/22. It is the biggest single unseen term in either fight room.
+ *
+ * IT IS ALSO CREATED BY A PUBLIC EVENT. Everybody at the rail saw who put whom
+ * down, so a room that keeps a book has the count — `Tote.writeHeadToHead`
+ * publishes it as `form.beaten`, exactly as a fight bill prints "their last
+ * meeting". The count IS the term: `GRUDGE_STEP × count`, capped, is the same
+ * number `recordResult` wrote into `hidden.grudge`, and a check settles the
+ * two against each other race by race rather than taking that on trust.
+ *
+ * So this is the one hidden term a reader can recover EXACTLY rather than
+ * infer — and it is the reason the Pit and the Arena have a reading room at
+ * all. `readForm`'s going-splits are worth almost nothing there (measured: the
+ * split reading correlates 0.03 with the truth in the Pit and −0.03 at the
+ * Arena, against 0.34 on the pods), because a fighter's temper and footing are
+ * nine tenths the same on every night and a split can only see the tenth that
+ * moves with the going. The head-to-head is not a split at all.
+ */
+export const GRUDGE_STEP = 0.18;
+export const GRUDGE_CAP = 0.55;
+
+/**
+ * WHAT EACH RUNNER CARRIES INTO THIS PARTICULAR FIELD, in strength units
+ * before `S.grudge` scales it.
+ *
+ * A grudge is held against ONE opponent, so it is worth nothing in a bout that
+ * opponent is not in — which is why this takes the card and not an entrant.
+ * Averaged over the rest of the field because that is roughly how a bout
+ * spreads its attacks; the conversion to strength is `S.grudge`, fitted
+ * against the sim rather than asserted.
+ *
+ * `published: true` reads the public count, which is what a punter has.
+ * `published: false` reads the engine's own term, which is what the sim uses.
+ * On a card the tote has replayed the two are equal to the last digit.
+ */
+export function grudgeCarried(card, { published = false } = {}) {
+  const S = SKINS[card.skin];
+  const n = card.entrants.length;
+  if (!S || S.mode !== 'bout' || n < 2) return card.entrants.map(() => 0);
+  return card.entrants.map((e) => {
+    let g = 0;
+    for (const f of card.entrants) {
+      if (f === e) continue;
+      g += published
+        ? Math.min(GRUDGE_CAP, GRUDGE_STEP * (e.form.beaten?.[f.id] || 0))
+        : (e.hidden.grudge?.[f.id] || 0);
+    }
+    return g / (n - 1);
+  });
+}
+
+/** The spread of that column across one field — what a house that does not
+ * price WHICH grudge still knows it is carrying. */
+function grudgeSpread(g) {
+  if (!g.length) return 0;
+  const m = g.reduce((a, b) => a + b, 0) / g.length;
+  return Math.sqrt(g.reduce((a, b) => a + (b - m) * (b - m), 0) / g.length);
+}
+
+
+/**
+ * What the sim would say (`hidden`), and what the board is allowed to say.
+ *
+ * ── AND THE TRUTH HAS THE GRUDGE IN IT, because the sim does ─────────────
+ *
+ * `formStrength` cannot carry it — a grudge is held against one opponent and
+ * is worth nothing in a bout that opponent is not in, so it is a property of
+ * the FIELD and not of the entrant. It went missing from the model for exactly
+ * that reason and it cost the Pit its calibration: measured, the model's own
+ * top pick was quoted at 0.494 and won 0.528, which is a seventh of the take
+ * handed to anybody backing favourites and nothing to do with reading a form
+ * book. The board's half of it is `houseRead`, on the same dial as the going
+ * splits, plus the part it has NOT priced added back as blindness — a house
+ * that prints the column knows the field is carrying something even where it
+ * has not put a number on which.
+ */
 export function winProbabilities(card, ground, { hidden = false } = {}) {
   const S = SKINS[ground.skin];
-  const s = card.entrants.map((e) => formStrength(e, ground, { hidden }).total
-    + (hidden ? 0 : S.houseRead * readForm(e, ground).bonus));
+  const g = grudgeCarried(card, { published: !hidden });
+  const s = card.entrants.map((e, i) => formStrength(e, ground, { hidden }).total
+    + (hidden ? S.grudge * g[i]
+      : S.houseRead * (readForm(e, ground).bonus + S.grudge * g[i])));
   const p = fieldProbabilities(s, hidden ? S.sigma
-    : Math.hypot(S.sigma, blindnessOf(ground, { survive: survivalFor(S, 'board') })));
+    : Math.hypot(S.sigma, blindnessOf(ground, { survive: survivalFor(S, 'board') }),
+      (1 - S.houseRead) * S.grudge * grudgeSpread(g)));
   return card.entrants.map((e, i) => ({ id: e.id, p: p[i] }));
 }
 
@@ -618,7 +702,14 @@ export function winProbabilities(card, ground, { hidden = false } = {}) {
  */
 export function researchedProbabilities(card, ground) {
   const S = SKINS[ground.skin];
-  const s = card.entrants.map((e) => formStrength(e, ground, { hidden: false }).total + readForm(e, ground).bonus);
+  /* The head-to-head is not inferred, it is COUNTED, so the reader carries it
+   * whole where the board carries `houseRead` of it — and his σ is not widened
+   * for it, because a term you have read off a printed column is not a term
+   * that is still hiding. Where no room published the column the count is
+   * empty and this is the same reader it always was. */
+  const g = grudgeCarried(card, { published: true });
+  const s = card.entrants.map((e, i) => formStrength(e, ground, { hidden: false }).total
+    + readForm(e, ground).bonus + S.grudge * g[i]);
   const p = fieldProbabilities(s, Math.hypot(S.sigma, blindnessOf(ground, { survive: survivalFor(S, 'read') })));
   return card.entrants.map((e, i) => ({ id: e.id, p: p[i] }));
 }
@@ -831,7 +922,7 @@ export function recordResult(card, ground, result) {
       const e = byId.get(row.id);
       if (!e) continue;
       e.hidden.grudge = e.hidden.grudge || {};
-      e.hidden.grudge[result.winner] = clamp((e.hidden.grudge[result.winner] || 0) + 0.18, 0, 0.55);
+      e.hidden.grudge[result.winner] = clamp((e.hidden.grudge[result.winner] || 0) + GRUDGE_STEP, 0, GRUDGE_CAP);
     }
   }
   return card;

@@ -137,6 +137,21 @@ export function fullness(place, hour) {
  */
 export function headcount(place, hour) {
   const heads = place.heads || 0;
+  /**
+   * ══ A FIXED OCCUPANCY IS A FACT, NOT A RHYTHM ══════════════════════════
+   *
+   * §3.3: the Vorlon is *"one encounter suit, one place (#37), never walks"*.
+   * `StationCast.speciesFor` says the same thing in a comment — *"there is
+   * one, it is placed by hand at #37"* — and nothing ever placed him: the row
+   * carried `heads: 0`, so the fifteenth species had no slot anywhere on the
+   * station and the census read fourteen at every hour of every day.
+   * `station.mjs` skipped him with a comment that named the hand-placement
+   * that did not exist, which is why nothing ever said so.
+   *
+   * He cannot be on the curve either — it empties a one-head room for nine
+   * hours a day, midday among them. `fixed` says the number is the number.
+   */
+  if (place.fixed) return heads;
   const n = Math.round(heads * fullness(place, hour));
   /* A place somebody LIVES in is never literally empty while the day is on
    * it. The mortician is one person in a room of drawers and the curve would
@@ -381,24 +396,35 @@ export function occupant(place, i, opts = {}) {
   }
   /* EVERYTHING BELOW IS THE CENSUS — anonymous people filling a room — and
    * every one of them is drawn on `daily`. The species bias of a quarter is
-   * the room's and does not move; who is standing in it does. */
-  const bias = QUARTER_OF[place.id];
+   * the room's and does not move; who is standing in it does.
+   *
+   * `j` IS THE CENSUS ORDINAL AND NOT THE SLOT. The named cast owns the low
+   * slots of the rooms it lives in, and the blocks below used to count from
+   * the raw slot index — so the hostel, which seats five at midday and has
+   * three Borz in it, handed HOSTEL[0..2] to three people who are not census
+   * at all and started its cycle at `hyach`. Brakiri, Vree and Abbai were
+   * never in their own hostel, and Grome and "other" were never anywhere. */
+  const j = i - (borz ? borz.length : 0);
+  const bias = planBias(place, j);
   if (bias) return resident(daily, { species: bias });
-  if (place.id === 9 && i < RARE.length * 5) {
-    /* The RARE eight, five each, in the first forty stalls. Cycling all
-     * fifteen here would make the market one human in fifteen, which is a
-     * worse lie than the census's — 155 000 of 250 000 aboard are human. What
-     * the market has to guarantee is that the whole cast is IN it, and the
-     * eight that the census would otherwise round out of the room are the
-     * eight that need guaranteeing. `stationlife.mjs` counts them. */
-    return resident(daily, { species: RARE[i % RARE.length] });
-  }
-  if (place.id === 38) return resident(daily, { species: HOSTEL[i % HOSTEL.length] });
-  /* The food court is the other place the tail is always in: a cheap counter
-   * under a low ceiling at shift change is where transients and dock gangs
-   * eat, and the census would otherwise leave the seven quarterless species
-   * with one room between them. */
-  if (place.id === 17 && i < HOSTEL.length * 2) return resident(daily, { species: HOSTEL[i % HOSTEL.length] });
+  /**
+   * ══ AND THEN THE FLOOR (§5.3) ══════════════════════════════════════════
+   *
+   * The blocks above are the PLAN's guarantee and it is a fixed one: five of
+   * each rare kind in the market, two in the food court, the hostel's cycle.
+   * Everything else is a free draw from the shares, and a share of 750 in
+   * 250 000 draws nobody most days — so Grome and "other" stood at seven on
+   * 222 days of a year against §5.3's eight, and the Minbari, whose quarter
+   * seats three at midday, fell to six.
+   *
+   * `floorFill` is the top-up: it takes the day's OWN draw, sees who it
+   * shorted, and re-rolls that many otherwise-free slots into them. It cannot
+   * make the census uniform because it only ever moves a species that is
+   * already over the floor into one that is under it — a kind the day drew
+   * twelve of stays at twelve.
+   */
+  const top = floorFill(day).get(`${place.id}:${i}`);
+  if (top) return resident(daily, { species: top });
   return resident(daily);
 }
 
@@ -414,6 +440,132 @@ const QUARTER_OF = {
 };
 /* The methane quarter is two species behind one airlock, so it alternates. */
 const METHANE = ['gaim', 'pakmara'];
+
+/**
+ * Which species the PLAN pins a census slot to, or null for a free draw.
+ *
+ * ── AND #36 IS IN HERE BECAUSE IT WAS ONLY EVER IN THE TALLY ──────────────
+ *
+ * `census()` carried its own `p.id === 36 ? METHANE[i % 2] : occupant(...)`
+ * line and `occupant` knew nothing about it, so the methane quarter READ as
+ * five Gaim and five pak'ma'ra and SPAWNED ten residents drawn from the
+ * shares — which is to say eight humans behind an airlock nobody else can
+ * breathe. An instrument that answers a question the world does not is worse
+ * than no instrument: §5.3's eight-of-every-species was green on a number the
+ * game never produced. One table, read by both.
+ *
+ * `j` is the census ordinal — see `occupant`.
+ */
+function planBias(place, j) {
+  if (j < 0) return null;
+  const q = QUARTER_OF[place.id];
+  if (q) return q;
+  /* §3.2 #36: two species behind one airlock, alternating. */
+  if (place.id === 36) return METHANE[j % METHANE.length];
+  /* The RARE nine, five each, in the first forty-five stalls. Cycling all
+   * fifteen here would make the market one human in fifteen, which is a worse
+   * lie than the census's — 155 000 of 250 000 aboard are human. What the
+   * market has to guarantee is that the whole cast is IN it, and the nine that
+   * the census would otherwise round out of the room are the nine that need
+   * guaranteeing. Because they lead the cycle, they are also the nine that
+   * survive the market's quietest hour, when it seats fourteen. */
+  if (place.id === 9 && j < RARE.length * 5) return RARE[j % RARE.length];
+  if (place.id === 38) return HOSTEL[j % HOSTEL.length];
+  /* The food court is the other place the tail is always in: a cheap counter
+   * under a low ceiling at shift change is where transients and dock gangs
+   * eat, and the census would otherwise leave the seven quarterless species
+   * with one room between them. */
+  if (place.id === 17 && j < HOSTEL.length * 2) return HOSTEL[j % HOSTEL.length];
+  return null;
+}
+
+/**
+ * ══ THE FLOOR — EIGHT OF EVERY SPECIES, ON EVERY DAY (§5.3) ═══════════════
+ *
+ * "≥ 8 residents placed per species." The Vorlon is the one exception and it
+ * is the roster's, not this file's: `SPECIES.vorlon` carries `singleton`, and
+ * §3.3 is explicit — *"one encounter suit, one place (#37), never walks."*
+ * There is one, and one is his floor.
+ */
+export const FLOOR = 8;
+
+/**
+ * The hour the census is taken at. §3.4's midday meal, and the hour
+ * `station.mjs` has always counted at. It has to be ONE hour and it has to be
+ * fixed, because `occupant` may not read the clock: a face that changed
+ * between 12:00 and 14:00 would be a worse failure than a thin census — see
+ * the note at the top of `occupant`. So the top-up is sized against midday
+ * and simply rides along at every other hour.
+ */
+const CENSUS_HOUR = 13;
+
+/** day → (`placeId:slot` → species). Small, because only today is ever asked. */
+const _floor = new Map();
+
+/**
+ * Who the day's own draw shorted, and which free slots pay for it.
+ *
+ * Deterministic in `day` alone: the natural species of every census slot is
+ * `speciesFor` on the same `(place, slot, day)` seed `occupant` uses, the
+ * order the slots are offered in is a hash of `(place, slot, day)`, and no
+ * clock, quest or player state reaches any of it. `determinism.mjs` holds the
+ * no-`Math.random` half of that.
+ *
+ * A DONOR IS NEVER TAKEN BELOW THE FLOOR. The loop refuses a slot whose own
+ * species is at eight or fewer, so topping up the Grome cannot be what pushes
+ * the Llort under — which is exactly the shape a naive top-up has.
+ */
+function floorFill(day) {
+  const hit = _floor.get(day);
+  if (hit) return hit;
+  const have = new Map(SPECIES_KEYS.map((k) => [k, 0]));
+  const free = [];
+  for (const p of PLACES) {
+    if (p.external || !p.heads) continue;
+    const n = headcount(p, CENSUS_HOUR);
+    const borz = BORZ_BY_PLACE.get(p.id);
+    const b = borz ? borz.length : 0;
+    /* A place id can be fractional (#40.2), so it is scaled to an integer
+     * before it goes anywhere near `h2`'s integer arithmetic. */
+    const pid = Math.round(p.id * 10);
+    for (let i = b; i < n; i++) {
+      const bias = planBias(p, i - b);
+      if (bias) { have.set(bias, (have.get(bias) || 0) + 1); continue; }
+      const k = speciesFor(`p${p.id}s${i}d${day}`);
+      have.set(k, (have.get(k) || 0) + 1);
+      free.push({ key: `${p.id}:${i}`, k, r: h2(pid * 1024 + i, day) });
+    }
+  }
+  /* One deterministic order for the whole day, so which rooms pay is a
+   * different set tomorrow and the top-up does not wear a groove in one room. */
+  free.sort((a, b2) => (a.r - b2.r) || (a.key < b2.key ? -1 : 1));
+  const out = new Map();
+  let at = 0;
+  for (const k of SPECIES_KEYS) {
+    if (SPECIES_BY.get(k)?.singleton) continue;
+    while ((have.get(k) || 0) < FLOOR) {
+      let took = false;
+      for (let m = 0; m < free.length; m++) {
+        const s = free[(at + m) % free.length];
+        if (s.k === k || out.has(s.key)) continue;
+        if ((have.get(s.k) || 0) <= FLOOR) continue;
+        out.set(s.key, k);
+        have.set(s.k, have.get(s.k) - 1);
+        have.set(k, (have.get(k) || 0) + 1);
+        at = (at + m + 1) % free.length;
+        took = true;
+        break;
+      }
+      /* Nothing left that can spare a body. The station is too small for the
+       * floor and that is a fact about the gazetteer, not something to paper
+       * over here — `station.mjs` sweeps the year and says so. */
+      if (!took) break;
+    }
+  }
+  _floor.set(day, out);
+  if (_floor.size > 8) _floor.delete(_floor.keys().next().value);
+  return out;
+}
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE POOL                                                                  */
@@ -525,7 +677,28 @@ function reseat(world, st, life, px, pz) {
   const want = _want;
   want.length = 0;
   const consider = (p) => {
-    const n = headcount(p, hour);
+    /**
+     * ── AND A ROOM WITH A CARD ON IS FULLER THAN THE GAZETTEER SAYS ──────
+     *
+     * V16 §G4. `Station.stepCrowd` writes `life.crowd` — how many the tote
+     * says are in one of the three venues at this hour — and this is the one
+     * line that reads it.
+     *
+     * ADDED to the gazetteer's own curve rather than replacing it, and the
+     * first cut had it the other way round. `Math.max` measured as a NO-OP at
+     * two of the three venues: the Pit's row is `heads: 14` and its crowd is
+     * twelve at the rail, so the larger of the two was the room's ordinary
+     * headcount at every hour and the card changed nothing you could see. The
+     * two counts are two different populations — the sabacc floor is there
+     * whether or not there is a bout on, and the crowd came for the bout — so
+     * they add.
+     *
+     * It cannot overrun the frame budget: `life.budget` caps what is actually
+     * built and `want` is sorted nearest-first, so a packed Holo-theatre
+     * spends the pool on the sixty people the player is standing among, which
+     * is exactly where it should go.
+     */
+    const n = headcount(p, hour) + (life.crowd?.get(p.id) || 0);
     if (n <= 0) return;
     for (let i = 0; i < n; i++) {
       slotIn(p, i, _v);
@@ -1044,7 +1217,12 @@ export function census(hour, day = 0) {
        * that can sweep the days and see whether §5.3's eight-of-every-species
        * still holds when the faces reroll, which is the only way to know that
        * the reroll has not quietly emptied a room of a species. */
-      const r = p.id === 36 ? { species: METHANE[i % 2] } : occupant(p, i, { day: day | 0 });
+      /* `occupant` AND NOTHING ELSE. This line used to answer the methane
+       * quarter itself — `p.id === 36 ? { species: METHANE[i % 2] }` — while
+       * `occupant` drew #36 from the shares like any other room, so the tally
+       * reported ten methane-breathers the game never spawned. The rule lives
+       * in `planBias` now and both readers go through it. */
+      const r = occupant(p, i, { day: day | 0 });
       if (r.borz) { byBorz.set(r.borz.id, (byBorz.get(r.borz.id) || 0) + 1); continue; }
       bySpecies.set(r.species, (bySpecies.get(r.species) || 0) + 1);
     }

@@ -296,41 +296,60 @@ export async function run({ check, assert, near }) {
     } finally { world.unload(); }
   });
 
-  check('counter: the economy is bounded — the dearest thing is several runs, not sixty', async () => {
+  check('counter: the purse is bounded, and the cap is not what a run pays', async () => {
     /**
-     * THE THIRD GUARANTEE, AND IT WAS BROKEN FOR AN HOUR.
+     * THE THIRD GUARANTEE, AND THIS CHECK USED TO GET IT WRONG IN THE MOST
+     * EXPENSIVE WAY A CHECK CAN.
      *
-     * A tier used to multiply the author's own `base`, and the two compounded:
-     * a singular authored at 2600 reached the shelf at 57,200, which against a
-     * 900 cap is SIXTY-FOUR capped runs. The amendment promises "several", and
-     * "several" is the entire mechanism by which hoarding cannot buy an
-     * advantage. So it is a number, and here it is.
+     * It divided every price by `Credits.PER_RUN_CAP` and printed the quotient
+     * as "capped runs". That reads as an answer to "how many runs is this" and
+     * is not one: the cap is the MOST a run can pay and no run has ever paid
+     * it. At a cap of 900 a 3200-credit plate came out as 3.6 "runs", inside
+     * the 1.5-to-6 band, green — while the same purchase measured through the
+     * shipped ending against `balance.mjs`'s own middle skill setting was
+     * TWENTY-THREE runs. The whole top of the shelf was unreachable and the
+     * suite said the economy was bounded.
+     *
+     * A denominator nobody measured is the defect. So the runs-to-afford
+     * question has moved to where the denominator can be measured — the
+     * `balance: a run pays for the shelf it is measured against` check, which
+     * drives `simulateRun` at three skill settings, pays every run through
+     * `main.js`'s own `record()`, and holds the median and the dearest row in
+     * stated bands against what those runs actually earned.
+     *
+     * WHAT STAYS HERE is what this file can answer without a simulation, and
+     * every one of them is about the purse rather than about the tuning: the
+     * cap is a cap, a broke player can afford SOMETHING, and the spend door
+     * cannot be talked into paying twice or into going negative.
      */
     const K = await import('../../src/game/Counter.js');
     const V = await import('../../src/game/Vendors.js');
     const C = await import('../../src/game/Credits.js');
     const prices = V.everyRow().map((r) => K.priceOf(r));
-    const worst = Math.max(...prices);
-    const runs = worst / C.PER_RUN_CAP;
-    assert(runs <= 6, `the dearest row is ${worst} credits, ${runs.toFixed(1)} capped runs — the doctrine `
-      + 'says several, and several is what stops a purse being a power ladder');
-    assert(runs >= 1.5, `the dearest row is ${runs.toFixed(1)} runs, which is not a thing to save for`);
-    assert(Math.min(...prices) < C.PER_RUN_CAP / 8,
-      'nothing in the game is cheap — a broke player has to be able to buy something');
+    const worst = Math.max(...prices), best = Math.min(...prices);
 
-    /* AND A RUN CANNOT PAY MORE THAN THE CAP, however good it was. */
+    /* A RUN CANNOT PAY MORE THAN THE CAP, however good it was — and the cap
+     * has to sit above the dearest thing being reachable at all, or the game
+     * has a shelf no purse can ever hold. */
     C.clearCredits();
     const monster = C.payForRun({ depth: 999, won: true, kills: 99999, saves: 999 });
     assert(monster.paid === C.PER_RUN_CAP && monster.capped,
       `a 999-deep run paid ${monster.paid} against a cap of ${C.PER_RUN_CAP}`);
+    assert(worst <= C.PER_RUN_CAP * 6,
+      `the dearest row is ${worst} against a per-run ceiling of ${C.PER_RUN_CAP} — even a capped run `
+      + `${(worst / C.PER_RUN_CAP).toFixed(1)}x over is a shelf nobody reaches`);
+    assert(best < C.PER_RUN_CAP / 8,
+      'nothing in the game is cheap — a broke player has to be able to buy something');
+
     /* …and a purse cannot go negative, or be spent twice. */
     C.clearCredits();
     C.pay(100);
     assert(C.spend(60).ok && !C.spend(60).ok, 'the purse paid out twice for one balance');
     assert(C.purse() === 40, `the purse is ${C.purse()} after 100 in and 60 out`);
     assert(!C.spend(-50).ok && C.purse() === 40, 'a negative spend was accepted');
-    return `${prices.length} rows from ${Math.min(...prices)} to ${worst} credits `
-      + `(${runs.toFixed(1)} capped runs); a 999-deep run pays ${monster.paid} of ${monster.raw}`;
+    C.clearCredits();
+    return `${prices.length} rows from ${best} to ${worst} credits against a ${C.PER_RUN_CAP} ceiling; `
+      + `a 999-deep run pays ${monster.paid} of ${monster.raw}; runs-to-afford is measured in balance.mjs`;
   });
 
   check('counter: the shelf rerolls with the day, and is the same for everyone on it', async () => {
@@ -678,6 +697,51 @@ export async function run({ check, assert, near }) {
       `the Forge's smith is ${JSON.stringify(smith)} — §A4 asks for a Mandalorian, and a `
       + 'Mandalorian keeps the bucket on');
     assert(smith.role === 'smith', `the Forge's keeper is a ${smith.role}`);
+    /**
+     * ── AND THE TWO LINES ABOVE USED TO BE THE WHOLE OF IT, WHICH IS THE
+     *    DEFECT THIS CHECK WAS WRITTEN TO CATCH, WEARING A CHECK'S COAT ───
+     *
+     * `smith.mando && smith.helm` is `keeperOf` handing back the two fields
+     * `ARMOURER.keeper` declared. It was true on the day the row was typed
+     * and it stayed true for a whole lane while the man behind #10's counter
+     * was `res_human` in robes: no plate, no bucket, 62 meshes. A guard that
+     * reads a field back out of the row it was declared in asserts the bug.
+     *
+     * TWO CLAUSES INSTEAD, and neither of them can be satisfied by a table:
+     *
+     *   THE FIELDS REACH A BUILDER. `keeperArmour` is the reader `helm` and
+     *   `mando` never had, and building `res_human` with and without its
+     *   answer has to give two different bodies. (`station.mjs` takes this
+     *   the rest of the way and measures the body actually standing in the
+     *   room, which is the clause this file cannot afford to boot for.)
+     *
+     *   AND `keeperOf` HAS A CALLER THAT IS NOT THIS FILE. It described
+     *   itself as "the panel's reader" while the counter panel printed the
+     *   shop's name and the purse and nothing about the man over the counter
+     *   — so its only caller in the tree was the check testing it, which is
+     *   the same defect one level up. `main.showCounter` reads it now.
+     */
+    const armour = S.keeperArmour(V.ARMOURER.keeper);
+    assert(armour && armour.helmet,
+      `the Forge's row resolves to ${JSON.stringify(armour)} — a Mandalorian smith with nothing to wear`);
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+    const meshes = (o) => { let n = 0; o?.rig?.root?.traverse?.((m) => { if (m.isMesh) n++; }); return n; };
+    const robed = meshes(ARCHETYPES.res_human.build({}));
+    const clad = meshes(ARCHETYPES.res_human.build({ armour }));
+    assert(robed !== clad && clad > 20,
+      `a keeper in beskar and a keeper in robes are the same ${clad}-mesh body — the row reaches no builder`);
+    const { readFile } = await import('node:fs/promises');
+    const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    let callers = 0;
+    for (const f of ['main.js', 'game/Station.js', 'game/Counter.js', 'ui/Menu.js']) {
+      let code = '';
+      try { code = strip(await readFile(new URL(`../../src/${f}`, import.meta.url), 'utf8')); } catch { continue; }
+      callers += (code.match(/\bkeeperOf\s*\(/g) || []).length
+        - (code.match(/export function keeperOf/g) || []).length;
+    }
+    assert(callers >= 1,
+      'keeperOf has no caller in src/ — it calls itself "the panel\'s reader" and the only thing '
+      + 'reading it is this check');
     /* AND HE IS THE MAN ON THE SIGN. The shop is "Bo Vhett, beskar and blade"
      * and #10's row names him too, so a seeded name would put a stranger
      * behind somebody else's sign — measured in a browser, it said "Bo
@@ -695,7 +759,8 @@ export async function run({ check, assert, near }) {
     assert(/mandalorian/i.test(who) && !/wookiee/i.test(who),
       `#10's gazetteer says "${who}" — the room and the table disagree about who is in it`);
     return `${V.COUNTERS.length} keepers, all named; the Forge's is ${smith.name}, a helmed `
-      + `Mandalorian smith who does not reroll; the clothier is ${rolled.size} different people `
+      + `Mandalorian smith who does not reroll — ${clad} meshes in beskar against ${robed} in robes, `
+      + `and keeperOf has ${callers} caller(s) in src/; the clothier is ${rolled.size} different people `
       + `over a fortnight; #10 reads "${who}"`;
   });
 

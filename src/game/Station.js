@@ -50,7 +50,7 @@ import { deckMats, factionOf } from './DeckKit.js';
 import { loadRoom, materialKeyFor } from './StationMesh.js';
 import { PLACES, PLACE, DECK_Y, DRUM, CORRIDOR, SHAFTS, placesOn, floorOf, sectorAt } from './StationPlan.js';
 import { buildPlace, SHAPES, buildWays, dressWayfinding } from './StationKit.js';
-import { dressDeckLift, stepDeckLift, undressDeckLift, liftKey } from './DeckLift.js';
+import { dressDeckLift, stepDeckLift, undressDeckLift, liftKey, liftFloors } from './DeckLift.js';
 import { dressStationLife, stepStationLife, undressStationLife, dressTram } from './StationLife.js';
 import { dressObelisk, dressBoards, stepBoards, standingReading, companyOf } from './StationBoards.js';
 /* What a man on the roll is CALLED — one rule, `Company.js`'s own, so the job
@@ -70,7 +70,10 @@ import { countersAt, counterById, COUNTERS } from './Vendors.js';
 import { resident } from './StationCast.js';
 import { stepMedbay } from './Medbay.js';
 import { pitAtPlace } from './Pits.js';
-import { venueAtPlace, ticketFor, settleTickets } from './Tote.js';
+/* THE ROOM'S OWN NOISE — see `stepCrowd`. The same singleton sixteen other
+ * game files reach for; §G4's crowd is a cue on the engine, not a new path. */
+import { audio } from '../engine/Audio.js';
+import { venueAtPlace, ticketFor, settleTickets, crowdAt } from './Tote.js';
 import { openWheelhouse, wheelhouseLine, drumQuote, WHEELHOUSE } from './Casino.js';
 /* THE JOB BOARD'S DOOR. `takeJob` is NOT here: a panel takes a job straight
  * off `Quests.js`, and a pass-through in this file would be a second name for
@@ -1086,7 +1089,21 @@ export function dressStation(world) {
    * The car faces the drum's centre, because the doors open on lift-space +Z
    * and a player who steps out of a lift into a wall has been given a bug.
    */
-  const shaft = SHAFTS.find((sh) => sh.id === (world._stationShaft || 'arrivals') && sh.decks.includes(deck))
+  /**
+   * WHICH OF THE THREE, and the answer is asked of the FLOOR ROW when the
+   * world was not told.
+   *
+   * `main.enterStation` copies the row's `shaft` onto `world._stationShaft`,
+   * so in the shipped game this is that row. It used to fall to the literal
+   * `'arrivals'` when nothing had been set — which is every check, every
+   * probe, and every deck whose row named no shaft — so the instrument and
+   * the game could disagree about where the car was without either of them
+   * being wrong on its own terms. Asking `liftFloors()` makes the default the
+   * same table the door reads, and the literal below is only what is left
+   * when a deck has no floor row at all.
+   */
+  const rowShaft = liftFloors().find((f) => f.deck === deck)?.shaft || null;
+  const shaft = SHAFTS.find((sh) => sh.id === (world._stationShaft || rowShaft || 'arrivals') && sh.decks.includes(deck))
     || SHAFTS.find((sh) => sh.decks.includes(deck));
   if (shaft) {
     const r = Math.hypot(shaft.x, shaft.z) || 1;
@@ -1668,6 +1685,57 @@ export function counterHere(world, place) {
  */
 function keeperSeed(counter, day) { return `keep:${counter.id}:${day | 0}`; }
 
+/**
+ * ══ WHAT A KEEPER'S ROW PUTS ON HIM ═══════════════════════════════════════
+ *
+ * `Vendors.keeper` has carried two APPEARANCE fields since the table was
+ * written — `helm` and `mando` — and until now the only thing either of them
+ * reached was `keeperOf`, which handed them straight back out again to a
+ * check. The Forge's row said `{helm: true, mando: true}`, #10's gazetteer row
+ * said *"Bo Vhett, a Mandalorian smith"*, V16 §A4 asked for *"maybe a
+ * mandalorian"* — and the man actually standing behind that counter was a
+ * human in robes, measured: `res_human`, 62 meshes, no plate and no bucket.
+ * A field that only a check can see is the dead control this tree keeps
+ * deleting, and these two had a player's sentence behind them, so they get a
+ * reader instead.
+ *
+ * TWO FIELDS, TWO INDEPENDENT ANSWERS, because they are two different facts:
+ *
+ *   `mando`  WHICH KIT. Beskar — the shop is called "Bo Vhett, beskar and
+ *            blade" — over the `jet` rig, which is the one set in
+ *            `ARMOUR_KITS` whose whole read is the pack between the shoulder
+ *            bells. A Mandalorian is a jet pack and a T-visor at any range,
+ *            and both of those are geometry `buildTrooper` has always had.
+ *            The plate is `ice`, which is the paint the armourer's own
+ *            1900-credit `beskar` row sells: "It is not paint. It is the
+ *            metal." A rust flash and a gold visor off the same rack.
+ *   `helm`   WHETHER THE BUCKET IS ON, and there is NO DEFAULT. `armourOf`
+ *            reads an absent `helmet` as a bucket, which is right for a
+ *            player's saved wardrobe — an old save must not strip a man's
+ *            helmet off — and wrong for a table where the field IS the
+ *            declaration: written that way, deleting `helm: true` from the
+ *            Forge's row changed nothing, which is a field that reads as
+ *            load-bearing and is not. So `!!want.helm`, and a row that wants
+ *            the bucket says so. `buildTrooper` builds the same head
+ *            `buildJedi` does when it is off, so a keeper with the helmet
+ *            down has his own face, his own species and his own hair —
+ *            exactly what the shop's own `helm-off` row sells the player.
+ *
+ * A row with neither is the seven other counters and gets `null`, which is
+ * `armourOf`'s own "no armour" and returns `buildPlayerBody` to `buildJedi`
+ * untouched. A row with `helm` and no `mando` is a keeper in line plate with
+ * the bucket on, because a helmet has to sit on a set of plates.
+ *
+ * Pure and exported so a check can hold a row against the body it produces
+ * without booting a world — and so nothing has to restate the table.
+ */
+export function keeperArmour(want) {
+  if (!want || (!want.mando && !want.helm)) return null;
+  return want.mando
+    ? { id: 'jet', helmet: !!want.helm, plate: 'ice', accent: 'rust', visor: 'sun' }
+    : { id: 'line', helmet: true, plate: 'bone', accent: 'ash', visor: null };
+}
+
 export function dressKeepers(world, st) {
   if (!world?.spawnEnemy) return 0;
   const day = stationDay();
@@ -1696,10 +1764,15 @@ export function dressKeepers(world, st) {
       });
     } catch { who = null; }
     if (!who) continue;
+    /* WHAT THE ROW PUTS ON HIM — see `keeperArmour`. It rides on the SPAWN
+     * because plate is geometry and the builder runs inside `Enemy`'s
+     * constructor; `Enemy`'s own note on `look` argues this for the whole
+     * family and this is the fourth member of it. */
+    const armour = keeperArmour(want);
     let body = null;
     try {
       body = world.spawnEnemy(`res_${who.species}`, new THREE.Vector3(spot.x, spot.y + 0.1, spot.z),
-        { team: world.player?.team ?? 0 });
+        { team: world.player?.team ?? 0, ...(armour ? { armour } : {}) });
     } catch { body = null; }
     if (!body) continue;
     body.team = world.player?.team ?? 0;
@@ -1715,8 +1788,11 @@ export function dressKeepers(world, st) {
     if (body.brain) body.brain.idle = true;
     if (body.rotation) body.rotation.y = yaw;
     body.position?.set(spot.x, spot.y + 0.1, spot.z);
+    /** What he has on, so the panel and the checks read the SAME answer the
+     *  builder was given rather than a second opinion about the row. */
+    body.stationArmour = armour;
     st.keepers.push({ id: c.id, body, who: { ...who, name: want.name || who.name },
-      helm: !!want.helm, mando: !!want.mando, x: spot.x, z: spot.z });
+      helm: !!want.helm, mando: !!want.mando, armour, x: spot.x, z: spot.z });
     made++;
   }
   return made;
@@ -1729,6 +1805,16 @@ export function dressKeepers(world, st) {
  * there is not — a check with no world still gets a name, a species and
  * whether the man is helmed, which is the whole of what the shop says about
  * him and is what makes the Mandalorian at #10 a fact rather than a field.
+ *
+ * ── AND IT NOW HAS A CALLER THAT IS NOT A CHECK ───────────────────────────
+ *
+ * "The panel's reader" was a description of a function nothing in `src/`
+ * called: `tools/checks/counter.mjs` invoked it directly and the counter
+ * panel printed the shop's NAME and the purse and nothing about the man over
+ * the counter at all. `main.showCounter` reads it now and prints `said` under
+ * the shop sign, so the Mandalorian at #10 is something a player is told as
+ * well as something a body shows. A function whose only caller is the check
+ * that tests it is the same defect as a field nothing reads.
  */
 export function keeperOf(counterOrId, world = null, day = null) {
   const c = typeof counterOrId === 'string' ? counterById(counterOrId) : counterOrId;
@@ -1750,8 +1836,32 @@ export function keeperOf(counterOrId, world = null, day = null) {
     helm: !!want.helm,
     /** V16 §A4: the Forge's smith is a Mandalorian and keeps the bucket on. */
     mando: !!want.mando,
+    /** The plate the row puts on him — `keeperArmour`'s answer, so the panel
+     *  and the body cannot disagree about what he is wearing. Null for the
+     *  six keepers who stand behind their counters in their own clothes. */
+    armour: live?.armour ?? keeperArmour(want),
+    /** ONE LINE FOR THE PANEL, built from the same four facts. */
+    said: describeKeeper(want.name || who.name, who.species, want.role || who.role, want),
     built: !!live?.body,
   };
+}
+
+/**
+ * A keeper in one sentence — the shop's own line under its sign.
+ *
+ * The species and the job are what every resident on the station has; the
+ * bucket and the beskar are what the row adds, and they are named ONLY when
+ * the row declares them, so six counters read "Thulith, a drazi clothier" and
+ * #10 reads "Bo Vhett, a helmed Mandalorian smith". Written here rather than
+ * in `main.js` because the sentence is a fact about the row and this is the
+ * file that owns the row's meaning.
+ */
+function describeKeeper(name, species, role, want) {
+  const bits = [];
+  if (want?.helm) bits.push('helmed');
+  bits.push(want?.mando ? 'Mandalorian' : String(species));
+  bits.push(String(role));
+  return `${name}, a ${bits.join(' ')}`;
 }
 
 export function beginStationName(world) {
@@ -2867,6 +2977,180 @@ function persistStanding(world, st) {
   setStanding(standing() + moved);
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+ *  THE CROWD IN THE ROOM — V16 §G4
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * *"a crowd that reacts to what happens in the pit/arena/race."*
+ *
+ * `Tote.VENUES[].crowd` was a STRING and an audit found it had no reader
+ * anywhere in `src/`: the row said "sixty in the seats" and the game had
+ * nothing at all behind it. The announcer was DOM text in `main.js`, so the
+ * Holo-theatre made exactly as much noise for a 40/1 shot winning by a nose as
+ * for a favourite strolling home, which is to say none.
+ *
+ * `Tote.crowdIn` is the model and it is pure. This is the half that spends it,
+ * and there are three things the player actually perceives:
+ *
+ *   IT IS HEARD    `audio.crowd` — the engine's own cue, three of its existing
+ *                  noise layers, positioned at the middle of the room. A roar
+ *                  is not a louder murmur: the shout layer only exists above
+ *                  the swell gate, and it moves up the band as the room does.
+ *   IT IS SEEN     the room FILLS. `StationLife`'s pool seats `crowd.in`
+ *                  bodies in the venue while a card is on, on top of the
+ *                  gazetteer's ordinary headcount, and lets them go when the
+ *                  night goes dark.
+ *   THEY LOOK      on a roar every resident inside the room turns to face the
+ *                  stage, the sand or the ring.
+ *
+ * ── WHY IT IS HERE AND NOT IN main.js ────────────────────────────────────
+ *
+ * `showTote` is a DOM panel on a `setTimeout`, and it only exists while the
+ * player has the board open. A crowd that could only be heard through the
+ * betting screen is a crowd that reacts to a menu. This runs in `stepStation`,
+ * off the world's own frame, so the room is loud whether or not you ever look
+ * at the card — which is the same rule `watch()` is built on.
+ */
+
+/** How far from the middle of a venue you can still hear it. */
+export const CROWD_EAR = 34;
+/** A swell under this is the room talking, not the room reacting. */
+export const ROAR_GATE = 0.12;
+/** Two roars closer together than this are one roar. */
+export const ROAR_GAP = 0.7;
+/** How often the wash under it is renewed while you are in the room. */
+export const MURMUR_EVERY = 1.6;
+
+const _crowdAt = new THREE.Vector3();
+
+/**
+ * WHICH VENUE THE PLAYER IS IN EARSHOT OF, or null.
+ *
+ * The room the player is standing IN wins outright; otherwise the nearest
+ * venue centre within `CROWD_EAR`, which is a little over the width of the
+ * Arena — you hear the bowl from the concourse outside its door.
+ */
+function venueInEarshot(world, st, px, pz) {
+  const inside = placeUnder(world, px, pz);
+  if (inside && venueAtPlace(inside.id)) return inside;
+  let best = null, bestD = CROWD_EAR * CROWD_EAR;
+  for (const rec of st.places.values()) {
+    const p = rec.place;
+    if (!venueAtPlace(p.id)) continue;
+    const dx = p.x - px, dz = p.z - pz;
+    const d2 = dx * dx + dz * dz;
+    if (d2 < bestD) { bestD = d2; best = p; }
+  }
+  return best;
+}
+
+/**
+ * THE ROOM, ONCE A FRAME.
+ *
+ * Everything it decides lands on `st.crowd`, which is the observable a check
+ * drives the shipped loop against — `roars` counts what was actually asked of
+ * the audio engine, `spec` is the last thing it asked for, and `heads` is what
+ * the life pool was told to seat. A field nothing writes is the defect this
+ * function exists to remove, so nothing here is written and not read.
+ */
+export function stepCrowd(world, st, dt) {
+  if (!(dt > 0)) return;
+  const cam = world.player?.position;
+  const px = cam ? cam.x : 0, pz = cam ? cam.z : 0;
+  const place = venueInEarshot(world, st, px, pz);
+  const c = st.crowd || (st.crowd = {
+    venue: null, place: null, says: '', in: 0, level: 0, swell: 0, moment: null,
+    roars: 0, spec: null, since: 0, murmurIn: 0, turned: 0,
+  });
+  const life = world._stationLife;
+  if (!place) {
+    /* Out of earshot of all three. The pool keeps nothing, so a room the
+     * player has walked away from stops being seated for a race. */
+    if (c.venue) { c.venue = null; c.place = null; c.in = 0; c.level = 0; c.swell = 0; c.moment = null; }
+    if (life?.crowd?.size) life.crowd.clear();
+    return;
+  }
+  const v = venueAtPlace(place.id);
+  const read = crowdAt(v.id, st.day | 0, st.hour);
+  const was = c.venue === v.id ? c.swell : 0;
+  c.venue = v.id; c.place = place.id; c.says = read.says;
+  c.in = read.in; c.level = read.level; c.swell = read.swell; c.moment = read.moment;
+  c.since += dt;
+
+  /* WHO IS IN THE ROOM. The life pool reads this in `reseat` and seats up to
+   * this many bodies in the venue instead of the gazetteer's quiet-room
+   * headcount. One Map entry, rewritten in place. */
+  if (life) {
+    if (!life.crowd) life.crowd = new Map();
+    life.crowd.set(place.id, read.in);
+    for (const id of life.crowd.keys()) if (id !== place.id) life.crowd.delete(id);
+  }
+
+  _crowdAt.set(place.x, floorOf(place) + 1.7, place.z);
+
+  /* ── THE ROAR. A RISE, not a level ────────────────────────────────────
+   * `swell` jumps on the frame the moment lands and decays from there, so a
+   * rise is the only thing that can be a new reaction. Gated on `ROAR_GAP` as
+   * well, because two moments on adjacent gates of a Pit bout are two thirds
+   * of a second apart and the room does not stop between them. */
+  const rising = read.swell > was + 0.015;
+  if (rising && read.swell >= ROAR_GATE && c.since >= ROAR_GAP) {
+    c.since = 0;
+    c.roars++;
+    c.spec = audio.crowd({
+      voices: read.in, temper: read.temper, swell: read.swell, level: read.level, pos: _crowdAt,
+    });
+    c.turned += turnToWatch(world, place);
+    c.murmurIn = MURMUR_EVERY;
+  } else {
+    /* ── AND THE WASH UNDER IT, renewed on its own beat. A room with people
+     * in it is never silent, and this is what makes walking in during a card
+     * different from walking in on a dark night. */
+    c.murmurIn -= dt;
+    if (c.murmurIn <= 0 && read.level > 0.05) {
+      c.murmurIn = MURMUR_EVERY;
+      c.spec = audio.crowd({
+        voices: read.in, temper: read.temper, swell: 0, level: read.level, pos: _crowdAt,
+      });
+    }
+  }
+}
+
+/**
+ * THE ROOM TURNS TO LOOK.
+ *
+ * `StationLife`'s walkers already write `body.facing` every frame and the
+ * animator reads it, so this is the same field used for the one thing a crowd
+ * does that a walking commuter does not: on a roar everyone in the venue faces
+ * the middle of it. It is the cheapest possible motion — one `atan2` per body
+ * in one room, on the frames a roar actually lands — and it is the difference
+ * between a room of people who happen to be standing there and a room that is
+ * watching something.
+ *
+ * Returns how many bodies were turned, which is what `st.crowd.turned` counts.
+ */
+function turnToWatch(world, place) {
+  const life = world?._stationLife;
+  if (!life?.live?.size) return 0;
+  const half = Math.max(place.w, place.d) / 2 + 1;
+  let n = 0;
+  for (const [key, body] of life.live) {
+    if (!body || body.dead || !body.position) continue;
+    /* The pool's own key is `${place.id}:${slot}` — the room a body was seated
+     * in, which is cheaper and more honest than a distance test against a
+     * yawed footprint. */
+    if (key.slice(0, key.indexOf(':')) !== String(place.id)) continue;
+    const dx = place.x - body.position.x, dz = place.z - body.position.z;
+    if (dx * dx + dz * dz > half * half) continue;
+    /* Already in the middle of the room: leave them alone rather than spin
+     * them on a zero-length vector. */
+    if (dx * dx + dz * dz < 0.04) continue;
+    body.facing = Math.atan2(dx, dz);
+    n++;
+  }
+  return n;
+}
+
 export function stepStation(world, dt) {
   const st = world._station;
   if (!st) return;
@@ -2905,6 +3189,9 @@ export function stepStation(world, dt) {
   /* AND #6'S BELLS, which cost one cached array and four hypots on deck 12 and
    * a single early return everywhere else. */
   stepBells(world, st);
+  /* AND THE THREE ROOMS WITH A CARD ON. One place lookup a frame and an early
+   * return on every deck that has no venue on it — see `stepCrowd`. */
+  stepCrowd(world, st, dt);
 
   const cam = world.player?.camera?.obj || world.player;
   if (!cam) return;

@@ -2841,6 +2841,85 @@ export class AudioEngine {
     this.tone({ freq: 110, freqEnd: 44, dur: 0.22, gain: 0.2 * power, type: 'sine', pos, prio: PRIO.world });
   }
 
+  /**
+   * ══ A ROOM FULL OF PEOPLE, REACTING ══════════════════════════════════════
+   *
+   * V16 §G4: *"a crowd that reacts to what happens in the pit/arena/race."*
+   *
+   * `Tote.js` decides WHAT the crowd is doing — how many are in, how hot they
+   * are, and how big the thing that just happened was. This is the only place
+   * that turns that into air, and it is three of this file's existing layers
+   * and no new path: pink noise for the throats, a bandpass for the shout on
+   * top, and a low swell underneath that is the room itself moving.
+   *
+   * ── WHAT MAKES A ROAR DIFFERENT FROM A MURMUR ────────────────────────────
+   *
+   * Not gain alone. A crowd getting louder also gets HIGHER and SHARPER: a
+   * murmur is a broad low wash with no shout in it, and a roar is the same
+   * wash with a peak at the top of the voice range riding over it. So `swell`
+   * moves the bandpass centre from 520 Hz to about 1500, opens the Q, and is
+   * the only thing that raises the shout layer at all. A cue that only scaled
+   * one number would be one sound at two volumes, which is what a crowd that
+   * does not react actually sounds like.
+   *
+   * `voices` sizes the wash rather than the shout — sixty in a raked bowl is a
+   * wider, lower body than twelve at a rail, and twelve at a rail is the
+   * sharper shout.
+   *
+   * ── AND IT RETURNS WHAT IT ASKED FOR ─────────────────────────────────────
+   *
+   * The spec is computed BEFORE anything is played and handed back whether or
+   * not there is a context, because every check in this repository runs with no
+   * `AudioContext` at all — `tools/dom-shim.mjs` defines none — and a cue that
+   * returned nothing headless could only ever be checked by reading its source.
+   * `tools/checks/tote.mjs` drives this method with a dull result and a
+   * dramatic one and compares the two specs, which is the only way a check in
+   * this tree can hear the difference.
+   */
+  crowd({ voices = 12, temper = 0.5, swell = 0, level = 0, pos = null } = {}) {
+    const n = Math.max(0, num(voices, 12));
+    const hot = Math.max(0, Math.min(1, num(temper, 0.5)));
+    const up = Math.max(0, Math.min(1, num(swell, 0)));
+    const bed = Math.max(0, Math.min(1, num(level, 0)));
+    /* How much body the room has. A wash of sixty is fuller and lower than a
+     * wash of twelve, and neither is silent. */
+    const body = Math.min(1, n / 48);
+    const spec = {
+      voices: Math.round(n),
+      /* The wash. Present whenever anybody is in the room at all. */
+      gain: Math.round((0.035 * bed + 0.16 * up) * (0.5 + 0.5 * body) * 1000) / 1000,
+      /* The shout on top, and `swell` is the only term in it. */
+      shout: Math.round(0.13 * up * (0.5 + 0.5 * hot) * 1000) / 1000,
+      /* Where the shout sits. A murmur has no peak; a roar peaks at the top of
+       * the voice. */
+      freq: Math.round(520 + 980 * up),
+      /* A cheer is longer than a bark and a crowd of sixty takes longer to
+       * stop than twelve do. */
+      dur: Math.round((0.5 + 1.7 * up + 0.5 * body) * 100) / 100,
+      q: Math.round((0.7 + 1.6 * up) * 100) / 100,
+    };
+    if (!this.ready || (spec.gain <= 0 && spec.shout <= 0)) return spec;
+    const P = PRIO.chatter;
+    /* THE WASH — pink, because a crowd is broadband and −3 dB/octave is what
+     * a room full of voices measures like; the deck's own bed makes the same
+     * argument at the bottom of this file's frequency range. */
+    this.noise({ dur: spec.dur, gain: spec.gain, type: 'lowpass',
+      freq: 900 + 700 * up, freqEnd: 380 + 400 * up, q: 0.8,
+      pos, pink: true, attack: 0.05 + 0.25 * (1 - up), curve: 2.6, prio: P });
+    if (spec.shout > 0) {
+      /* THE SHOUT — a bandpass over the same noise, rising and then falling
+       * away, which is the shape of a cheer and not of a siren. */
+      this.noise({ dur: spec.dur * 0.7, gain: spec.shout, type: 'bandpass',
+        freq: spec.freq, freqEnd: spec.freq * 0.62, q: spec.q,
+        pos, pink: false, attack: 0.04, curve: 2.2, prio: P });
+      /* …AND THE ROOM UNDER IT. Feet on tiers, benches, a rail. Sized by how
+       * many bodies there are rather than by how loud they are. */
+      this.noise({ dur: spec.dur * 0.55, gain: 0.06 * up * (0.4 + 0.6 * body), type: 'lowpass',
+        freq: 220, freqEnd: 70, q: 0.7, pos, pink: true, attack: 0.03, curve: 3, prio: P });
+    }
+    return spec;
+  }
+
   ui(kind = 'hover') {
     /**
      * A WAVE ARRIVING IS NOT A UI SOUND, and this is where it stopped being one.

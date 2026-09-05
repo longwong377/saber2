@@ -3022,6 +3022,15 @@ export class Enemy {
      * existed would be wearing it nowhere. `CompanionKinds.growthOptsFrom` is
      * the one writer and `CompanionDeck` calls the same function. */
     this._cmpGrow = opts?.companionGrowth ?? null;
+    /* …AND WHAT A STATION KEEPER HAS ON, which is the fourth thing that can
+     * only arrive on the spawn and arrives for the identical reason: plate is
+     * geometry, `buildPlayerBody` decides it, and the builder runs inside this
+     * constructor. `Station.keeperArmour` is the one writer and it reads
+     * `Vendors.keeper`'s `helm` and `mando` — two fields that declared a
+     * helmeted Mandalorian at #10 The Forge and dressed nobody, because there
+     * was no door from a shop's row to the body standing behind its counter.
+     * Null for every body in the game that is not behind one. */
+    this._armour = opts?.armour ?? null;
     /* Which chassis's vocabulary his kit is written in — the `Trooper` record
      * has carried `kind` since attributes existed, so the spawn hands it over
      * rather than this file guessing from an archetype name. */
@@ -3474,6 +3483,11 @@ export class Enemy {
        * off the rig it gets back, so anatomy follows; the combat numbers
        * stay on `A.scale`, which is what "the size buys nothing" means. */
       ...(this._cmpScale ? { scale: this._cmpScale } : {}),
+      /* The plate a station keeper wears, and it is LAST so a shop's row beats
+       * the archetype's own kit — the same order the man's own look is spread
+       * in. `buildPlayerBody` reads it; `buildJedi` never sees it, because a
+       * body wearing armour is not built by `buildJedi` at all. */
+      ...(this._armour ? { armour: this._armour } : {}),
     };
     /* THE MARKSMAN'S PLATE MOVED TO `BODY_KITS` — see the note there. It used
      * to be a special case on this line, spread AFTER the man's own kit, so a

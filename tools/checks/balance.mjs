@@ -1302,4 +1302,165 @@ export async function run({ check, assert }) {
     return 'both axes off one paired run, both printed, and either one counts as seen';
   });
 
+  /* ══════════════════════════════════════════════════════════════════════
+   *  THE ECONOMY, AGAINST WHAT A RUN ACTUALLY PAYS
+   * ══════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * WHAT A RUN PAYS, MEASURED, AND WHAT IT PAYS FOR.
+   *
+   * The defect this replaces is `counter.mjs`'s own "the economy is bounded"
+   * check, which divided every price by `Credits.PER_RUN_CAP` and called the
+   * quotient "capped runs". The cap is the MOST a run can pay and no run has
+   * ever paid it: at 900 it made a 3200-credit plate read as 3.6 runs and the
+   * check went green over a purchase that was really twenty-three. A check that
+   * passes because it is grading against the wrong denominator is the shape
+   * this whole file exists to catch — it is `measureSwing` restating Combat's
+   * gates, one file over.
+   *
+   * So the denominator here is MEASURED, every time, and nothing below is a
+   * remembered number:
+   *
+   *   THE RUNS ARE THE INSTRUMENT'S OWN. `simulateRun` at `MODEL.skillLadder`'s
+   *     three guard-error settings, which is this repository's one statement of
+   *     what "weak", "average" and "strong" play mean. Seeded, so the figures
+   *     are the same on every box.
+   *   THE PAY IS THE SHIPPED FUNNEL. `main.js`'s `record()` is lifted and
+   *     compiled — the same lift `work.mjs` uses and for the same reason — and
+   *     the real `payForRun` is handed to it, so what settles is the ending
+   *     every mode goes through and not a second copy of the earn table. If
+   *     `record()` stops paying, `purse()` stays at zero and every band below
+   *     fails at once.
+   *   THE PRICES ARE THE SHELF AS A PLAYER MEETS IT. `Counter.offerFrom` over
+   *     the real `Vendors.COUNTERS` for four station weeks, which is the tier
+   *     weighting, the standing markup and the black market's shut days all
+   *     applied — not a flat read of the stock tables.
+   *
+   * ── THE BANDS, AND WHY THEY ARE THE ONES THEY ARE ─────────────────────
+   *
+   * Measured before anything moved: careless 84, competent 143, sharp 189
+   * credits a run, against a shelf whose median row is 70 and whose dearest is
+   * 3200. So the audit's "a hundred runs for one item" was true at the TOP of
+   * the shelf — 23 runs for the plate — and false everywhere else: the median
+   * row was already half a run and a bowl of noodle a tenth of one. Both ends
+   * moved, and they moved in opposite directions.
+   *
+   *   MEDIAN ROW: 0.1 to 1.5 runs. The median row on a shelf that includes a
+   *     food court is a meal or a stool, and it should be a thing you buy on
+   *     the way past. The floor is what stops it becoming free.
+   *   DEAREST ROW: 3 to 7 runs. This is the band the brief asks for and this is
+   *     the row it is about. `Progress.js`'s amendment promises the dearest
+   *     things cost "several runs", and several is the entire mechanism by
+   *     which a purse buys patience rather than power.
+   *   STRONG / WEAK: at least 3. Below that the earn table is not paying for
+   *     skill, and it CANNOT be fixed by re-weighting a linear sum — the depth
+   *     spread across the ladder is 2.3x and the kill spread 2.7x, so a linear
+   *     combination of the two is capped at 2.7. That is why `DEPTH_RAMP`
+   *     exists, and this assertion is what holds it there.
+   *   THE FLOOR: the worst modelled run must clear the cheapest thing on the
+   *     shelf. "A bad run is not a wasted evening" is `EARN`'s own sentence
+   *     about the kills row; this is that sentence as a number.
+   */
+  check('balance: a run pays for the shelf it is measured against', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const C = await import('../../src/game/Credits.js');
+    const K = await import('../../src/game/Counter.js');
+    const Vend = await import('../../src/game/Vendors.js');
+    const { isRun } = await import('../../src/game/Progress.js');
+
+    /* ── THE SHIPPED ENDING, LIFTED ──────────────────────────────────── */
+    const src = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const at = src.indexOf('\nfunction record(stats = null) {');
+    assert(at > 0, 'main.js no longer declares `function record(stats = null)`');
+    const end = src.indexOf('\n}\n', at);
+    assert(end > at, 'the body of record() could not be delimited');
+    const recordBody = src.slice(at + 1, end + 2);
+    assert(/payForRun\(/.test(recordBody),
+      'main.js\'s record() does not call payForRun — every ending in the game is unpaid');
+
+    const stub = { players: [], director: { wave: 0 }, manifest: null, runStats: () => ({}), notify() {} };
+    // eslint-disable-next-line no-new-func
+    const make = new Function('scope', 'recordRun', 'sessionOr', 'settings', 'foldCompanion',
+      'emptyLarder', 'payForRun', 'clearTuning', 'holdLessons', 'awayFor', 'HOURS_PER_SECOND',
+      'settleRun', 'isRun', `const world = scope.world;\n${recordBody}\nreturn record;`);
+    const record = make({ world: stub }, () => {}, () => 'roguelite', { order: 'jedi', species: 'human' },
+      () => {}, () => {}, C.payForRun, () => {}, () => {}, () => {}, 1 / 120, () => [], isRun);
+    /** Pay one run's summary through the funnel and read the purse it left. */
+    const settle = (stats) => { C.clearCredits(); stub._recorded = false; record(stats); return C.purse(); };
+
+    assert(settle({ wave: 3, won: false, kills: 20, saves: 0 }) > 0,
+      'the lifted ending paid nothing at all — the harness is not reaching payForRun');
+
+    /* ── THE LADDER ──────────────────────────────────────────────────── */
+    const SEEDS = 24;
+    const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+    const tier = (sigma) => {
+      const paid = [], secs = [];
+      for (let s = 0; s < SEEDS; s++) {
+        const r = B.simulateRun({ difficulty: 'knight', level: LEVEL_ORDER[0], seed: 1000 + s, sigma });
+        const kills = r.waveLog.reduce((a, w) => a + w.killed, 0);
+        secs.push(r.waveLog.reduce((a, w) => a + w.t, 0));
+        paid.push(settle({ wave: r.died, won: !!r.survived, kills, saves: 0 }));
+      }
+      return { pay: mean(paid), worst: Math.min(...paid), secs: mean(secs) };
+    };
+    const ladder = B.MODEL.skillLadder.map((s) => ({ name: s.name, ...tier(s.sigma) }));
+    const weak = ladder[0], average = ladder[Math.floor(ladder.length / 2)];
+    const strong = ladder[ladder.length - 1];
+    C.clearCredits();
+
+    /* ── THE SHELF ───────────────────────────────────────────────────── */
+    const seen = [];
+    for (const counter of Vend.COUNTERS) {
+      for (let day = 0; day < 28; day++) {
+        const offer = K.offerFrom(counter, { day, order: null, standing: 0 });
+        if (!offer.open) continue;
+        for (const row of offer.rows) seen.push(row.price);
+      }
+    }
+    assert(seen.length > 200, `only ${seen.length} rows were put out over four weeks — nothing to price`);
+    seen.sort((a, b) => a - b);
+    const median = seen[Math.floor(seen.length / 2)];
+    const cheapest = seen[0];
+    const dearest = Math.max(...Vend.everyRow().map((r) => K.priceOf(r)));
+
+    /* ── THE BANDS ───────────────────────────────────────────────────── */
+    const runsFor = (price) => price / average.pay;
+    const medianRuns = runsFor(median), dearRuns = runsFor(dearest);
+
+    assert(medianRuns >= 0.1 && medianRuns <= 1.5,
+      `the median row on a shelf is ${median} credits against an average run's ${average.pay.toFixed(0)} — `
+      + `${medianRuns.toFixed(2)} runs, and the band is 0.1 to 1.5. Under it the shelf is free; over it `
+      + 'the ordinary half of every counter is something to save for, which is not what an ordinary row is');
+    assert(dearRuns >= 3 && dearRuns <= 7,
+      `the dearest row in the game is ${dearest} credits, ${dearRuns.toFixed(1)} average runs, and the `
+      + 'band is 3 to 7. The amendment promises "several runs" and several is the whole of what stops a '
+      + 'purse being a power ladder — 23 runs is a shelf nobody reaches and 1 is a shelf nobody saves for');
+
+    const ratio = strong.pay / weak.pay;
+    assert(ratio >= 3,
+      `strong play pays ${strong.pay.toFixed(0)} against weak play's ${weak.pay.toFixed(0)} — ${ratio.toFixed(2)}x, `
+      + 'and the floor is 3. A linear earn table cannot reach it: the depth and kill spreads across this '
+      + 'ladder are 2.3x and 2.7x, so the rate has to rise with depth or skill does not pay');
+    assert(average.pay > weak.pay && strong.pay > average.pay,
+      `the ladder is not ordered: ${ladder.map((t) => `${t.name} ${t.pay.toFixed(0)}`).join(' / ')}`);
+
+    assert(weak.worst >= cheapest,
+      `the worst run on the weakest setting paid ${weak.worst} and the cheapest thing on any shelf is `
+      + `${cheapest} — a bad run is a wasted evening, which is the one thing EARN's kills row is for`);
+
+    /* AND THE CAP IS STILL A CAP, above honest play and below a farm. */
+    const best = C.payForRun({ depth: 999, won: true, kills: 99999, saves: 999 });
+    C.clearCredits();
+    assert(best.paid === C.PER_RUN_CAP && best.capped,
+      `a 999-deep run paid ${best.paid} against a cap of ${C.PER_RUN_CAP}`);
+    assert(C.PER_RUN_CAP > strong.pay * 2,
+      `the cap is ${C.PER_RUN_CAP} against a strong run's ${strong.pay.toFixed(0)} — it is binding on `
+      + 'ordinary play, which makes it a rate rather than a brake on farming');
+
+    return `${ladder.map((t) => `${t.name} ${t.pay.toFixed(0)}cr/${(t.pay / (t.secs / 60)).toFixed(0)}pm`).join(' · ')}`
+      + `; strong/weak ${ratio.toFixed(2)}x; shelf ${cheapest}–${dearest}, median ${median} `
+      + `(${medianRuns.toFixed(2)} runs), dearest ${dearRuns.toFixed(1)} runs`;
+  });
+
 }

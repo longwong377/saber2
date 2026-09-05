@@ -5172,9 +5172,44 @@ if (STATION_ENABLED) {
     MENU_FLOOR,
     { n: 12, get label() { return `${stationName()} · Launch well`; }, level: 'station', deck: 12, shaft: 'flight' },
     { n: 32, get label() { return `${stationName()} · Flight ops`; }, level: 'station', deck: 32, shaft: 'flight' },
-    { n: 40, get label() { return `${stationName()} · Concourse`; }, level: 'station', deck: 40 },
-    { n: 44, get label() { return `${stationName()} · Living deck`; }, level: 'station', deck: 44 },
-    { n: 48, get label() { return `${stationName()} · Working deck`; }, level: 'station', deck: 48 },
+    /**
+     * ── AND THE DRUM'S THREE DECKS NAME THEIR SHAFT, WHICH THEY NEVER DID ─
+     *
+     * ══ THE DEFECT: A CAR EIGHTY-TWO METRES FROM THE MAN WHO GOT OUT OF IT ══
+     *
+     * `shaft` is what `main.enterStation` copies onto `world._stationShaft`
+     * and `Station.dressStation` reads to decide which of the drum's three
+     * lift lobbies the car is standing in. Decks 12 and 32 pin `flight` and
+     * deck 60 pins `atrium` because those are the only shafts that reach
+     * them. These three rows named none — and `SHAFTS.arrivals` is first in
+     * the table, so `world._stationShaft || 'arrivals'` fell to it every
+     * time, on all three decks, for ever.
+     *
+     * `STATION_LEVEL.start` is `[-24, 2]` and says in as many words where
+     * that is: *"in the atrium lobby, facing the Concourse."* Measured, with
+     * the fallback in force:
+     *
+     *   the car in arrivals stands at (0.0, -77.2)   82.8 m from the player
+     *   the car in atrium   stands at (-29.2, 0.0)    5.6 m from the player
+     *
+     * So a player rode a lift, the doors opened, and they were put down two
+     * thirds of the way across the drum from the car they had just been
+     * standing in — with a second empty lobby at their feet. That is what a
+     * field with a silent default costs: nothing was ever wrong in
+     * `dressStation`, and the one table that says which shaft a floor uses
+     * simply never said it for the three decks a player spends their time on.
+     *
+     * ATRIUM AND NOT ARRIVALS, because `start` is the authority on where the
+     * deck puts you down and the atrium is what it picked: the Concourse's
+     * inner end opens onto the atrium, the balcony rings it, and #54's own
+     * shaft is the one that carries on up. The arrivals and flight lobbies
+     * are still BUILT on every drum deck — `buildLobbies` walks all three —
+     * they are simply lobbies whose car is somewhere else, which is what a
+     * lift lobby in a building with three lifts looks like.
+     */
+    { n: 40, get label() { return `${stationName()} · Concourse`; }, level: 'station', deck: 40, shaft: 'atrium' },
+    { n: 44, get label() { return `${stationName()} · Living deck`; }, level: 'station', deck: 44, shaft: 'atrium' },
+    { n: 48, get label() { return `${stationName()} · Working deck`; }, level: 'station', deck: 48, shaft: 'atrium' },
     /**
      * ── AND THE DOME, WHICH WAS THE ONE ROOM WITH A VERB AND NO WAY IN ────
      *

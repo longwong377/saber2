@@ -34,7 +34,8 @@
  *
  * `Station.dressKeepers` is what finally reads `keeper`: it stands a real body
  * behind each counter, drawn from the station's own census, wearing whatever
- * the row asks for. It was declared here and read by NOBODY for a whole lane —
+ * the row asks for — including the plate, which took a second pass: the body
+ * arrived and `helm` and `mando` still reached nobody. See `keeperArmour`. It was declared here and read by NOBODY for a whole lane —
  * `ARMOURER.keeper` said `{role:'smith', species:'human', helm:true}` and the
  * Forge had no smith in it at all, while #10's gazetteer row still promised
  * *"a Wookiee smith"*. A field nothing reads is the dead control this tree
@@ -101,6 +102,29 @@ const K = (id, name, tier, base, slot, value, blurb, extra = {}) => ({
   kind: 'keepsake', id, name, tier, base, slot, value, blurb, ...extra,
 });
 
+/**
+ * ══ AND A `singular` IS PRICED IN RUNS, BECAUSE THAT IS WHAT IT COSTS ═════
+ *
+ * `Counter.js` says a rung decides how OFTEN a row reaches a shelf and not what
+ * it costs, and `base` IS the price. Nothing said what a price MEANS, so the
+ * three singulars were authored at 3200, 2600 and 2100 against a per-run CAP of
+ * 900 — and `counter.mjs` divided them by that cap, called it 3.6 runs, and
+ * went green. The cap is not what a run pays. Driven through the shipped funnel
+ * at `balance.mjs`'s own middle skill setting, a run paid 143, so the beskar
+ * plate was TWENTY-THREE real runs and the shelf's whole top end was decorative.
+ *
+ * Two levers moved and both were needed. `Credits.EARN` grew a ramp (its own
+ * note argues that); these three came down to where an average run reaches them
+ * in about five, which is `Progress.js`'s amendment — "the dearest things cost
+ * several runs" — as a number rather than as a hope. Nothing below `rare` moved:
+ * measured against the same run a meal is a fifth of one and a piece of
+ * furniture is most of one, which is what those things should be.
+ *
+ * `balance.mjs`'s check derives both figures from the same simulation every
+ * time it runs, so a change to the ramp or to these rows is caught by the
+ * ratio it produces and not by a number somebody remembered to update.
+ */
+
 /* ── PROVISIONS — a run's worth, and `runOnly` is refused if absent ──────── */
 const P = (id, name, tier, base, effect, blurb, extra = {}) => ({
   kind: 'provision', id, name, tier, base, runOnly: true, effect, blurb, ...extra,
@@ -151,7 +175,7 @@ export const CLOTHIER = {
     K('cut-braid', 'A braid that swings', 'rare', 380, 'hair', 'live', 'Plaited so it moves. It costs you nothing and it is not free.'),
     K('tone-mid', 'Midnight bolt', 'rare', 520, 'capeTone', 7, 'Dyed nine times. It has depth in it.'),
     K('tone-blood', 'Oxblood, deep', 'rare', 480, 'capeTone', 9, 'The dye is Narn and the cloth is not.'),
-    K('tone-vorlon', 'Vorlon iridescent', 'singular', 2600, 'capeTone', 10, 'Nobody will tell you what it is made of.'),
+    K('tone-vorlon', 'Vorlon iridescent', 'singular', 1750, 'capeTone', 10, 'Nobody will tell you what it is made of.'),
   ],
 };
 
@@ -163,6 +187,14 @@ export const CLOTHIER = {
  * own name, and a people who would sell to either side. `keeper` is what
  * `Station.dressKeepers` builds the body from and it says all three things:
  * the species, the job and the bucket.
+ *
+ * AND THE BUCKET AND THE BESKAR NOW REACH THE BODY. `helm` and `mando` were
+ * declared here, returned by `keeperOf`, asserted by `counter.mjs` and read by
+ * nothing that builds anything: the man standing at #10 was `res_human` in
+ * robes for the whole of the lane that added him. `Station.keeperArmour` is
+ * the reader — `mando` picks the kit and the beskar, `helm` says whether the
+ * bucket is down — and it rides to the builder on the spawn, the same door
+ * a trooper's own kit comes in through. See it for the argument.
  *
  * WHAT HE SELLS IS THE FOUR FIELDS THE WARDROBE ACTUALLY HOLDS — which kit,
  * whether the bucket is on, and the three paints. The old table sold pauldrons
@@ -206,7 +238,7 @@ export const ARMOURER = {
     K('visor-black', 'Blacked visor', 'rare', 640, 'visor', 'char', 'Nothing at all comes back out of it.', { side: 'sith' }),
     K('paint-blood', 'Blood stripe', 'rare', 660, 'accent', 'blood', 'Earned, in the old regiments.'),
     K('paint-slate', 'Gunmetal', 'fine', 220, 'plate', 'slate', 'Not a colour. A finish.'),
-    K('beskar', 'Beskar plate', 'singular', 3200, 'plate', 'ice', 'It is not paint. It is the metal.'),
+    K('beskar', 'Beskar plate', 'singular', 1900, 'plate', 'ice', 'It is not paint. It is the metal.'),
   ],
 };
 
@@ -344,7 +376,7 @@ export const UNDERLIFT = {
     K('home-crate', 'An unmarked crate', 'common', 90, 'home', 'crate', 'He does not know what is in it either.'),
     K('home-locker', 'A locker with the plate filed off', 'fine', 180, 'home', 'locker', 'It locks. He will not say what it locked before.'),
     K('pet-eye', 'Something for its eyes', 'rare', 420, 'pet', { eye: 'blood' }, 'It is a dye. He says it is a dye.'),
-    K('home-bunk', 'A bunk, somebody\'s', 'singular', 2100, 'home', 'bunk', 'He will not say whose.'),
+    K('home-bunk', 'A bunk, somebody\'s', 'singular', 1500, 'home', 'bunk', 'He will not say whose.'),
   ],
 };
 

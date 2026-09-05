@@ -43,18 +43,31 @@
 import { readFile } from 'node:fs/promises';
 import { clocked } from './_shared.mjs';
 import {
-  researchedProbabilities, winProbabilities, formStrength, readForm, fieldProbabilities, blindnessOf, SKINS,
+  researchedProbabilities, winProbabilities, grudgeCarried, GRUDGE_STEP, GRUDGE_CAP, SKINS,
 } from '../../src/game/Spectacle.js';
 import * as Tote from '../../src/game/Tote.js';
+import { playWindow, bettingDays, agreesWithBookAt } from './_tote-edge.mjs';
 
 const {
   VENUES, venueById, venueAtPlace, FORM_DAYS, MAX_STAKE, BETS, TAKE, placesPaid,
   programmeAt, meetAt, racesOn, bookAt, makeYard, walkVenue,
-  boardFor, resultOf, ticketFor, settleTickets, standingsAt, watch, edgeOf, randomReturn, beatenBy, clearTote,
+  boardFor, resultOf, ticketFor, settleTickets, standingsAt, watch, edgeOf, beatenBy, clearTote,
 } = Tote;
 
 const SRC = new URL('../../src/game/Tote.js', import.meta.url);
 const pct = (n) => `${(n * 100).toFixed(2)}%`;
+
+/**
+ * HOW MANY BETS THE GATE CAN AFFORD AT EACH WINDOW.
+ *
+ * Bounded on purpose: a betting day here is a fresh yard, a fortnight replayed
+ * and one day bet on, which is thirteen races run for every race backed. The
+ * band is read off the low-variance estimator (see the bettor check), so a few
+ * thousand is enough to separate a point of edge from nothing;
+ * `tools/_toteedge.mjs` rides the same driver for a quarter of a million a
+ * window when the numbers themselves are in question.
+ */
+const BETS_PER_WINDOW = 2500;
 
 /** The projection of a reading a screen would actually print. Compared field
  * for field between a reader who bet and one who did not. */
@@ -74,20 +87,20 @@ function spread(a) {
 }
 
 /**
- * TWO PUNTERS, THE SAME MONEY, THE SAME RACES, DOWN ONE YARD.
+ * HOW OFTEN THE SHORTEST PRICE COMES IN, AND WHETHER THE YARD ALL GETS A TURN.
  *
- *   THE READER  backs the runner his reading of the PUBLIC log likes best —
- *               `researchedProbabilities`, which is handed no hidden field and
- *               infers what it can from results and weather.
- *   THE PIN     picks a runner off the card at random. Averaged over every
- *               runner the pin could have landed on rather than sampled with an
- *               actual coin: the same measurement with the picking noise taken
- *               out, which is how a seven-point gap is read in thirty thousand
- *               races instead of three million.
+ * A survey of a venue and NOT a bettor. It used to be a bettor as well — one
+ * who backed his top pick down a single yard for a thousand days — and both
+ * halves of that are why it is not any more: a yard walked that long has a
+ * form log saturated at `LOG_KEEP`, which is a book no player is ever handed,
+ * and a punter measured down one yard is one sample however many races he
+ * rides. `_tote-edge.mjs` does the betting, a fresh yard and a fortnight at a
+ * time. What is left here is the two facts about the FIELD that need a long
+ * walk and no wallet at all.
  */
-function twoPunters(venue, { yardSeed, races, warm = 200, STAKE = 1000 }) {
+function fieldSurvey(venue, { yardSeed, races, warm = 200 }) {
   const book = makeYard(venue, yardSeed);
-  let n = 0, read = 0, pin = 0, staked = 0, favWins = 0, ran = 0;
+  let n = 0, favWins = 0, ran = 0;
   const winners = new Set();
   for (const step of walkVenue(venue, { from: (yardSeed % 977) * 31, days: races, book })) {
     if (n >= races) break;
@@ -98,16 +111,8 @@ function twoPunters(venue, { yardSeed, races, warm = 200, STAKE = 1000 }) {
     ran++;
     winners.add(result.winner);
     if (result.winner === board.favourite) favWins++;
-    const probs = researchedProbabilities(step.race.card, step.race.ground);
-    let best = null;
-    for (const { id, p } of probs) if (!best || p > best.p) best = { id, p };
-    const price = new Map(board.runners.map((r) => [r.id, r.win]));
-    const home = result.winner != null ? price.get(result.winner) || 0 : 0;
-    read += result.winner === best.id ? STAKE * home : 0;
-    pin += (STAKE * home) / board.runners.length;
-    staked += STAKE;
   }
-  return { read: read / staked - 1, pin: pin / staked - 1, races: ran, favStrike: favWins / ran, winners: winners.size };
+  return { races: ran, favStrike: favWins / ran, winners: winners.size };
 }
 
 export async function run({ check, assert }) {
@@ -285,7 +290,7 @@ export async function run({ check, assert }) {
      */
     const rows = [];
     for (const v of VENUES) {
-      const r = twoPunters(v.id, { yardSeed: 4242, races: 1400, warm: 200 });
+      const r = fieldSurvey(v.id, { yardSeed: 4242, races: 1400, warm: 200 });
       const cap = v.skin === 'ARENA' ? 0.72 : 0.62;
       assert(r.favStrike < cap,
         `the favourite at ${v.id} won ${pct(r.favStrike)} of ${r.races} — a board nobody needs to read`);
@@ -577,96 +582,184 @@ export async function run({ check, assert }) {
 
   /* ══════════════════════════════════════════════════════════════════════
    *  5. THE BETTORS
-   * ══════════════════════════════════════════════════════════════════════ */
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * *"in life a good better will probably make money over time."*
+   *
+   * ── THE BAND, AND WHY IT HAS A CEILING AS WELL AS A FLOOR ─────────────
+   *
+   * A window where reading the card LOSES is a window whose form book is
+   * decoration — which is what all three of these were, and what the audit
+   * that started this measured: −11.4% in the Pit, +0.8% at the Arena. A
+   * window where reading it prints money is not a window either; it is a bug
+   * with a queue in front of it. So the claim asserted below is two-sided at
+   * every one of the three rooms:
+   *
+   *   THE FORM-READER   backs the overlays his reading of the PUBLIC card
+   *                     finds, and makes between a point and five points a
+   *                     bet. `BAND`.
+   *   THE PIN           picks off the card and loses. So does the man who
+   *                     backs the market leader every time.
+   *
+   * ── WHAT WAS ACTUALLY WRONG, IN THREE NUMBERS ─────────────────────────
+   *
+   *   1. THE ODDS WERE NOT QUOTED FROM THE PROBABILITIES THE RESULT IS DRAWN
+   *      FROM. `SKINS.sigma` is the one parameter of the model behind every
+   *      price, and it was wide in all three rooms: the model's own top pick
+   *      was quoted at 0.494 in the Pit and won 0.528 — seven points of
+   *      relative error, handed free to anybody backing favourites and
+   *      nothing whatever to do with reading a form book. Refitted against
+   *      the sim's own winners; the ladder is in `Spectacle.SKINS`.
+   *
+   *   2. THE FORM BOOK IN TWO OF THE THREE ROOMS COULD NOT BE READ. A
+   *      fighter's temper and footing barely move with the going, so the
+   *      going-splits `readForm` runs recover almost nothing of them —
+   *      measured on the book the window actually prints, the split reading
+   *      correlates 0.34 with the truth on the pods, 0.03 in the Pit and
+   *      −0.03 at the Arena, and the `k` that scaled it was ten times too
+   *      big in both fight rooms. A reader was therefore betting on
+   *      amplified noise into an 8% take, which is exactly the shape of an
+   *      11% loss.
+   *
+   *   3. THE ONE COLUMN THAT DOES PREDICT A FIGHT WAS PUBLISHED AND PRICED
+   *      BY NOBODY. See the head-to-head check below: the count this file
+   *      writes IS the engine's hidden grudge, to the last digit.
+   *
+   * ── AND THE MEASUREMENT ITSELF WAS FLATTERING THE READER ──────────────
+   *
+   * The old `twoPunters` walked ONE yard for a thousand days and bet all the
+   * way down it, so every runner's form log had saturated at `LOG_KEEP` — 60
+   * starts. The window hands over `FORM_DAYS` of replay, which is 27.9 starts
+   * a runner at the Holo-theatre, 17.8 in the Pit and 8.1 at the Arena. The
+   * driver in `_tote-edge.mjs` builds a fresh yard, replays the fortnight and
+   * bets one day, which is `bookAt` line for line — and the first check below
+   * settles that against `bookAt` itself rather than asserting it in a
+   * comment.
+   */
+  const BAND = Object.freeze({ low: 0.01, high: 0.05 });
 
-  check('tote: a punter who reads the form beats one who picks with a pin', () => {
+  check('tote: the bettors ride the book the window hands over, and it is the short one', () => {
     /**
-     * *"in life a good better will probably make money over time."*
-     *
-     * The engine's suite proves this on its own circuit; this drives it END TO
-     * END through the tote's prices — the board this file derives, the field
-     * this file draws, and the form book this file replays out of nothing.
-     *
-     * ── AND THE ERROR BAR IS ACROSS YARDS, NOT ACROSS RACES ─────────────
-     *
-     * A yard is ONE SAMPLE however many races you run down it: the hidden term
-     * that makes a pod good in the wet is drawn once and never redrawn, so a
-     * thousand races down one yard are a thousand correlated races. Measured
-     * that way a favourite-backer read +14.6% on one yard, which is not
-     * possible in expectation and was the tell. So the punters ride a dozen
-     * INDEPENDENT yards and the spread is taken across those.
-     *
-     * ── WHY THE HOLO-THEATRE CARRIES THE BAR AND THE OTHER TWO REPORT ───
-     *
-     * The engine's tables say plainly how much reading is worth in each room:
-     * `leftBlind` is 0.65 on the pods and 0.90 in both fight skins, which is
-     * the statement that nine tenths of what a fight hides stays hidden however
-     * hard you read. So the Holo-theatre is the reading room and the other two
-     * are not, and the honest bar is a hard one where the design says research
-     * pays and the direction where it says it barely does. The numbers for all
-     * three are printed either way.
+     * The cheapest way to write a betting check that passes is to measure a
+     * punter holding a form book no player can get. This is that check, and it
+     * runs before any of the numbers below are believed.
      */
-    const rows = [];
-    const gaps = [];
-    for (const [venue, yards, races] of [['holo-theatre', 20, 1500], ['the-pit', 16, 1200], ['the-arena', 20, 1200]]) {
-      const read = [], pin = [];
-      for (let y = 0; y < yards; y++) {
-        const r = twoPunters(venue, { yardSeed: 1000 + y * 7717, races });
-        read.push(r.read); pin.push(r.pin);
+    let same = 0;
+    for (const v of VENUES) {
+      for (const day of [48, 60, 91]) {
+        clearTote();
+        assert(agreesWithBookAt(v.id, day),
+          `the driver's book at ${v.id} on day ${day} is not the one bookAt hands the player — `
+          + 'every bettor measured on it is betting in another game');
+        same++;
       }
-      const gap = spread(read.map((x, i) => x - pin[i]));
-      const R = spread(read), P = spread(pin);
-      const t = gap.mean / gap.se;
-      gaps.push(gap);
-      assert(P.mean < -0.02, `a pin returned ${pct(P.mean)} at ${venue} — the room is giving money away`);
-      if (venue === 'holo-theatre') {
-        /* THE HARD BAR, in the room the player's sentence is about. */
-        assert(gap.mean > 0 && t > 3,
-          `at the podracing the reader returned ${pct(R.mean)} and the pin ${pct(P.mean)} over ${yards} `
-          + `yards — a gap of ${pct(gap.mean)} ± ${pct(gap.se)}, which is ${t.toFixed(1)} standard errors `
-          + 'and not "more than noise"');
-      }
-      rows.push(`${venue} reader ${pct(R.mean)} pin ${pct(P.mean)} gap ${pct(gap.mean)}±${pct(gap.se)} t ${t.toFixed(1)}`);
     }
-    /**
-     * AND THE STATION, ALL THREE ROOMS TOGETHER — a punter who walks the deck
-     * with the form book against one who walks it with a pin. The fight rooms
-     * carry a wide error bar on their own (a yard of fourteen is a small
-     * population and its per-yard returns are long-tailed), so the claim that
-     * has to hold across the deck is made across the deck.
-     */
-    const pooled = {
-      mean: gaps.reduce((a, g) => a + g.mean, 0) / gaps.length,
-      se: Math.hypot(...gaps.map((g) => g.se)) / gaps.length,
-    };
-    const T = pooled.mean / pooled.se;
-    assert(pooled.mean > 0 && T > 3,
-      `across the three rooms the form book was worth ${pct(pooled.mean)} ± ${pct(pooled.se)} a bet against `
-      + `a pin, which is ${T.toFixed(1)} standard errors — reading is not paying for the walk`);
-    return `${rows.join('; ')}; all three ${pct(pooled.mean)}±${pct(pooled.se)} (t ${T.toFixed(1)})`;
+    /* AND IT IS SHORT. `LOG_KEEP` is 60 rows; a fortnight writes a fraction of
+     * that, and how big a fraction is the whole difference between a reading
+     * room and a noise generator. */
+    const rows = [];
+    for (const v of VENUES) {
+      clearTote();
+      const b = bookAt(v.id, 60);
+      const per = b.entrants.reduce((a, e) => a + e.form.log.length, 0) / b.entrants.length;
+      assert(per > 4, `${v.id} hands over ${per.toFixed(1)} starts a runner — that is not a form book`);
+      assert(per < 60, `${v.id} hands over ${per.toFixed(1)} starts a runner, which is LOG_KEEP — `
+        + 'the book has saturated and the reader being measured is not the player');
+      rows.push(`${v.id} ${per.toFixed(1)}`);
+    }
+    return `${same} books identical to bookAt; starts a runner: ${rows.join(', ')}`;
   });
 
-  check('tote: a pin loses more than the house takes, which is why the form book is worth the walk', () => {
+  check('tote: a punter who reads the form is paid for it at every window, and one who does not is not', () => {
     /**
-     * The room's cut and a punter's loss are two different numbers and the gap
-     * between them is the whole reason a reading room is on the map.
+     * The bettors are driven end to end: `boardFor` prices it, `ticketFor`
+     * writes the ticket against the station clock, `resultOf` runs it and
+     * `settleTickets` pays. Nothing here re-derives a price or a payout.
      *
-     * `edgeOf` buys the whole book and gets back exactly `1 − take`. A pin
-     * picks one runner and loses MORE, every time, at all three venues —
-     * because the board is deliberately flatter than the truth (it cannot see
-     * the hidden terms, so from where it stands the race really is less
-     * predictable), and a flat board prices outsiders shorter than they
-     * deserve. That is the favourite–longshot bias, it is a real thing in a
-     * real market, and it is the shape of the money the reader is taking.
+     * ── AND THE BAND IS READ OFF THE LOW-VARIANCE ESTIMATOR ──────────────
+     *
+     * A ticket pays the price or nothing, so the realised return of a bettor
+     * with a two-point edge takes a quarter of a million bets to separate from
+     * zero — which `tools/_toteedge.mjs` does, and which a gate cannot. The
+     * same expectation is `p × price − 1` under the probabilities the RESULT
+     * IS DRAWN FROM, and that reads the same number with a fortieth of the
+     * variance. It is the trick the pin has always used here.
+     *
+     * IT IS ONLY WORTH ANYTHING IF THAT MODEL IS A MODEL OF THIS SIMULATION,
+     * so the realised money is measured too and the two are required to agree
+     * inside the realised run's own error bar. A model that had drifted off
+     * the sim — which is defect (1) above — shows up there and nowhere else.
+     */
+    const rows = [];
+    for (const venue of VENUES.map((v) => v.id)) {
+      clearTote();
+      const r = playWindow(venue, { bets: BETS_PER_WINDOW, yardSeed: 4242 });
+      const R = r.reader, P = r.pin, F = r.favourite;
+      const band = (b) => `${pct(b.expect)}±${pct(b.expectSe)} (paid ${pct(b.roi)}±${pct(b.se)})`;
+
+      assert(R.bets > r.races * 0.05,
+        `the form-reader found a bet in only ${R.bets} of ${r.races} races at ${venue} — a reader who never `
+        + 'bets is not a reader, he is an abstainer');
+      assert(R.expect - 2 * R.expectSe > 0,
+        `reading the form at ${venue} returned ${band(R)} — at or below zero the form book is decoration, `
+        + 'which is exactly the defect this check was written for');
+      assert(R.expect + 2 * R.expectSe > BAND.low,
+        `reading the form at ${venue} returned ${band(R)}, under the ${pct(BAND.low)} floor the band claims`);
+      assert(R.expect - 2 * R.expectSe < BAND.high,
+        `reading the form at ${venue} returned ${band(R)} — over the ${pct(BAND.high)} ceiling, which is not `
+        + 'a punter, it is a printing press and the house would shut the window');
+      /* THE MONEY AGREES WITH THE MODEL, or neither number means anything. */
+      assert(Math.abs(R.roi - R.expect) < 3 * Math.hypot(R.se, R.expectSe),
+        `at ${venue} the form-reader was PAID ${pct(R.roi)}±${pct(R.se)} and the model said he should have had `
+        + `${pct(R.expect)} — the prices are not quoted from the probabilities the result is drawn from`);
+
+      assert(P.expect + 2 * P.expectSe < 0,
+        `a pin at ${venue} returned ${band(P)} — the room is giving money away to a bettor with no opinion`);
+      assert(F.expect + 2 * F.expectSe < 0,
+        `backing the market leader at ${venue} returned ${band(F)} — the shortest price on the board is free `
+        + 'money and nobody needs to read anything');
+      assert(R.expect > P.expect + 0.01,
+        `at ${venue} reading the form was worth ${pct(R.expect - P.expect)} over a pin — the walk to the `
+        + 'reading room is not paying for itself');
+      rows.push(`${venue} reader ${band(R)} on ${R.bets}, pin ${pct(P.expect)}, leader ${pct(F.expect)}`);
+    }
+    return rows.join('; ');
+  });
+
+  check('tote: a pin loses the house cut and no more, because the board is honest about its own field', () => {
+    /**
+     * ── THIS CHECK USED TO ASSERT THE BUG ────────────────────────────────
+     *
+     * It read `-pin > cut`: a pin had to lose MORE than the house takes, and
+     * the note under it explained why — the board is flatter than the truth,
+     * so it prices outsiders short, so a bettor spreading his money is buying
+     * them. That is the favourite–longshot bias, and it is a real thing in a
+     * real market. It was not what was happening here.
+     *
+     * What was happening here is that `sigma` was mis-fitted, so the board was
+     * flat where the model was flat and the model was WRONG: the market leader
+     * won more often than any price on the board said he would, by 2.5 points
+     * of relative error on the pods and 7.9 in the Pit. That is not a bias the
+     * house chose, it is a broken model, and the old assertion protected it —
+     * it would have gone red on the fix and green on the defect.
+     *
+     * With the model refitted against the sim's own winners, the arithmetic
+     * says what a pin must get: a board whose probabilities are the ones the
+     * result is drawn from returns `1 − take` to EVERY bettor with no
+     * information, whichever runner he picks. So the honest claim is equality,
+     * and the tolerance is the measurement's, not a hedge.
      */
     const rows = [];
     for (const v of VENUES) {
-      const cut = edgeOf('win', { venue: v.id, races: 1600 }).edge;
-      const pin = randomReturn({ venue: v.id, races: 1600 }).roi;
-      assert(-pin > cut,
-        `a pin at ${v.id} lost ${pct(-pin)} against a house cut of ${pct(cut)} — the outsiders are priced `
-        + 'better than the model, which is money on the floor');
-      assert(-pin < 0.35, `a pin at ${v.id} lost ${pct(-pin)} a bet — nobody comes back to that`);
+      clearTote();
+      const cut = edgeOf('win', { venue: v.id, races: 1200 }).edge;
+      const r = playWindow(v.id, { bets: 600, yardSeed: 777 });
+      const pin = r.pin.expect;
+      assert(pin < 0, `a pin at ${v.id} returned ${pct(pin)}`);
+      assert(Math.abs(-pin - cut) < 0.035,
+        `a pin at ${v.id} lost ${pct(-pin)} against a house cut of ${pct(cut)} — the board's own field is not `
+        + 'priced at the probabilities the sim draws from, and the gap is somebody\'s free money');
+      assert(-pin < 0.20, `a pin at ${v.id} lost ${pct(-pin)} a bet — nobody comes back to that`);
       rows.push(`${v.id} cut ${pct(cut)} pin ${pct(pin)}`);
     }
     return rows.join(', ');
@@ -676,77 +769,99 @@ export async function run({ check, assert }) {
    *  6. THE FILE
    * ══════════════════════════════════════════════════════════════════════ */
 
-  check('tote: the head-to-head is published, and pricing it did not pay', () => {
+  check('tote: the head-to-head is published, it is exact, and pricing it is what pays in a fight room', () => {
     /**
-     * `Spectacle.recordResult` gives every beaten entrant in a BOUT a hidden
-     * grudge against the one that beat it — up to 0.55 on a scale where a
-     * rating point is 1/22 — and the board cannot see it. It is created by a
-     * public event, so the tote publishes the count: `beatenBy`, written while
-     * the fortnight is replayed, which is the one column here the engine's own
-     * log does not carry.
+     * ── THIS CHECK USED TO ASSERT THAT PRICING IT DID NOT PAY ────────────
      *
-     * ── AND A PUNTER WHO PRICED IT LOST TO ONE WHO IGNORED IT ────────────
+     * It did not, and the note over `writeHeadToHead` said so: a bettor who
+     * added the count to the strength lost four and a half points in the Pit.
+     * The check's own failure message named the day this would stop being
+     * true — *"it now PAYS, and the note saying it does not is out of date"* —
+     * and this is that day, because the reason it did not pay was arithmetic
+     * and not economics.
      *
-     * The obvious bettor adds the grudge to the strength and re-prices. He is
-     * driven below and he is WORSE — measured, half a point at the Arena and
-     * four and a half in the Pit, both beyond their own error bars. The reason
-     * is that being beaten is not independent of being beatable: the count is
-     * loaded with the weakness that produced it, and adding it back on top of
-     * a rating that already prices that weakness double-counts.
+     * `Spectacle.recordResult` writes `hidden.grudge[w] = clamp(prev + 0.18,
+     * 0, 0.55)` and this file writes the COUNT of the same events. So the
+     * count is not a proxy for the grudge, it IS the grudge:
+     * `min(GRUDGE_CAP, GRUDGE_STEP × count)`, to the last digit, and the first
+     * half of this check settles that pair for pair rather than trusting it.
+     * The old bettor lost because he added an average grudge on top of a
+     * `formStrength` that had never carried one, with a coefficient nobody
+     * had fitted, on a walk long enough that every count had saturated at the
+     * cap and the column carried no signal at all.
      *
-     * So the column is PRINTED and not PRICED, which is a decision rather than
-     * an omission, and this is the measurement it was made on. A better model
-     * of it would be a real edge and is left on the table on purpose.
+     * `grudgeCarried` is that term done properly — a grudge is held against
+     * ONE opponent, so it is a property of the field and not of the entrant —
+     * with `SKINS.grudge` fitted against the sim's own winners, and it is now
+     * in the truth, in the reading room, and in the board at `houseRead`. It
+     * is the reason the Pit and the Arena have a reading room at all: their
+     * going-splits are worth a correlation of 0.03 and −0.03, and this is
+     * worth an exact copy of the biggest unseen term in either room.
      */
-    const yards = 10, races = 800, STAKE = 1000;
     const rows = [];
-    let column = 0;
-    for (const venue of ['the-arena', 'the-pit']) {
+    let pairs = 0, exact = 0;
+    for (const venue of ['the-pit', 'the-arena']) {
+      clearTote();
       const S = SKINS[venueById(venue).skin];
-      const read = [], grudge = [];
-      for (let y = 0; y < yards; y++) {
-        const book = makeYard(venue, 90000 + y * 5153);
-        let n = 0, a = 0, b = 0, staked = 0;
-        for (const step of walkVenue(venue, { from: y * 331, days: races, book })) {
-          if (n >= races) break;
-          const board = boardFor(step.race);
-          const result = resultOf(step.race);
-          n++;
-          if (n <= 200) continue;
-          const card = step.race.card, ground = step.race.ground;
-          const price = new Map(board.runners.map((r) => [r.id, r.win]));
-          const home = result.winner != null ? price.get(result.winner) || 0 : 0;
-          const pick = (probs) => probs.reduce((x, z) => (z.p > x.p ? z : x), probs[0]).id;
-          const plain = researchedProbabilities(card, ground);
-          /* The same reading with the grudge priced into the strength, through
-           * the engine's own model rather than a second one. */
-          const s = card.entrants.map((e) => {
-            let g = 0;
-            for (const f of card.entrants) if (f !== e) g += Math.min(0.55, 0.18 * beatenBy(e, f.id));
-            return formStrength(e, ground, { hidden: false }).total + readForm(e, ground).bonus
-              + g / Math.max(1, card.entrants.length - 1);
-          });
-          const gp = fieldProbabilities(s, Math.hypot(S.sigma, blindnessOf(ground, { survive: S.leftBlind })));
-          a += result.winner === pick(plain) ? STAKE * home : 0;
-          b += result.winner === pick(card.entrants.map((e, i) => ({ id: e.id, p: gp[i] }))) ? STAKE * home : 0;
-          staked += STAKE;
+      /* 1. THE IDENTITY. Every pair on every card, both directions. */
+      for (let day = 60; day < 72; day++) {
+        for (const race of racesOn(venue, day)) {
+          resultOf(race);
+          for (const e of race.card.entrants) {
+            for (const f of race.card.entrants) {
+              if (e === f) continue;
+              pairs++;
+              const said = Math.min(GRUDGE_CAP, GRUDGE_STEP * beatenBy(e, f.id));
+              const held = e.hidden.grudge?.[f.id] || 0;
+              if (Math.abs(said - held) < 1e-9) exact++;
+            }
+          }
+          const pub = grudgeCarried(race.card, { published: true });
+          const own = grudgeCarried(race.card);
+          assert(JSON.stringify(pub) === JSON.stringify(own),
+            `${venue} ${race.id}: the column the room prints is not the term the sim uses`);
         }
-        read.push(a / staked - 1); grudge.push(b / staked - 1);
-        column += book.entrants.filter((e) => e.form.beaten && Object.keys(e.form.beaten).length).length;
       }
-      const R = spread(read), G = spread(grudge);
-      rows.push(`${venue} plain ${pct(R.mean)} grudge ${pct(G.mean)}`);
-      assert(G.mean < R.mean + 0.005,
-        `pricing the head-to-head at ${venue} returned ${pct(G.mean)} against ${pct(R.mean)} for ignoring it — `
-        + 'it now PAYS, and the note over `writeHeadToHead` saying it does not is out of date');
+      /* 2. AND PRICING IT PAYS. The same reader twice over the same races —
+       * once with the column and once with it struck off the card — scored on
+       * the probabilities the result is drawn from, which is the low-variance
+       * reading `_tote-edge.mjs` explains. */
+      let withCol = 0, without = 0, n = 0, carried = 0;
+      for (const step of bettingDays(venue, { yardSeed: 5153, from: 500, days: 260 })) {
+        const race = step.race, board = boardFor(race);
+        const price = new Map(board.runners.map((r) => [r.id, r.win]));
+        const truth = new Map(winProbabilities(race.card, race.ground, { hidden: true }).map((t) => [t.id, t.p]));
+        const blind = { skin: race.card.skin,
+          entrants: race.card.entrants.map((e) => ({ ...e, form: { ...e.form, beaten: null } })) };
+        const pick = (probs) => probs.reduce((a, b) => {
+          const ev = b.p * (price.get(b.id) || 0);
+          return (!a || ev > a.ev) ? { id: b.id, ev } : a;
+        }, null);
+        const a = pick(researchedProbabilities(race.card, race.ground));
+        const b = pick(researchedProbabilities(blind, race.ground));
+        withCol += truth.get(a.id) * price.get(a.id) - 1;
+        without += truth.get(b.id) * price.get(b.id) - 1;
+        if (a.id !== b.id) carried++;
+        resultOf(race);
+        n++;
+      }
+      const gain = withCol / n - without / n;
+      assert(gain > 0.005,
+        `pricing the head-to-head at ${venue} was worth ${pct(gain)} a bet against ignoring it — the column `
+        + 'this file publishes is decoration again, and the fight rooms have no reading room');
+      rows.push(`${venue} with ${pct(withCol / n)} without ${pct(without / n)} (+${pct(gain)}, `
+        + `${pct(carried / n)} of cards changed hands)`);
     }
+    assert(pairs > 400 && exact === pairs,
+      `${pairs - exact} of ${pairs} published head-to-heads disagreed with the grudge the sim is carrying`);
     /* AND THE COLUMN IS ACTUALLY WRITTEN, or the note above is about nothing. */
+    clearTote();
     const book = bookAt('the-pit', 80);
     const met = book.entrants.filter((e) => e.form.beaten && Object.keys(e.form.beaten).length).length;
     assert(met >= book.entrants.length - 2,
       `only ${met} of ${book.entrants.length} in the Pit's yard carry a head-to-head after ${FORM_DAYS} days`);
-    assert(column > 0, 'the head-to-head column was never written during the measurement');
-    return `${rows.join(', ')}; ${met}/${book.entrants.length} carry a head-to-head`;
+    return `${exact}/${pairs} counts equal the sim's own grudge; ${rows.join('; ')}; `
+      + `${met}/${book.entrants.length} carry one`;
   });
 
   check('tote: it is a pure library and a window is not a wallet', () => {
@@ -939,4 +1054,313 @@ export async function run({ check, assert }) {
     return `${watched.length} races identical watched and ignored; over ${n} races the hidden model scored `
       + `${(hidden / n).toFixed(4)} and the board ${(board / n).toFixed(4)}`;
   });
+
+  /* ══════════════════════════════════════════════════════════════════════
+   *  5. THE CROWD (V16 §G4)
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * *"a crowd that reacts to what happens in the pit/arena/race."*
+   *
+   * WHAT THE AUDIT FOUND, and it is the reason these three exist. `crowd` was
+   * a STRING on every venue row — "sixty in the seats" — and `grep -rn crowd
+   * src/` turned up the declaration and NO READER anywhere in the tree. The
+   * row described a room full of people and nothing in the game knew they were
+   * there; the announcer was DOM text in `main.js` and the Holo-theatre made
+   * precisely as much noise for a 40/1 shot winning by a nose as for a
+   * walkover, which is to say none at all.
+   *
+   * A field with no reader is the recurring defect shape in this tree, and the
+   * check that catches it cannot be a source scan for the word `crowd` — that
+   * is satisfied by a comment. So these drive it: the model is recomputed from
+   * the row itself, the row is perturbed and the room has to move, and the
+   * shipped frame loop is run over a real station and asked what it did.
+   */
+
+  check('tote: every venue\'s crowd row is read, and both numbers in it move the room', () => {
+    const { crowdAt, crowdVoice, dramaOf } = Tote;
+    assert(typeof crowdVoice === 'function' && typeof crowdAt === 'function',
+      'Tote.js exports no crowd model — the venue rows describe a room nothing reads');
+
+    const lines = [];
+    for (const v of VENUES) {
+      const c = v.crowd;
+      assert(c && typeof c === 'object', `${v.id}'s crowd is ${typeof c} — a row that describes a room in prose`);
+      assert(Number.isFinite(c.size) && c.size > 0, `${v.id} seats ${c.size}`);
+      assert(Number.isFinite(c.temper) && c.temper > 0 && c.temper <= 1, `${v.id}'s temper is ${c.temper}`);
+      assert(typeof c.says === 'string' && c.says.length, `${v.id} lost the prose the row always carried`);
+
+      /* ── 1. THE READING IS THE ROW, PUT THROUGH THE MODEL ──────────────
+       * Not "the reading mentions the row". `crowdAt` hands back the two
+       * inputs it used, so the whole derivation is re-run here from the frozen
+       * row and has to land on the same three numbers. If `crowdIn` ever
+       * stopped reading `v.crowd` — the exact defect this check exists for —
+       * this is what fails. */
+      let day = 0, races = [];
+      while (!races.length && day < 60) { races = racesOn(v.id, day); if (!races.length) day++; }
+      assert(races.length, `${v.id} ran nothing in 60 days`);
+      const race = races[0];
+      let checked = 0, sawMoment = 0, peak = 0;
+      for (let h = race.hour - 0.05; h < race.hour + race.runs + 0.05; h += 0.002) {
+        const r = crowdAt(v.id, day, h);
+        const again = crowdVoice(c, { drama: r.drama, fill: r.fill });
+        assert(again.voices === r.in,
+          `${v.id} at ${h.toFixed(3)}: the reading seats ${r.in} and the row's own model seats ${again.voices}`);
+        assert(Math.abs(again.level - r.level) < 2e-3 && Math.abs(again.swell - r.swell) < 2e-3,
+          `${v.id} at ${h.toFixed(3)}: the reading is not what the row's model answers `
+          + `(${r.level}/${r.swell} against ${again.level}/${again.swell})`);
+        if (r.moment) sawMoment++;
+        if (r.swell > peak) peak = r.swell;
+        checked++;
+      }
+      assert(sawMoment > 10, `${v.id} reacted to nothing at all across a whole ${v.word}`);
+      assert(peak > 0.1, `${v.id}'s loudest moment in a whole ${v.word} was ${peak}`);
+
+      /* ── 2. AND BOTH NUMBERS IN THE ROW CHANGE WHAT COMES OUT ──────────
+       * A field that is read but whose value cannot change anything is a
+       * constant with extra steps. Each is moved on its own, from the venue's
+       * real row, with the other held. */
+      const at = { drama: 0.6, fill: 0.8 };
+      const base = crowdVoice(c, at);
+      const bigger = crowdVoice({ ...c, size: c.size * 2 }, at);
+      assert(bigger.voices > base.voices,
+        `${v.id}: doubling the crowd seated ${bigger.voices} against ${base.voices}`);
+      assert(bigger.swell > base.swell,
+        `${v.id}: doubling the crowd did not make the room louder (${bigger.swell} against ${base.swell})`);
+      /* Temper is moved DOWN where the row is already at the ceiling — the Pit
+       * is 1 by design and a check that could only push up would silently skip
+       * the one venue whose temper is the whole point of it. */
+      const shift = c.temper >= 0.9 ? -0.3 : 0.3;
+      const hotter = crowdVoice({ ...c, temper: c.temper + shift }, at);
+      const cmp = shift > 0 ? (a, b) => a > b : (a, b) => a < b;
+      assert(cmp(hotter.level, base.level),
+        `${v.id}: moving the temper by ${shift} left the murmur at ${hotter.level} against ${base.level}`);
+      assert(cmp(hotter.swell, base.swell),
+        `${v.id}: moving the temper by ${shift} left the roar at ${hotter.swell} against ${base.swell}`);
+      /* …and the prose is still on the reading, so nothing was lost turning a
+       * string into a row. */
+      assert(crowdAt(v.id, day, race.hour + 0.05).says === c.says, `${v.id} dropped its own line`);
+      lines.push(`${v.id} ${c.size}@${c.temper} peak ${peak.toFixed(2)} over ${checked} readings, `
+        + `×2 seats → ${bigger.swell.toFixed(2)} vs ${base.swell.toFixed(2)}`);
+    }
+    /* AND THE TWO ROWS THAT SEAT THE SAME NUMBER ARE STILL DIFFERENT ROOMS.
+     * The Pit and the Arena are both twelve; the only thing between them is
+     * `temper`, so if the reading could not tell them apart the field would be
+     * decoration. */
+    const pit = venueById('the-pit'), arena = venueById('the-arena');
+    assert(pit.crowd.size === arena.crowd.size, 'the two small rooms no longer seat the same number');
+    const p = crowdVoice(pit.crowd, { drama: 0.6, fill: 0.8 });
+    const a = crowdVoice(arena.crowd, { drama: 0.6, fill: 0.8 });
+    assert(p.swell > a.swell,
+      `twelve at the Pit's rail (${p.swell}) are no louder than twelve on the Arena's benches (${a.swell})`);
+    /* And a moment the sim never emitted is worth nothing, rather than a
+     * default the room would roar at. */
+    assert(dramaOf(null, null, null) === 0, 'the crowd reacts to nothing happening');
+    return lines.join('; ') + `; pit ${p.swell} vs arena ${a.swell} on one drama`;
+  });
+
+  check('tote: the room answers a photo finish differently from a walkover', async () => {
+    /**
+     * The half of §G4 that is actually hard. A crowd that made a noise at
+     * every result would pass a "does it react" check and be exactly as much
+     * of a decoration as the string it replaced.
+     *
+     * So this measures the SPREAD, over hundreds of real results at each
+     * venue, at the moment the call lands — and then puts the quietest and the
+     * loudest through `audio.crowd`, which is what actually reaches the
+     * player's ears, and requires four independent properties of the sound to
+     * separate rather than one.
+     *
+     * The buckets are the board's own: a favourite home by a street against a
+     * long price home by a nose. Neither is chosen by drama — that would be
+     * measuring the model against itself — they are chosen by `margin` off the
+     * engine's `result` event and by the price the room was quoted.
+     */
+    const { crowdAt } = Tote;
+    const { audio } = await import('../../src/engine/Audio.js');
+    assert(typeof audio.crowd === 'function',
+      'the audio engine has no crowd cue — §G4\'s reaction is DOM text again');
+
+    const rows = [];
+    for (const v of VENUES) {
+      const seen = [];
+      let n = 0;
+      for (const step of walkVenue(v.id, { days: 900 })) {
+        if (n >= 900) break;
+        n++;
+        const race = step.race;
+        const ev = resultOf(race).events.find((e) => e.type === 'result');
+        if (!ev || !ev.who) continue;
+        /* The frame the call lands on, which is the end of the window. */
+        const c = crowdAt(v.id, step.day, race.hour + race.runs + 0.0005);
+        if (c.moment !== 'result') continue;
+        const board = boardFor(race);
+        const price = board.runners.find((r) => r.id === ev.who)?.marketP ?? 0.25;
+        seen.push({ swell: c.swell, in: c.in, temper: c.temper, level: c.level,
+          margin: Math.abs(ev.margin || 0), fav: ev.who === board.favourite, price });
+      }
+      assert(seen.length > 150, `${v.id} gave only ${seen.length} calls to measure`);
+      seen.sort((x, y) => x.swell - y.swell);
+      const q = (f) => seen[Math.floor(f * (seen.length - 1))];
+      const lo = q(0.1), hi = q(0.9);
+      assert(hi.swell > lo.swell * 1.35,
+        `${v.id}: the loudest tenth of its calls (${hi.swell}) is barely over the quietest tenth `
+        + `(${lo.swell}) — the room makes one noise whatever happens`);
+
+      /* AND THE LOUD END IS THE DRAMATIC END, not an accident of attendance.
+       * A near finish and a long price must both be commoner in the top decile
+       * than in the bottom one. */
+      const top = seen.slice(-Math.floor(seen.length / 10));
+      const bot = seen.slice(0, Math.floor(seen.length / 10));
+      const mean = (a, k) => a.reduce((x, y) => x + y[k], 0) / a.length;
+      assert(mean(top, 'margin') < mean(bot, 'margin'),
+        `${v.id}: its loudest calls were won by ${mean(top, 'margin').toFixed(2)} and its quietest by `
+        + `${mean(bot, 'margin').toFixed(2)} — the room is louder for a walkover`);
+      assert(mean(top, 'price') < mean(bot, 'price'),
+        `${v.id}: its loudest calls were won at ${mean(top, 'price').toFixed(3)} on the board against `
+        + `${mean(bot, 'price').toFixed(3)} — the room is not surprised by a surprise`);
+
+      /* ── AND WHAT THE PLAYER ACTUALLY HEARS SEPARATES TOO ──────────────
+       * Four properties, because a cue that only moved its gain would be one
+       * sound at two volumes — which is what a crowd that does not react
+       * sounds like. `audio.crowd` is driven for real; headless it plays
+       * nothing and hands back what it would have played. */
+      const dull = audio.crowd({ voices: lo.in, temper: lo.temper, swell: lo.swell, level: lo.level });
+      const great = audio.crowd({ voices: hi.in, temper: hi.temper, swell: hi.swell, level: hi.level });
+      for (const k of ['gain', 'shout', 'freq', 'dur']) {
+        assert(great[k] > dull[k],
+          `${v.id}: a photo finish and a walkover come out of the audio engine with the same ${k} `
+          + `(${great[k]} against ${dull[k]})`);
+      }
+      /* A murmur has no shout in it at all — that is the whole difference
+       * between a room talking and a room reacting. */
+      assert(audio.crowd({ voices: hi.in, temper: hi.temper, swell: 0, level: hi.level }).shout === 0,
+        `${v.id}: a room with nothing happening in it is already shouting`);
+      rows.push(`${v.id} ${seen.length} calls, swell p10 ${lo.swell.toFixed(3)} → p90 ${hi.swell.toFixed(3)}, `
+        + `gain ${dull.gain} → ${great.gain}, freq ${dull.freq} → ${great.freq} Hz`);
+    }
+    return rows.join('; ');
+  });
+
+  check('tote: the crowd reaches the room — the shipped loop makes the noise and fills the seats', async () => {
+    /**
+     * THE CLAUSE THE OTHER TWO CANNOT COVER. Everything above drives pure
+     * functions, and a pure function with no caller is exactly the defect that
+     * started this: `crowd` was read by nothing, and a check that called the
+     * model directly would have been perfectly green on the broken build.
+     *
+     * So this boots a real station and runs `world.update(1/60, idle)` — the
+     * loop `main.js` runs, through `StationDirector` → `stepStation` → the
+     * crowd — and asks the world what happened. Nothing below calls anything in
+     * `Station.js` or `Tote.js` by hand.
+     *
+     * `requestAnimationFrame` never fires headless, which is why this is
+     * `world.update` and not a browser. What it costs is a station boot; what
+     * it buys is the only proof that any of this is wired to anything.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const St = await import('../../src/game/Station.js');
+    const P = await import('../../src/game/StationPlan.js');
+    const L = await import('../../src/game/StationLife.js');
+    const { audio } = await import('../../src/engine/Audio.js');
+
+    /* The station's rooms are loaded off disk in the browser; headless they
+     * come off the filesystem, exactly as `station.mjs` does it. */
+    const hadFetch = globalThis.fetch;
+    const root = new URL('../../', import.meta.url);
+    globalThis.__stationFetch = true;
+    globalThis.fetch = async (url) => {
+      const buf = await readFile(new URL(String(url), root));
+      return { ok: true, arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) };
+    };
+    /* The cue is counted rather than heard: there is no AudioContext in any
+     * check in this tree, so what is asserted is that the ROOM asked for it. */
+    const realCrowd = audio.crowd;
+    const asked = [];
+    audio.crowd = function (spec) { asked.push(spec); return realCrowd.call(this, spec); };
+
+    let out = '';
+    try {
+      await St.prepareStation();
+      const { world } = await bootWorld({
+        level: 'station',
+        settings: { mode: 'station', level: 'station', allies: 0 },
+        onWorld: (w) => { w._stationFloor = 40; },
+      });
+      const idle = idleInput();
+      const st = world._station;
+      const v = venueById('holo-theatre');
+      const place = P.PLACES.find((x) => x.id === v.place);
+
+      /* Stand in the middle of the room. */
+      world.player.position.set(place.x, st.deckY + 1.6, place.z);
+      world.player.camera?.obj?.position?.set(place.x, st.deckY + 1.6, place.z);
+
+      let day = 0, races = [];
+      while (!races.length && day < 60) { races = racesOn(v.id, day); if (!races.length) day++; }
+      const race = races[0];
+      const seated = () => [...(world._stationLife?.live?.keys() || [])]
+        .filter((k) => k.startsWith(`${v.place}:`)).length;
+
+      /* ── 1. THE ROOM BETWEEN MEETS. The clock is pinned every frame, because
+       * `stepStation` winds it and a check that let it run would be measuring
+       * a different hour by the end. */
+      const quiet = (() => { for (let h = 0; h < 24; h += 0.25) if (!meetAt(v.id, day, h)) return h; return 4; })();
+      st.day = day;
+      for (let i = 0; i < 200; i++) { st.hour = quiet; world.update(1 / 60, idle); }
+      const idleHeads = seated();
+      const idleIn = st.crowd?.in ?? -1;
+      assert(st.crowd, 'the shipped loop left no crowd on the station at all — nothing calls stepCrowd');
+      assert(st.crowd.venue === v.id, `standing in #${v.place} the room reads as ${st.crowd.venue}`);
+
+      /* ── 2. AND THE SAME ROOM WITH A CARD ON. §3.4's own rate — one station
+       * hour per two real minutes — so this is the race at the speed a player
+       * watches it, not a clock jumped forward. */
+      asked.length = 0;
+      const before = st.crowd.roars | 0;
+      let peak = 0, heads = 0, moments = new Set();
+      st.hour = race.hour - 0.01;
+      const perFrame = (1 / 60) / 120;
+      let frames = 0;
+      while (st.hour < race.hour + race.runs * 0.75 && frames < 1500) {
+        st.hour += perFrame;
+        world.update(1 / 60, idle);
+        frames++;
+        if (st.crowd.swell > peak) peak = st.crowd.swell;
+        if (st.crowd.moment) moments.add(st.crowd.moment);
+        heads = Math.max(heads, seated());
+      }
+      const roars = (st.crowd.roars | 0) - before;
+
+      assert(peak > 0.1, `${frames} frames of the shipped loop over a live race and the room's loudest `
+        + `moment was ${peak.toFixed(3)} — it never reacted`);
+      assert(roars >= 2, `the room roared ${roars} times in a whole race`);
+      assert(moments.size >= 2, `the room reacted to one kind of thing only: ${[...moments].join(', ')}`);
+      assert(asked.length >= roars,
+        `the room counted ${roars} roars and asked the audio engine for ${asked.length} of them`);
+      const loudest = asked.reduce((a, b) => (b.shout > a.shout ? b : a), asked[0]);
+      assert(loudest.shout > 0 && loudest.gain > 0,
+        'every cue the room asked for was silent');
+      /* THE SEATS FILL. The gazetteer's own curve is the floor; the tote's
+       * crowd is what is on top of it, and the pool has to actually build
+       * them. */
+      assert(st.crowd.in > idleIn,
+        `the room held ${st.crowd.in} during the race and ${idleIn} between meets`);
+      assert(heads > idleHeads,
+        `${heads} bodies stood in #${v.place} during the race and ${idleHeads} between meets — `
+        + 'the crowd is a number nothing seats');
+      assert(L.headcount(place, st.hour) < st.crowd.in,
+        'the tote crowd is smaller than the gazetteer headcount it is meant to be adding to');
+      assert(st.crowd.turned > 0, 'nobody in the room ever turned to look at the race');
+
+      out = `${frames} frames at §3.4's rate: ${roars} roars (${[...moments].join(', ')}), peak swell `
+        + `${peak.toFixed(3)}, loudest cue gain ${loudest.gain} shout ${loudest.shout} freq ${loudest.freq} Hz; `
+        + `#${v.place} held ${idleHeads} bodies between meets and ${heads} with a card on `
+        + `(${idleIn} → ${st.crowd.in} in the room)`;
+    } finally {
+      audio.crowd = realCrowd;
+      globalThis.fetch = hadFetch;
+    }
+    return out;
+  });
+
 }

@@ -40,7 +40,66 @@ const KEY = 'saber.credits.v1';
 const store = makeStore(KEY);
 
 /** The most one run can pay, whatever happens in it. See the header. */
-export const PER_RUN_CAP = 900;
+export const PER_RUN_CAP = 2200;
+
+/**
+ * ══ EACH WAVE PAYS MORE THAN THE ONE BEFORE IT — and this is the number ═══
+ *
+ * MEASURED FIRST, which is how this got here. Driven through `tools/balance.mjs`'s
+ * own `simulateRun` at its own three skill settings, 24 seeds a tier, and paid
+ * through the shipped funnel (`main.js`'s `record()` → `payForRun`), the table
+ * as it stood paid:
+ *
+ *     careless (σ110)   wave 2.8   17 kills    84 credits    68/min
+ *     competent (σ75)   wave 4.6   33 kills   143 credits    62/min
+ *     sharp (σ45)       wave 6.0   45 kills   189 credits    56/min
+ *
+ * Three things are wrong with that and only one of them is the size.
+ *
+ *   A FLAT RATE CANNOT PAY FOR SKILL. `depth` was a straight 26 a wave and the
+ *     whole earn table was a linear sum, so the best purse in the game was
+ *     2.25x the worst — and the depth spread between a careless hand and a sharp
+ *     one is 2.1x, the kill spread 2.6x. A linear combination of two ratios
+ *     cannot exceed the larger of them, so NO setting of those rows could have
+ *     made good play pay three times what bad play pays. The shape had to move,
+ *     not the numbers.
+ *
+ *   THE FLOOR WAS A ROUNDING ERROR. A wave-1 death paid 26 — one wave at the
+ *     flat rate, and the audit's own figure.
+ *
+ *   AND THE RATE FELL AS YOU GOT BETTER. 68 credits a minute careless, 56
+ *     sharp: the last column above is the whole complaint in one line. Playing
+ *     well paid LESS per minute than dying early and queueing again.
+ *
+ * So depth is a RISING rate: wave 1 pays `depth`, and every wave after it pays
+ * `DEPTH_RAMP` of a wave more than the last one did. Reaching wave W is worth
+ *
+ *     depth × (W + DEPTH_RAMP × W(W−1)/2)
+ *
+ * which is the closed form of that sentence and is what `payForRun` computes.
+ * It is ONE key's meaning changed rather than a second depth row, because a
+ * second row would be a number `World.runStats` does not report — the exact
+ * thing `counter.mjs` refuses at the door.
+ *
+ * The ramp is what buys the ratio: at 0.62 the same three tiers come out
+ * 172 / 379 / 577 credits — 3.36x apart end to end, and 140 / 164 / 171 a
+ * minute, so the rate now rises with the hand instead of falling. None of those
+ * numbers is asserted anywhere; `balance.mjs`'s check re-derives them from the
+ * same simulation and holds the RATIO and the runs-to-afford in bands, so
+ * retuning any of this is caught by what it produces rather than by a figure
+ * somebody remembered to update in a comment.
+ *
+ * `PER_RUN_CAP` moved with it, for the reason the header states: it is the
+ * thing that stops a grind, so it has to sit ABOVE where honest play lands and
+ * below where farming would. Wave 14 is where it binds; a sharp run reaches 6.
+ */
+export const DEPTH_RAMP = 0.62;
+
+/** What reaching wave `w` is worth, before the cap. The ramp's closed form. */
+export function depthPay(w) {
+  const n = Math.max(0, Math.floor(Number(w) || 0));
+  return EARN.depth * (n + DEPTH_RAMP * (n * (n - 1)) / 2);
+}
 
 /**
  * WHAT PAYS, AND IT IS ALL THINGS THE GAME ALREADY COUNTS.
@@ -56,10 +115,16 @@ export const PER_RUN_CAP = 900;
  *   bout       a purse from the pits (V16 Lane G)
  */
 export const EARN = {
-  depth: 26,
-  won: 220,
-  kills: 0.7,
-  saves: 14,
+  /* Per wave, RISING — see `DEPTH_RAMP`. Wave 1 is worth exactly this, which
+   * is also the floor of the whole economy: the least a run that reached the
+   * ground at all can pay. */
+  depth: 32,
+  won: 700,
+  /* A bad run's floor. Raised from 0.7 because a careless hand still kills
+   * seventeen things, and 12 credits for an evening is what "a wasted evening"
+   * looks like in a ledger. */
+  kills: 1.6,
+  saves: 30,
   quest: 1,
   bout: 1,
 };
@@ -98,7 +163,7 @@ export function creditsBroken() { return store.broken; }
  */
 export function payForRun(report = {}) {
   const raw = Math.round(
-    (Number(report.depth) || 0) * EARN.depth
+    depthPay(report.depth)
     + (report.won ? EARN.won : 0)
     + (Number(report.kills) || 0) * EARN.kills
     + (Number(report.saves) || 0) * EARN.saves);

@@ -13,6 +13,11 @@
  *   · every rung of `LESSONS` is a program, so the room teaches what the tab
  *     taught — counted against `Dojo.js` rather than against a memory of it
  *   · all seven dials the panel carried are on a program
+ *   · EVERY ground the sandbox can load is a program, derived from
+ *     `theatresFor('sandbox')` rather than counted — the tab's own ground
+ *     column was the whole roster, so a rack of curated rooms alone is a
+ *     deletion however good the rooms are
+ *   · a ground no featured room names still BUILDS, driven through a real World
  *   · a program run files nothing in `saber.progress.v1`, whatever it is
  *   · two readers of one program build the same room
  *   · nothing unheld can be run
@@ -29,7 +34,7 @@ import { readFile } from 'node:fs/promises';
 import { LESSONS } from '../../src/game/Dojo.js';
 import { MODES, playableModes, SANDBOX_MAX_ENEMIES, sandboxConfig } from '../../src/game/Waves.js';
 import { ARCHETYPES } from '../../src/game/Enemy.js';
-import { LEVELS } from '../../src/game/Levels.js';
+import { LEVELS, theatresFor } from '../../src/game/Levels.js';
 import { DEFAULT_SETTINGS } from '../../src/ui/Menu.js';
 import { PLACE } from '../../src/game/StationPlan.js';
 import { SHAPES } from '../../src/game/StationKit.js';
@@ -54,6 +59,18 @@ async function withCleanStore(fn) {
 
 /** Everything cleared: the hold a player has after walking the whole ladder. */
 const fullHold = () => ({ cleared: LESSONS.map((l) => l.id) });
+
+/**
+ * THE ROSTER, DERIVED THE WAY main.js DERIVES IT.
+ *
+ * `theatresFor('sandbox')` and never a list of keys: a check that typed its own
+ * roster would be asserting against its own memory of the game's, which is the
+ * second copy this whole lane exists to refuse. `holoGrounds()` in main.js is
+ * the same three lines and the check below holds it to them.
+ */
+const GROUNDS = () => theatresFor('sandbox')
+  .filter((k) => LEVELS[k])
+  .map((k) => ({ key: k, name: LEVELS[k].name, blurb: LEVELS[k].blurb }));
 
 export async function run({ check, assert, THREE }) {
 
@@ -115,7 +132,7 @@ export async function run({ check, assert, THREE }) {
    * ════════════════════════════════════════════════════════════════════════ */
 
   check('holodeck: every lesson the training tab taught is a program in the rack', async () => {
-    const rack = H.programs(LESSONS);
+    const rack = H.programs(LESSONS, GROUNDS());
     const lessons = rack.filter((p) => p.kind === 'lesson');
     assert(lessons.length === LESSONS.length,
       `${LESSONS.length} rungs in Dojo.js and ${lessons.length} lesson programs in the rack`);
@@ -161,7 +178,7 @@ export async function run({ check, assert, THREE }) {
     assert(H.DIAL_KEYS.length === WERE_ON_THE_TAB.length,
       `the room names ${H.DIAL_KEYS.length} dials for the tab's ${WERE_ON_THE_TAB.length}`);
 
-    const rack = H.programs(LESSONS);
+    const rack = H.programs(LESSONS, GROUNDS());
     const open = rack.filter((p) => p.kind === 'open');
     assert(open.length >= 4, `only ${open.length} free-run programs — the sandbox half is thin`);
     /* Each dial has to be SET by at least one program, and set to something
@@ -206,6 +223,143 @@ export async function run({ check, assert, THREE }) {
   });
 
   /* ════════════════════════════════════════════════════════════════════════
+   *  THE ROSTER — the ground column, and it is not a shortlist
+   * ════════════════════════════════════════════════════════════════════════ */
+
+  check('holodeck: every ground the sandbox can load is a program, and none of them is gated', async () => {
+    /* THE ROSTER IS ASKED FOR, NOT COUNTED. `theatresFor('sandbox')` is the
+     * same derivation `Menu._syncTheatre` barred the deleted tab's Theatre
+     * column with, so this compares the room against the game's own answer to
+     * "what can this mode build" — a number typed here would pass the day a
+     * level was added and the room did not notice. */
+    const roster = theatresFor('sandbox');
+    assert(roster.length > 1, `the sandbox can only load ${roster.length} ground — nothing to test`);
+    const all = H.programs(LESSONS, GROUNDS());
+    const fresh = H.heldPrograms(LESSONS, GROUNDS(), H.blankHold());
+    const reach = new Map();
+    for (const p of fresh) if (p.mode === 'sandbox') reach.set(p.ground, p);
+    const missing = roster.filter((k) => !reach.has(k));
+    assert(missing.length === 0,
+      `a fresh player cannot reach ${missing.join(', ')} from the room — the sandbox tab offered all `
+      + `${roster.length}, so the replacement drops ${missing.length} of them`);
+
+    /* …AND WHAT IT OFFERS IS ONLY WHAT THE MODE CAN BUILD. A room on a key
+     * that is not a level is a button that throws. */
+    for (const p of all) assert(LEVELS[p.ground], `${p.id} is set on '${p.ground}', which is not a level`);
+    const stray = all.filter((p) => p.kind === 'ground' && !roster.includes(p.ground));
+    assert(stray.length === 0, `the roster offers ${stray.map((p) => p.ground).join(', ')}, which the sandbox cannot load`);
+
+    /* THE FEATURED ROOMS ARE AN ORDERING, NOT THE LIST. This is the assertion
+     * the audit finding turns on: the ladder and the hand-written rooms name
+     * five of the seven grounds between them, so if the rack were only those,
+     * two theatres a player could reach from the tab — Mustafar and the White
+     * Pass — would be reachable nowhere at all. Which is what it was. */
+    const featured = new Set(all.filter((p) => p.kind !== 'ground').map((p) => p.ground));
+    const beyond = roster.filter((k) => !featured.has(k));
+    assert(beyond.length > 0,
+      'every ground happens to be named by a featured room, so this check cannot tell a roster from a shortlist');
+    for (const k of beyond) {
+      const p = reach.get(k);
+      assert(p && !p.needs, `${k} is only reachable behind '${p?.needs}' and no featured room names it`);
+      /* A ROSTER ROOM RUNS THE CONSOLE'S OWN NUMBERS — `dials: null` is what
+       * makes it the sandbox tab rather than a seventh curated room. */
+      assert(p.dials === null, `${p.id} pins its own dials, so the console's numbers do not reach it`);
+      const mine = { ...DEFAULT_SETTINGS, sandboxCount: 14, sandboxFire: 0.25,
+        sandboxType: 'b1', sandboxMix: { droideka: 9 }, unlimitedFocus: true };
+      const out = H.programSettings(p, mine);
+      assert(out.level === k && out.mode === 'sandbox', `${p.id} deploys ${out.mode} onto ${out.level}`);
+      for (const d of H.DIAL_KEYS) {
+        assert(JSON.stringify(out[d]) === JSON.stringify(mine[d]),
+          `${p.id} overwrote the console's ${d} with ${JSON.stringify(out[d])}`);
+      }
+      const cfg = sandboxConfig(out);
+      assert(cfg.count === 14 && cfg.mix.some((m) => m.type === 'droideka' && m.n === 9),
+        `${p.id} resolved to ${JSON.stringify(cfg.mix)} for a console asking 14 with 9 droidekas`);
+    }
+
+    /* AND THE ROOM IN THE GAME HANDS THE ROSTER IN. `programs()` takes the
+     * grounds as an argument, so a rack built with none is a rack of the
+     * curated rooms only — which is exactly the shape being fixed, and it
+     * would pass every assertion above because they build their own. */
+    const main = code(await read('main.js'));
+    assert(/function holoGrounds\(\)/.test(main), 'main.js has no holoGrounds()');
+    assert(/theatresFor\(['"]sandbox['"]\)/.test(main),
+      'holoGrounds does not ask theatresFor — the room keeps its own list of levels');
+    for (const call of ['rack(LESSONS', 'programById(LESSONS']) {
+      const uses = main.split(call).length - 1;
+      const withGrounds = main.split(`${call}, holoGrounds()`).length - 1
+        + main.split(`${call}, grounds`).length - 1;
+      assert(uses > 0 && uses === withGrounds,
+        `${uses} call(s) to ${call} in main.js and ${withGrounds} of them pass the roster`);
+    }
+    /* …and the console the roster rooms run on is IN the room. Six of the
+     * seven dials are practice-only (the forge keeps `bladeLength`), and a
+     * roster room with no way to set them is the ground column without the
+     * other two. */
+    for (const [what, pat] of [['sandboxCount', /data-dial="sandboxCount"/],
+      ['sandboxFire', /data-dial="sandboxFire"/],
+      ['sandboxType', /settings\.sandboxType = /],
+      ['sandboxMix', /settings\.sandboxMix = /],
+      ['unlimitedBlade', /data-flag="unlimitedBlade"/],
+      ['unlimitedFocus', /data-flag="unlimitedFocus"/]]) {
+      assert(pat.test(main), `the room's console has no control for ${what}`);
+    }
+    return `${roster.length} grounds, all reachable on a fresh profile; `
+      + `${beyond.length} of them (${beyond.join(', ')}) are named by no featured room`;
+  });
+
+  check('holodeck: a ground no featured room names actually builds, in a real World', async () => {
+    /**
+     * THE HALF NO SOURCE GREP CAN ANSWER. Everything above is arithmetic on a
+     * settings blob; this drives the blob through the game — `theatreFor`, the
+     * clamp `deploy()` puts every ground through, then a real `World` — and
+     * asks the world which ground it built and what is standing on it.
+     *
+     * ONE ground and not seven: booting a World is seconds, and the roster is
+     * held to the mode's own list above. The one chosen is the one the shortlist
+     * could not reach, which is where the defect was.
+     */
+    const { bootWorld, run: runWorld, idleInput } = await import('./_coop.mjs');
+    const { theatreFor } = await import('../../src/game/Levels.js');
+    const all = H.programs(LESSONS, GROUNDS());
+    const featured = new Set(all.filter((p) => p.kind !== 'ground').map((p) => p.ground));
+    const p = all.find((r) => r.kind === 'ground' && !featured.has(r.ground));
+    assert(p, 'no ground outside the featured rooms — nothing to prove');
+
+    /* The console as a player would leave it, and the same one line main.js
+     * runs: `Object.assign(settings, programSettings(p, settings))`. */
+    const settings = { ...DEFAULT_SETTINGS };
+    Object.assign(settings, H.programSettings(p, { ...settings, sandboxCount: 12, sandboxFire: 0,
+      sandboxType: 'b1', sandboxMix: { droideka: 7 } }));
+    const key = theatreFor(settings.mode, settings.level, 12345);
+    assert(key === p.ground, `deploy would clamp ${p.ground} to ${key}`);
+
+    const { world } = await bootWorld({ level: key, settings });
+    try {
+      assert(world.levelKey === p.ground,
+        `the room asked for ${p.ground} and the world built ${world.levelKey}`);
+      /* AND IT IS THE SANDBOX, FILLING TO THE CONSOLE'S NUMBER. The director
+       * spawns on its own cadence, so this walks the clock and takes the PEAK
+       * rather than one reading: measured on Mustafar, the room reaches 12 at
+       * about 20 s and then sits between 11 and 12, because the ground itself
+       * kills the odd body and the director replaces it. A single reading at a
+       * fixed time would be a coin toss between those two numbers. */
+      const want = sandboxConfig(settings).count;
+      let peak = 0, at = 0;
+      for (let t = 1; t <= 40 && peak < want; t++) {
+        runWorld(world, 1, idleInput());
+        const n = (world.enemies || []).filter((e) => !e.dead).length;
+        if (n > peak) { peak = n; at = t; }
+      }
+      const dek = (world.enemies || []).filter((e) => (e.type || e.kind) === 'droideka').length;
+      assert(peak === want, `the console asked for ${want} bodies and the room got to ${peak}`);
+      assert(dek >= 7, `7 droidekas were asked for by name and ${dek} are standing`);
+      return `${p.id} built ${world.levelKey} (${LEVELS[world.levelKey].name}); `
+        + `${peak} bodies by ${at} s, ${dek} of them droidekas, from the console's own numbers`;
+    } finally { world.dispose?.(); }
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════
    *  THE REFUSAL — a lesson taken in a room is still not a run
    * ════════════════════════════════════════════════════════════════════════ */
 
@@ -214,7 +368,7 @@ export async function run({ check, assert, THREE }) {
     return withCleanStore(() => {
       const before = loadProgress();
       assert(before.runs === 0, 'the fixture did not start empty');
-      const rack = H.programs(LESSONS);
+      const rack = H.programs(LESSONS, GROUNDS());
       for (const p of rack) {
         const s = H.programSettings(p, DEFAULT_SETTINGS);
         /* The blob main.js would hand `recordRun` on the way out of a world
@@ -242,7 +396,7 @@ export async function run({ check, assert, THREE }) {
    * ════════════════════════════════════════════════════════════════════════ */
 
   check('holodeck: two readers of the same program get the same room', () => {
-    const rack = H.programs(LESSONS);
+    const rack = H.programs(LESSONS, GROUNDS());
     const base = { ...DEFAULT_SETTINGS, sandboxCount: 7, sandboxMix: { b1: 3 }, level: 'alpine', mode: 'roguelite' };
     for (const p of rack) {
       const a = H.programSettings(p, base);
@@ -252,7 +406,7 @@ export async function run({ check, assert, THREE }) {
        * every door — `programs()` is called by `rack`, `heldPrograms` and
        * `programById` — and a program that carried identity would make those
        * three different values with the same name. */
-      const c = H.programSettings(H.programById(LESSONS, p.id), base);
+      const c = H.programSettings(H.programById(LESSONS, GROUNDS(), p.id), base);
       assert(JSON.stringify(a) === JSON.stringify(c), `${p.id} differs between two builds of the rack`);
       assert(a.level === p.ground, `${p.id} deployed onto '${a.level}' instead of its own ground`);
       assert(a.lesson === (p.lesson || null), `${p.id} carried lesson '${a.lesson}'`);
@@ -280,14 +434,14 @@ export async function run({ check, assert, THREE }) {
 
   check('holodeck: nothing can be run that the player does not hold', () => {
     const blank = H.blankHold();
-    const first = H.heldPrograms(LESSONS, blank);
+    const first = H.heldPrograms(LESSONS, GROUNDS(), blank);
     assert(first.length >= 1, 'a fresh player holds nothing at all — there is no way in');
     /* The ladder, walked one rung at a time, and every rung past the next one
      * is refused at every step. This is the assertion the whole gate rests on:
      * a `heldPrograms` that returned everything would pass every other line in
      * this check. */
     let hold = blank;
-    const all = H.programs(LESSONS);
+    const all = H.programs(LESSONS, GROUNDS());
     for (let i = 0; i < LESSONS.length; i++) {
       const p = all.find((r) => r.lesson === LESSONS[i].id);
       assert(H.isHeld(p, hold), `rung ${i} ('${LESSONS[i].id}') is not held after clearing the ${i} before it`);
@@ -299,7 +453,7 @@ export async function run({ check, assert, THREE }) {
       /* …and the list the door is allowed to use agrees with `isHeld`, which
        * is the one that would go quietly wrong: a `heldPrograms` that forgot
        * to filter would still pass every line above. */
-      const held = new Set(H.heldPrograms(LESSONS, hold).map((r) => r.id));
+      const held = new Set(H.heldPrograms(LESSONS, GROUNDS(), hold).map((r) => r.id));
       const leaked = all.filter((r) => held.has(r.id) && !H.isHeld(r, hold));
       assert(leaked.length === 0,
         `heldPrograms offers ${leaked.map((r) => r.id).join(', ')} that isHeld refuses, at rung ${i}`);
@@ -307,17 +461,20 @@ export async function run({ check, assert, THREE }) {
     }
     /* Everything, once the ladder is walked. A gate that never opens is worse
      * than no gate. */
-    assert(H.heldPrograms(LESSONS, hold).length === all.length,
+    assert(H.heldPrograms(LESSONS, GROUNDS(), hold).length === all.length,
       'a player who has cleared every lesson still cannot run every program');
 
     /* NOTHING THE TAB OFFERED HAS MOVED BEHIND THE GATE. The tab's two buttons
      * were "start the lessons at rung 0" and "enter the sandbox", both
-     * available on a fresh profile, so both have to be in the blank hold. */
+     * available on a fresh profile, so both have to be in the blank hold —
+     * and "enter the sandbox" meant EVERY theatre, which is why this counts
+     * grounds and not just the featured rooms. */
     const fresh = new Set(first.map((p) => p.id));
     assert(fresh.has(`lesson:${LESSONS[0].id}`), 'a fresh player cannot start the lessons');
-    const freeOnFresh = first.filter((p) => p.kind === 'open');
-    assert(freeOnFresh.length >= 2,
-      `a fresh player gets ${freeOnFresh.length} free rooms — the sandbox used to be one button away`);
+    const freeOnFresh = first.filter((p) => p.mode === 'sandbox');
+    assert(freeOnFresh.length >= theatresFor('sandbox').length,
+      `a fresh player gets ${freeOnFresh.length} free rooms over ${theatresFor('sandbox').length} `
+      + 'theatres — the sandbox used to be one button away on any of them');
     assert(freeOnFresh.some((p) => p.dials === null),
       'the room built from the player\'s own numbers is behind a gate it never used to be behind');
 
@@ -329,7 +486,7 @@ export async function run({ check, assert, THREE }) {
 
     /* And the rack still PRINTS what is locked — a syllabus you cannot see is
      * not a syllabus. */
-    const shown = H.rack(LESSONS, blank);
+    const shown = H.rack(LESSONS, GROUNDS(), blank);
     assert(shown.length === all.length, 'the rack hides rows instead of marking them');
     assert(shown.some((r) => r.held === false), 'nothing at all is locked, so the gate proves nothing');
     return `${first.length} of ${all.length} held on a fresh profile, all ${all.length} after the ladder`;
@@ -340,7 +497,7 @@ export async function run({ check, assert, THREE }) {
    * ════════════════════════════════════════════════════════════════════════ */
 
   check('holodeck: the room runs a program in three phases and deploys exactly once', () => {
-    const p = H.programById(LESSONS, 'lesson:feel');
+    const p = H.programById(LESSONS, GROUNDS(), 'lesson:feel');
     assert(p, 'the first lesson is not in the rack');
     const settings = H.programSettings(p, DEFAULT_SETTINGS);
     const said = [], phases = [], lit = [], painted = [];
@@ -384,7 +541,7 @@ export async function run({ check, assert, THREE }) {
   });
 
   check('holodeck: the console reads a program back without inventing a number', () => {
-    for (const p of H.programs(LESSONS)) {
+    for (const p of H.programs(LESSONS, GROUNDS())) {
       const lines = H.rackLines(p, LEVELS[p.ground]?.name);
       assert(lines.length >= 3, `${p.id} reads back as ${lines.length} lines`);
       assert(lines[0] === p.name.toUpperCase(), `${p.id}'s first line is "${lines[0]}"`);
@@ -397,11 +554,11 @@ export async function run({ check, assert, THREE }) {
     /* The pike is the one program that takes the leash off, and the console
      * has to SAY so — an unlimited blade nothing on screen admits to is the
      * defect `_buildBladeCeiling`'s note is about. */
-    const pike = H.programs(LESSONS).find((p) => p.dials && p.dials.unlimitedBlade);
+    const pike = H.programs(LESSONS, GROUNDS()).find((p) => p.dials && p.dials.unlimitedBlade);
     assert(pike, 'no program takes the blade off its leash — the dial moved nowhere');
     assert(H.rackLines(pike, 'x').some((l) => /leash/.test(l)),
       'the program that unleashes the blade does not say so on the console');
-    return `${H.programs(LESSONS).length} programs read back, ground named on every one`;
+    return `${H.programs(LESSONS, GROUNDS()).length} programs read back, ground named on every one`;
   });
 
   /* ════════════════════════════════════════════════════════════════════════

@@ -20,8 +20,9 @@ import { HUD } from './ui/HUD.js';
 import { Menu, loadSettings, saveSettings, applyFeelSettings, bladeCeiling, BLADE_CAP,
   VICTORY_TITLE, LINE_LOST_TITLE } from './ui/Menu.js';
 import { Net, RemoteAvatar, packCompanionCard, packLook, sessionPart } from './net/Net.js';
-import { boonById, drawBoons, BOSS_EVERY, MODES } from './game/Waves.js';
-import { theatreFor, LEVELS } from './game/Levels.js';
+import { boonById, drawBoons, BOSS_EVERY, MODES, sandboxUnits, sandboxConfig,
+  SANDBOX_MAX_ENEMIES } from './game/Waves.js';
+import { theatreFor, theatresFor, LEVELS } from './game/Levels.js';
 /* THE SHAPE OF ONE SITTING — FLAGSHIP §5. A leaf that imports nothing of the
  * game's, so the deploy card can be assembled here without this file reaching
  * into the director for anything but the record it already publishes. */
@@ -69,7 +70,7 @@ import { takeJob, openJobs, dropJob, settleRun } from './game/Quests.js';
 import { programById, programSettings, rack, rackLines, Cycle } from './game/Holodeck.js';
 import { LESSONS } from './game/Dojo.js';
 import { stakeAtTote, payAtTote, tickStationClock, stakeAtDrum, payAtDrum, payForJob,
-  orderJump } from './game/Station.js';
+  orderJump, keeperOf } from './game/Station.js';
 import {
   pitAtPlace, venueOpen, handlersOn, ROSTER_HOUR, offerBout, openBout, beginRound, callOrder,
   runRound, cornerAct, pitState, settleBout, foldPit, pitCall, pitCard,
@@ -2814,7 +2815,11 @@ function showTote(venueId, { keep = false } = {}) {
    * four beats a second that is a stake nobody can enter. Everything the page
    * can say is in this line, so a reading that moved always redraws. */
   const sig = [r.day, r.phase, r.segment, r.calls?.length | 0, r.winner || '',
-    r.next?.hour ?? '', tote.tickets.length, tote.last?.paid ?? '', purse()].join('|');
+    r.next?.hour ?? '', tote.tickets.length, tote.last?.paid ?? '', purse(),
+    /* AND THE CROWD, or the panel would hold a still of a room that is
+     * roaring: `segment` only moves once a gate and a roar rises and falls
+     * inside one. Rounded, so a beat does not redraw on the third decimal. */
+    r.crowd?.in ?? '', Math.round((r.crowd?.swell || 0) * 20)].join('|');
   if (keep && tote.sig === sig && el.innerHTML) { el.classList.remove('hidden'); return; }
   tote.sig = sig;
 
@@ -2836,17 +2841,39 @@ function showTote(venueId, { keep = false } = {}) {
       + (r.phase === 'called' ? ' — called' : '') + '</p>';
     /* THE BOARD, WHICH IS FREE AND IS THE WHOLE POINT. A row is a price and a
      * name; the button beside it is the only thing a stake touches, and it is
-     * gone once the book shuts. */
+     * gone once the book shuts.
+     *
+     * ── AND THE FORM IS ON IT, WHICH IT WAS NOT ────────────────────────────
+     *
+     * `Tote.boardFor` has always carried the rating, the last six finishes,
+     * what the reading room recovered about tonight's going and this room's
+     * own head-to-head column — and this pane printed a NAME AND A PRICE and
+     * threw the rest away. A window that publishes a form book nobody can see
+     * is a window where the only readable thing on the glass is the odds, and
+     * a player who cannot read the form cannot beat the take by reading it,
+     * however honest the book behind the glass is. Every field below is public
+     * by construction; the check that rotates the hidden half under the board
+     * proves none of them move when it does. */
     const open = r.phase === 'parading';
     html += '<div class="rows">' + (board?.runners || []).map((row) => {
       const held = tote.tickets.filter((t) => t.race === r.race?.id && t.on === row.id);
       const lead = r.standings?.[0]?.id === row.id;
+      const form = [`rating ${row.rating}`];
+      form.push(row.recent?.length ? `form ${row.recent.join('-')}` : 'unraced');
+      /* The going line only when the book had enough starts to say one — a
+       * reading off two runs is a rumour and `readForm` shrinks it to nothing
+       * anyway, so printing it would be printing a zero with a decoration. */
+      if (row.read >= 4 && Math.abs(row.going) >= 0.02) {
+        form.push(`this going ${row.going > 0 ? '+' : ''}${row.going.toFixed(2)} (${row.read} read)`);
+      }
+      if (row.beat || row.beaten) form.push(`met them ${row.beat}–${row.beaten}`);
       return `<div class="row"><b>${esc(row.name)}${lead && r.phase !== 'parading' ? ' ◂' : ''}</b>`
         + `<span>${Number(row.win).toFixed(2)}`
         + (row.place ? ` · pl ${Number(row.place).toFixed(2)}` : '')
         + (held.length ? ` · ${held.reduce((a, t) => a + t.stake, 0)} on` : '')
         + '</span>'
         + (open ? `<button class="buy" data-on="${esc(row.id)}" data-kind="win">back</button>` : '')
+        + `<div class="sub">${esc(form.join(' · '))}</div>`
         + '</div>';
     }).join('') + '</div>';
     if (open) {
@@ -2855,6 +2882,22 @@ function showTote(venueId, { keep = false } = {}) {
         + (board?.field ? '<button class="buy" data-kind="field" data-on="field">back the field</button>' : '')
         + '</div>';
       html += `<p class="sub">The window takes ${MAX_STAKE} on a race. The book shuts at the off.</p>`;
+    }
+    /**
+     * WHAT THE CROWD IS DOING — V16 §G4, and it is the field that used to be
+     * a string nothing read.
+     *
+     * `r.crowd` is `Tote`'s own reading of the room: how many are in, how loud
+     * they are, and what they last reacted to. The noise itself is
+     * `Station.stepCrowd` on the world's frame — this line is the same number
+     * printed, so a player watching the board sees the room answer the race at
+     * the same moment they hear it.
+     */
+    if (r.crowd && r.crowd.in > 0) {
+      const cw = r.crowd;
+      const heat = cw.swell > 0.34 ? 'roaring' : cw.swell > 0.12 ? 'up' : cw.level > 0.45 ? 'noisy' : 'quiet';
+      html += `<p class="sub">${cw.in} in — ${esc(heat)}`
+        + (cw.swell > 0.12 && cw.moment ? ` at the ${esc(cw.moment)}` : '') + '.</p>';
     }
     /* WHAT THE CROWD IS HEARING. The announcer's own lines, up to the gate the
      * clock has reached and no further — a call the feed has not made yet is a
@@ -3084,6 +3127,21 @@ function showCounter(counterId) {
   const day = stationDay();
   const offer = offerFrom(c, { day, order: sessionOr('order'), standing: standing() });
   let html = `<div class="pane"><h2>${esc(c?.name || 'A counter')}</h2>`;
+  /**
+   * ══ AND WHO IS ACTUALLY OVER THE COUNTER ═══════════════════════════════
+   *
+   * `Station.keeperOf` described itself as "the panel's reader" while having
+   * no caller in `src/` at all — `counter.mjs` called it directly and this
+   * panel printed a shop name and a purse. So the man `dressKeepers` stands
+   * behind the desk was in the room and never named, and the two appearance
+   * fields his row carries (`helm`, `mando`) reached nothing but a check.
+   *
+   * One line, from the same row the body is built from: "Bo Vhett, a helmed
+   * Mandalorian smith" at #10, "Thulith, a drazi clothier" everywhere else —
+   * and it rerolls with the day exactly as the man behind the desk does.
+   */
+  const keeper = keeperOf(c, world);
+  if (keeper?.said) html += `<p class="sub">${esc(keeper.said)}</p>`;
   html += `<p class="sub">${purse()} credits</p>`;
   if (!offer.open) {
     html += `<p class="sub">${esc(offer.why || 'shut')}</p>`;
@@ -3396,10 +3454,17 @@ screens.card('larder', () => closePane('larder'));
  * from ten cards to eight.
  *
  * A PROGRAM IS ONE ADDRESSABLE VALUE — a ground, an opponent set, and all seven
- * dials the sandbox tab used to spread across a panel. Sixteen of them: one per
- * rung of the ladder, plus six free rooms. `programSettings` never mutates, so
- * the `Object.assign` below is the single visible place a program becomes the
- * game's settings.
+ * dials the sandbox tab used to spread across a panel. `programSettings` never
+ * mutates, so the `Object.assign` below is the single visible place a program
+ * becomes the game's settings.
+ *
+ * AND THE RACK IS NOT A SHORTLIST. The room replaces the sandbox menu, and that
+ * menu's ground column was `theatresFor('sandbox')` — the whole roster. So the
+ * rack is the ladder, then the featured rooms, then ONE PROGRAM PER GROUND the
+ * mode can load, built from `holoGrounds()` below; and the console under them
+ * carries the dials those roster rooms run with, which is the sandbox tab's
+ * three columns in the room rather than two tabs away. A curated list is an
+ * ordering on top of the roster here, never the limit of it.
  *
  * THE RACK PRINTS WHAT YOU CANNOT RUN. A syllabus that hides the rungs above
  * you tells you nothing about where you are going, and the room's whole subject
@@ -3409,24 +3474,185 @@ let holoCycle = null;
 
 function holoHold() { return { cleared: lessonsCleared() }; }
 
+/**
+ * ══ THE GROUNDS THE ROOM CAN BUILD ════════════════════════════════════════
+ *
+ * `theatresFor('sandbox')` and not a list — it is the same derivation the
+ * deleted tab's Theatre column used (`Menu._syncTheatre` bars the column with
+ * it), so a level added to `LEVEL_ORDER` is a room on the same commit and a
+ * level deleted stops being offered without anything here being edited.
+ *
+ * The name and the blurb come off `LEVELS` here rather than in `Holodeck.js`,
+ * which may not import it — see that file's header.
+ */
+function holoGrounds() {
+  return theatresFor('sandbox')
+    .filter((k) => LEVELS[k])
+    .map((k) => ({ key: k, name: LEVELS[k].name, blurb: LEVELS[k].blurb }));
+}
+
+/**
+ * ══ THE CONSOLE — the sandbox tab's three columns, in the room ════════════
+ *
+ * Every roster room is `dials: null`, which means *these* numbers: the console
+ * writes `settings` and `programSettings` reads them back. So the dials are not
+ * decoration beside the rack, they ARE what a roster room runs.
+ *
+ * The unit list is `sandboxUnits()` — 73 rows, the same list and the same
+ * −/+ steppers `Menu._buildSandboxUnits` carried before it was deleted, inside
+ * a `<details>` because a rack you have to scroll past 73 rows to reach is a
+ * rack nobody reads. Pressing a row's NAME takes the whole room for that body,
+ * exactly as the tab's row press did.
+ */
+function holoConsoleHtml() {
+  const cfg = sandboxConfig(settings);
+  const mix = (settings.sandboxMix && typeof settings.sandboxMix === 'object') ? settings.sandboxMix : {};
+  const rest = Math.max(0, cfg.count - cfg.named);
+  let html = '<div class="rows">';
+  html += '<div class="row dial"><b>Enemies</b>'
+    + `<input type="range" data-dial="sandboxCount" min="0" max="${SANDBOX_MAX_ENEMIES}" step="1"`
+    + ` value="${cfg.count}"><span data-read="sandboxCount">${cfg.count}</span></div>`;
+  html += '<div class="row dial"><b>Incoming fire</b>'
+    + `<input type="range" data-dial="sandboxFire" min="0" max="2" step="0.05"`
+    + ` value="${cfg.fire}"><span data-read="sandboxFire">${cfg.fire <= 0 ? 'held' : `${cfg.fire.toFixed(2)}×`}</span></div>`;
+  html += '<div class="row"><b>The leash</b><span>'
+    + `<label><input type="checkbox" data-flag="unlimitedBlade"${settings.unlimitedBlade ? ' checked' : ''}> blade off its cap</label> · `
+    + `<label><input type="checkbox" data-flag="unlimitedFocus"${settings.unlimitedFocus ? ' checked' : ''}> focus free</label>`
+    + '</span></div>';
+  html += '</div>';
+  html += `<details class="holo-units"${holoUnitsOpen ? ' open' : ''}><summary>Opponent — ${esc(cfg.type === 'mixed' ? 'mixed' : (sandboxUnits().find((u) => u.key === cfg.type)?.name || cfg.type))}`
+    + `${cfg.named ? `, ${cfg.named} named` : ''}</summary>`;
+  html += '<div class="rows" style="max-height:34vh;overflow-y:auto">' + sandboxUnits().map((u) => {
+    const n = u.key === 'mixed' ? rest : Math.max(0, Math.round(Number(mix[u.key]) || 0));
+    const picked = u.key === 'mixed' ? (cfg.type === 'mixed') : (n > 0 || cfg.type === u.key);
+    return `<div class="row${picked ? ' sel' : ''}"><b><button class="care" data-unit="${esc(u.key)}">${esc(u.name)}</button></b>`
+      + `<span>${esc(u.blurb)}</span>`
+      + (u.key === 'mixed'
+        ? `<span>${n} left over</span>`
+        : `<span><button class="care" data-step="-1" data-unit="${esc(u.key)}"${n <= 0 ? ' disabled' : ''}>−</button>`
+          + ` ${n} `
+          + `<button class="care" data-step="1" data-unit="${esc(u.key)}"`
+          /* At the ceiling a body you have none of cannot be added — the same
+           * guard the tab carried, because `sandboxConfig` drops the ask
+           * silently and a + that does nothing is a control that lies. */
+          + `${cfg.count >= SANDBOX_MAX_ENEMIES && n <= 0 ? ' disabled' : ''}>+</button></span>`)
+      + '</div>';
+  }).join('') + '</div></details>';
+  return html;
+}
+
+/** One rack row. `lines[1]` is the ground, which a roster room is named after. */
+function holoRowHtml(r) {
+  const lines = rackLines(r, LEVELS[r.ground]?.name, settings);
+  const rest = lines.slice(1).filter((l) => l.toUpperCase() !== lines[0]);
+  return `<div class="row"><b>${esc(lines[0])}</b>`
+    + `<span>${rest.map(esc).join(' · ')}</span>`
+    + `<button class="buy" data-id="${esc(r.id)}"${r.held ? '' : ' disabled'}>`
+    + `${r.held ? 'run' : 'locked'}</button></div>`;
+}
+
+/* The unit list is a `<details>` and the rack rebuilds on every step, so its
+ * open state and its scroll live out here — a list that shut itself every time
+ * you pressed + is a list you cannot use. */
+let holoUnitsOpen = false;
+let holoUnitsScroll = 0;
+
+/** Rebuild the pane, keeping the unit list where the player left it. */
+function holoRefresh() {
+  const list = document.querySelector('#holodeck details.holo-units .rows');
+  if (list) holoUnitsScroll = list.scrollTop;
+  showHolodeck();
+  const back = document.querySelector('#holodeck details.holo-units .rows');
+  if (back) back.scrollTop = holoUnitsScroll;
+}
+
+/**
+ * The console's writes. Every one of them lands on `settings` and is saved,
+ * because that is the blob a `dials: null` program is going to be handed —
+ * there is no second copy of these numbers in the room.
+ */
+function wireHoloConsole(el) {
+  const det = el.querySelector('details.holo-units');
+  if (det) det.addEventListener('toggle', () => { holoUnitsOpen = det.open; });
+
+  for (const r of el.querySelectorAll('input[data-dial]')) {
+    const key = r.dataset.dial;
+    const read = el.querySelector(`[data-read="${key}"]`);
+    r.addEventListener('input', () => {
+      const v = Number(r.value);
+      settings[key] = v;
+      if (read) read.textContent = key === 'sandboxFire' ? (v <= 0 ? 'held' : `${v.toFixed(2)}×`) : String(v);
+    });
+    r.addEventListener('change', () => { saveSettings(settings); holoRefresh(); });
+  }
+
+  for (const c of el.querySelectorAll('input[data-flag]')) {
+    c.addEventListener('change', () => {
+      settings[c.dataset.flag] = c.checked;
+      /* THE LEASH SHORTENS THE BLADE ON THE WAY BACK, which is what
+       * `Menu._buildUnlimitedBlade` did: without this the checkbox is a
+       * one-way door that leaves a 4 m blade behind with nothing admitting
+       * to it. `bladeCeiling` is the one answer to how long it may be. */
+      settings.bladeLength = Math.min(settings.bladeLength ?? BLADE_CAP, bladeCeiling(settings));
+      audio.ui('click');
+      saveSettings(settings);
+      holoRefresh();
+    });
+  }
+
+  /* A row press takes the WHOLE room for that body and clears the named
+   * counts — the tab's own behaviour, and the reason `mixed` is a row. */
+  for (const b of el.querySelectorAll('button[data-unit]:not([data-step])')) {
+    b.addEventListener('click', () => {
+      audio.ui('click');
+      settings.sandboxMix = {};
+      settings.sandboxType = b.dataset.unit;
+      saveSettings(settings);
+      holoRefresh();
+    });
+  }
+
+  for (const b of el.querySelectorAll('button[data-step]')) {
+    b.addEventListener('click', () => {
+      audio.ui('click');
+      const key = b.dataset.unit;
+      const by = Number(b.dataset.step);
+      const was = Math.max(0, Math.round(Number(settings.sandboxMix?.[key]) || 0));
+      const now = Math.max(0, was + by);
+      const next = { ...(settings.sandboxMix || {}) };
+      if (now > 0) next[key] = now; else delete next[key];
+      settings.sandboxMix = next;
+      /* The total follows the names UP and not back down — a number you typed
+       * must not lose to a slider you did not touch, and removing one leaves
+       * the body you took out as a mixed draw instead of shrinking the room. */
+      const cur = sandboxConfig(settings);
+      if (cur.named > (settings.sandboxCount ?? 0)) settings.sandboxCount = cur.named;
+      saveSettings(settings);
+      holoRefresh();
+    });
+  }
+}
+
 function showHolodeck() {
   const el = paneRoot('holodeck');
-  const rows = rack(LESSONS, holoHold());
-  let html = '<div class="pane"><h2>The Repeating Room</h2>';
+  const rows = rack(LESSONS, holoGrounds(), holoHold());
+  let html = '<div class="pane" style="max-height:84vh;overflow-y:auto">'
+    + '<h2>The Repeating Room</h2>';
   if (holoCycle && !holoCycle.done) {
     html += `<p class="sub">${esc(holoCycle.program.name)} — the room is setting itself.</p>`;
   } else {
-    html += `<p class="sub">${rows.filter((r) => r.held).length} of ${rows.length} programs.</p>`;
-    html += '<div class="rows">' + rows.map((r) => {
-      const lines = rackLines(r, LEVELS[r.ground]?.name);
-      return `<div class="row"><b>${esc(lines[0])}</b>`
-        + `<span>${lines.slice(1).map(esc).join(' · ')}</span>`
-        + `<button class="buy" data-id="${esc(r.id)}"${r.held ? '' : ' disabled'}>`
-        + `${r.held ? 'run' : 'locked'}</button></div>`;
-    }).join('') + '</div>';
+    const ground = rows.filter((r) => r.kind === 'ground');
+    html += `<p class="sub">${rows.filter((r) => r.held).length} of ${rows.length} programs · `
+      + `every one of the ${ground.length} grounds the game can build.</p>`;
+    html += holoConsoleHtml();
+    html += '<h3>The ladder, and the rooms built for it</h3>';
+    html += '<div class="rows">' + rows.filter((r) => r.kind !== 'ground').map(holoRowHtml).join('') + '</div>';
+    html += '<h3>Any ground, with the numbers above</h3>';
+    html += '<div class="rows">' + ground.map(holoRowHtml).join('') + '</div>';
   }
   html += '<div class="acts"><button class="care" data-do="leave">Leave</button></div></div>';
   el.innerHTML = html;
+  wireHoloConsole(el);
   for (const b of el.querySelectorAll('button.buy')) {
     b.addEventListener('click', () => runProgram(b.dataset.id));
   }
@@ -3444,8 +3670,9 @@ function showHolodeck() {
 }
 
 function runProgram(id) {
-  const p = programById(LESSONS, id);
-  if (!p || !rack(LESSONS, holoHold()).some((r) => r.id === id && r.held)) return;
+  const grounds = holoGrounds();
+  const p = programById(LESSONS, grounds, id);
+  if (!p || !rack(LESSONS, grounds, holoHold()).some((r) => r.id === id && r.held)) return;
   Object.assign(settings, programSettings(p, settings));
   holoCycle = new Cycle(p, settings, {
     say: (line) => world?.notify?.('THE REPEATING ROOM', line),

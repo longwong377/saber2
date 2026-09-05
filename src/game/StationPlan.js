@@ -503,8 +503,16 @@ export const PLACES = [
   {
     id: 37, deck: 44, name: "The Vorlon's door", shape: 'deadend',
     look: 'a sealed door at the end of a dead corridor: organic, a hum, one light',
-    who: '—', idle: 'the light changes', verb: 'stand there',
-    band: 'outer', at: -80, w: 6, d: 16, h: 3.4, peak: 3, heads: 0,
+    who: 'the Vorlon, and nobody else, ever', idle: 'the light changes', verb: 'stand there',
+    /**
+     * ONE HEAD, AND IT IS FIXED. §3.3: *"one encounter suit, one place (#37),
+     * never walks."* The row said `heads: 0`, so the fifteenth species was a
+     * table with no body — the census read fourteen at every hour of every
+     * day. `fixed` keeps him off `fullness`'s curve, which would empty a
+     * one-head room for most of the day; he is at his door or he is not the
+     * Vorlon. `StationLife.headcount` is the only reader.
+     */
+    band: 'outer', at: -80, w: 6, d: 16, h: 3.4, peak: 3, heads: 1, fixed: true,
   },
   {
     id: 38, deck: 44, name: 'Transient hostel', shape: 'capsulewall',

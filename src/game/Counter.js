@@ -88,15 +88,25 @@ export const TIERS = {
  *
  * The first cut gave each rung a multiplier on top of the author's `base`, and
  * the two compounded: a singular authored at 2600 came out of the shelf at
- * 57,200, which against `Credits.PER_RUN_CAP` of 900 is SIXTY-FOUR capped
- * runs. `Progress.js`'s amendment promises the dearest things cost "several
- * runs" and that is the whole of what bounds the economy, so the number was
- * not a tuning miss — it broke the guarantee the doctrine was amended on.
+ * 57,200, which was tens of runs. `Progress.js`'s amendment promises the
+ * dearest things cost "several runs" and that is the whole of what bounds the
+ * economy, so the number was not a tuning miss — it broke the guarantee the
+ * doctrine was amended on.
  *
  * The cause is that two people were setting one number. `base` IS the price,
  * in credits, and a rung now decides only how OFTEN a row reaches a shelf and
- * what the vendor says about it. One author, one number, and a price you can
- * read off the table and divide by 900 in your head.
+ * what the vendor says about it. One author, one number.
+ *
+ * ── AND "SEVERAL RUNS" IS DIVIDED BY A RUN, NOT BY THE CAP ────────────────
+ *
+ * The obvious way to check that guarantee is `base / Credits.PER_RUN_CAP`, and
+ * it is wrong: the cap is the MOST a run can pay and no run has ever paid it.
+ * Measured through the shipped ending, ordinary play landed at about a sixth of
+ * the cap, so the quotient understated every price on the shelf by six —
+ * enough for a plate that was really twenty-three runs to read as three and a
+ * half and pass a check. `tools/checks/balance.mjs` derives the denominator
+ * from `simulateRun` at three skill settings and pays it through `record()`,
+ * which is the only honest way to ask this file's own question.
  */
 export const TIER_IDS = Object.keys(TIERS);
 

@@ -83,7 +83,7 @@
 import { makeRng } from '../engine/MathUtil.js';
 import {
   SKINS, groundById, dressGround, makeCard, priceCard, favouriteOf,
-  runSpectacle, recordResult, announce, MOMENTS,
+  runSpectacle, recordResult, readForm, announce, MOMENTS,
 } from './Spectacle.js';
 
 /** A stable 32-bit hash. Same idiom `Quests.js` and `Counter.js` use. */
@@ -117,7 +117,8 @@ export const VENUES = Object.freeze([
    */
   {
     id: 'holo-theatre', place: 19, name: 'Holo-theatre', skin: 'PODRACE',
-    word: 'race', runners: 'the field', crowd: 'sixty in the seats',
+    word: 'race', runners: 'the field',
+    crowd: { size: 60, temper: 0.55, says: 'sixty in the seats' },
     grounds: ['boonta', 'vinta', 'ord'],
     yard: 20, meets: [1, 2], hours: [12, 21], length: [2.5, 4], every: 0.5, runs: 0.3,
     /* Six days in seven. A card every single day is a timetable, not an event. */
@@ -131,7 +132,8 @@ export const VENUES = Object.freeze([
    */
   {
     id: 'the-pit', place: 18, name: 'The Pit', skin: 'PIT',
-    word: 'bout', runners: 'the card', crowd: 'twelve at the rail',
+    word: 'bout', runners: 'the card',
+    crowd: { size: 12, temper: 1, says: 'twelve at the rail' },
     grounds: ['pit-floor'],
     yard: 14, meets: [1, 1], hours: [19, 23], length: [2, 3.5], every: 0.5, runs: 0.3,
     dark: 0.22,
@@ -148,7 +150,8 @@ export const VENUES = Object.freeze([
    */
   {
     id: 'the-arena', place: 20, name: 'The Arena', skin: 'ARENA',
-    word: 'bout', runners: 'the pair', crowd: 'twelve on the benches',
+    word: 'bout', runners: 'the pair',
+    crowd: { size: 12, temper: 0.7, says: 'twelve on the benches' },
     grounds: ['arena-sand'],
     yard: 12, meets: [1, 2], hours: [10, 20], length: [1.5, 3], every: 0.5, runs: 0.25,
     dark: 0.18,
@@ -157,7 +160,7 @@ export const VENUES = Object.freeze([
      * the one venue where that is a betting decision as well as a fiction. */
     graded: true,
   },
-].map(Object.freeze));
+].map((v) => Object.freeze({ ...v, crowd: Object.freeze(v.crowd) })));
 
 export const venueById = (id) => VENUES.find((v) => v.id === id) || null;
 export const venueAtPlace = (place) => VENUES.find((v) => v.place === (place | 0)) || null;
@@ -394,6 +397,12 @@ export function* walkVenue(venueId, { from = 0, days = 1, book = null } = {}) {
  */
 function writeHeadToHead(card, result) {
   if (!result?.winner) return;
+  /* ONLY WHERE THERE IS A GRUDGE TO PUBLISH. `recordResult` writes the hidden
+   * term for a BOUT and nothing else, so a head-to-head column on a podrace
+   * would be a printed number that predicts nothing — which is the same defect
+   * as a form line the sim does not read, wearing a fight bill's clothes. Who
+   * beat whom in a field of eight is already in the form line. */
+  if (SKINS[card.skin]?.mode !== 'bout') return;
   for (const row of result.order) {
     if (row.position === 1) continue;
     const e = card.entrants.find((x) => x.id === row.id);
@@ -554,9 +563,35 @@ export function boardFor(race) {
   const k = placesPaid(race.card.entrants.length);
   const runners = rows.map((r, i) => {
     const e = race.card.entrants[i];
+    /* THE FORM, ON THE CARD, BECAUSE A CARD WITH NO FORM ON IT IS A PRICE LIST.
+     *
+     * Everything below is public by construction — the rating and the last six
+     * finishes the engine's log already carries, the going line `readForm`
+     * recovers from that log, and this file's own head-to-head column against
+     * THE RUNNERS IN THIS RACE. Nothing here is a hidden term and the check
+     * that rotates the hidden half under the board proves it: none of these
+     * move when it does.
+     *
+     * It is on the board row rather than in a second call because the room
+     * that renders this must be able to print a form line without knowing what
+     * a form line is — the same bargain the price is on this row for. */
+    const read = readForm(e, race.ground);
+    let beaten = 0, beat = 0;
+    for (const f of race.card.entrants) {
+      if (f === e) continue;
+      beaten += beatenBy(e, f.id);
+      beat += beatenBy(f, e.id);
+    }
     const row = {
       id: r.id, name: e.name, kind: e.kind, rating: e.form.rating,
       recent: e.form.recent.slice(), marketP: Math.round(p[i] * 1000) / 1000,
+      starts: e.form.starts, wins: e.form.wins,
+      /* What the reading room could recover about tonight's going, and how
+       * many starts it had to read to say it. */
+      going: round2(read.bonus), read: read.starts,
+      /* Their last meetings, both ways round, exactly as a fight bill prints
+       * them. `beaten` is what this one CARRIES into tonight. */
+      beaten, beat,
       win: r.price, place: null, placeP: null,
     };
     if (k) {
@@ -611,7 +646,7 @@ export const BETS = Object.freeze([
  * run's whole earnings is the line between a bet and a way to lose the game at
  * a window.
  */
-export const MAX_STAKE = 900;
+export const MAX_STAKE = 2200;
 
 /**
  * PRICE A BET AND HAND BACK A TICKET. NO MONEY MOVES HERE.
@@ -676,7 +711,7 @@ export function ticketFor(race, { on = null, kind = 'win', stake = 0, at = null 
  * and every measurement of the cut reads the ROUNDING instead of the price.
  * `drumEdge` names the same trap. `edgeOf` buys the book at a hundred thousand
  * for exactly that reason, which is a size no player may stake — `MAX_STAKE`
- * is 900 — and that is the point: a measurement is not a bet.
+ * is 2200 — and that is the point: a measurement is not a bet.
  */
 export function settleTickets(tickets = [], result = null) {
   const place = new Map((result?.order || []).map((r) => [r.id, r.position]));
@@ -872,6 +907,224 @@ export function standingsAt(race, hour) {
   }));
 }
 
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  THE CROWD — §G4, and the reason this section exists at all
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * *"a crowd that reacts to what happens in the pit/arena/race."*
+ *
+ * `crowd` was a STRING on every venue row — "sixty in the seats" — and an
+ * audit found what a string is worth: `grep -rn crowd src/` turned up the
+ * declaration and NO READER anywhere in the tree. The row promised a room
+ * full of people and the game had twelve words about them. The announcer was
+ * DOM text and nothing else; a race could be won by a nose, by a 40/1 shot,
+ * with the whole card turned over on the last gate, and the room made exactly
+ * the same amount of noise as a walkover.
+ *
+ * So the row is now `{ size, temper, says }` and this is the model that reads
+ * it. `says` keeps the prose the row always had; `size` is how many are in
+ * when the room is full, and `temper` is how loud one of them is — twelve at
+ * the Pit's rail are LOUDER than sixty in the Holo-theatre's seats, which is
+ * the whole difference between the two rooms and cannot be said with a
+ * headcount alone.
+ *
+ * ── WHAT A CROWD IS ACTUALLY REACTING TO ─────────────────────────────────
+ *
+ * Not "an event happened". Three things, and they are the three a rail
+ * actually shouts at:
+ *
+ *   A NEAR FINISH  — `margin` off the engine's own `result` event.
+ *   AN UPSET       — the winner's price on the board this file already prints.
+ *   THE MONEY HOME — the favourite winning is a smaller, flatter cheer, and it
+ *                    is not silence: half the room backed it.
+ *
+ * A longshot by a nose is the loudest thing that can happen in any of these
+ * rooms and a favourite strolling in is the quietest thing that is still a
+ * result, and the two must not measure the same. Everything mid-race — a lead
+ * change, an overtake, a knockdown, a retirement — is weighted by WHEN, because
+ * a lead change on the last gate is a race and one on the first is a start.
+ *
+ * ── AND IT IS DERIVED, NOT STORED ────────────────────────────────────────
+ *
+ * Same bargain as the rest of the file: the reaction at an hour is a pure
+ * function of `(venue, day, hour)`, so two players standing in the same room
+ * hear the same roar with nothing written down. The only stochastic term is
+ * the night's attendance, seeded off `(venue, day)` exactly as the card is.
+ */
+
+/**
+ * WHAT EACH MOMENT IS WORTH BEFORE ANY OF THE ABOVE IS APPLIED.
+ *
+ * The engine's `MOMENTS` plus `off`, which is not a moment but is the noise a
+ * room makes when the tapes go up. A result is 1 because the call is the
+ * loudest thing in any race; an overtake is 0.24 because at the Holo-theatre
+ * there are eighty of them in an afternoon.
+ */
+export const CROWD_WEIGHT = Object.freeze({
+  result: 1, beaten: 0.74, knockdown: 0.6, retire: 0.55, wall: 0.5,
+  mechanical: 0.44, refusal: 0.36, lead: 0.34, overtake: 0.24, off: 0.3,
+});
+
+/**
+ * HOW LONG A ROAR TAKES TO DIE BACK TO THE MURMUR, IN STATION HOURS.
+ *
+ * §3.4 is one station hour per two real minutes, so 0.035 h is about four and
+ * a quarter real seconds — a cheer, not a chant, and long enough that the
+ * panel's four-a-second beat sees it rise and fall rather than blink.
+ *
+ * IN HOURS AND NOT IN GATES, which is what it was first written as and is
+ * wrong: a Pit bout is 54 gates in the same 0.3 h a Holo-theatre race spends
+ * on 16, so "1.6 gates" was 3.6 real seconds in one room and 1.1 in another.
+ * A crowd does not shorten its cheer because the sim ticks faster. The floor
+ * below keeps it at least a gate wide wherever a gate is longer than this.
+ */
+export const CROWD_FADE = 0.035;
+
+/** A margin (in the engine's own distance units) that is a photograph. */
+export const CROWD_NOSE = 1.2;
+
+/**
+ * HOW BIG A MOMENT IS, 0..1, WITH NOTHING ABOUT THE ROOM IN IT.
+ *
+ * Deliberately separate from `crowdVoice`: this is what HAPPENED and that is
+ * who is watching, and mixing the two would make a quiet room's photo-finish
+ * indistinguishable from a loud room's walkover.
+ *
+ * It reads the board, which is the public price and not the hidden model — a
+ * crowd is surprised by what it was TOLD was unlikely, which is the same
+ * information the punter beside it had.
+ */
+export function dramaOf(ev, race, board) {
+  if (!ev) return 0;
+  const base = CROWD_WEIGHT[ev.type] ?? 0.2;
+  const segments = race?.ground?.segments || 1;
+  if (ev.type === 'result') {
+    const p = board?.runners?.find((r) => r.id === ev.who)?.marketP ?? 0.25;
+    /* A photograph, and a length and a bit is not one. */
+    const nose = Math.max(0, Math.min(1, 1 - Math.abs(ev.margin || 0) / CROWD_NOSE));
+    /* What the board said could not happen. A 2/1 favourite is 0.17 of this;
+     * a 30/1 outsider is 0.95. */
+    const upset = Math.max(0, Math.min(1, 1 - p / 0.6));
+    const home = ev.who && board && ev.who === board.favourite ? 1 : 0;
+    return Math.max(0, Math.min(1, 0.08 + 0.42 * nose + 0.62 * upset + 0.22 * home));
+  }
+  /* Everything else: WHEN it happened is most of what it is worth. */
+  const late = segments > 0 ? Math.max(0, Math.min(1, (ev.t || 0) / segments)) : 0;
+  const fav = board && ev.who === board.favourite ? 1.25 : 1;
+  return Math.max(0, Math.min(1, base * (0.55 + 0.45 * late) * fav));
+}
+
+/**
+ * THE ROOM'S OWN VOICE — the venue's `crowd` row, made into numbers a room
+ * can spend.
+ *
+ * `crowd` is the row verbatim, which is what makes this the READER the field
+ * was missing: every observable below moves with `size` and with `temper`, and
+ * `tote.mjs` drives this function with each venue's row and perturbations of
+ * it to hold that it does.
+ *
+ *   `voices`  how many are in the room right now — the density a room dresses.
+ *   `level`   the sustained murmur, 0..1.
+ *   `swell`   the reaction on top of it, 0..1.
+ */
+export function crowdVoice(crowd, { drama = 0, fill = 0 } = {}) {
+  const size = Math.max(0, crowd?.size || 0);
+  const temper = Math.max(0, Math.min(1, crowd?.temper ?? 0.5));
+  const f = Math.max(0, Math.min(1.2, fill));
+  const voices = Math.round(size * f);
+  /* THE MURMUR is mostly how many are in; a full room is never silent. */
+  const level = Math.max(0, Math.min(1, (0.1 + 0.6 * f) * (0.55 + 0.45 * temper)));
+  /* THE ROAR is what happened × how hot they are × how many throats there are.
+   * Forty-eight and not sixty: a Pit at the rail is packed at twelve, and a
+   * bowl that only got loud at sixty would mean the two small rooms never
+   * reacted at all. The floor is 0.45 for the same reason — twelve men at a
+   * rail two metres from the sand are not a fifth of sixty in a raked bowl,
+   * they are most of it, and the difference the headcount is allowed to make
+   * is the rest. */
+  const body = Math.min(1, voices / 48);
+  const swell = Math.max(0, Math.min(1,
+    Math.max(0, Math.min(1, drama)) * (0.45 + 0.55 * temper) * (0.45 + 0.55 * body)));
+  return { voices, level: Math.round(level * 1000) / 1000, swell: Math.round(swell * 1000) / 1000, temper, size };
+}
+
+/** How full the room is in each phase. A dark room has nobody in it. */
+function fillFor(phase, progress, day, venueId) {
+  /* The night's own turnout, seeded off (venue, day) like everything else
+   * here, so two people in the room count the same heads. */
+  const turn = 0.86 + 0.28 * seeded(`${venueId}|${day}|crowd`)();
+  switch (phase) {
+    case 'dark': return 0;
+    case 'closed': case 'over': return 0.16 * turn;
+    case 'parading': return 0.72 * turn;
+    case 'running': return (0.72 + 0.28 * progress) * turn;
+    case 'called': return 0.9 * turn;
+    default: return 0.16 * turn;
+  }
+}
+
+/**
+ * THE CROWD AT AN HOUR — the reading `watch()` hands back and the thing the
+ * room in `Station.js` actually spends.
+ *
+ * Its `swell` decays in GATES rather than in hours, so a roar lasts the same
+ * fraction of a race at every venue however long that venue's races are, and
+ * it goes on decaying after the call — which is why the elapsed gate count is
+ * taken off the clock and not off `progress`, which is clamped at 1.
+ */
+function crowdIn(v, reading) {
+  const fill = fillFor(reading.phase, reading.progress, reading.day, v.id);
+  const race = reading.race;
+  let moment = null, drama = 0, since = 0;
+  if (race && reading.board && reading.phase !== 'parading') {
+    const result = resultOf(race);
+    const perGate = race.runs / (race.ground.segments || 1);
+    const fadeH = Math.max(CROWD_FADE, perGate * 1.2);
+    for (const ev of result.events) {
+      if (!(CROWD_WEIGHT[ev.type] >= 0)) continue;
+      /* Nothing the feed has not reached. A room that roared at a result the
+       * screen has not printed is the whole defect this lane rules out. */
+      if (ev.t > reading.segment) continue;
+      if (ev.type === 'result' && reading.phase !== 'called') continue;
+      const d = dramaOf(ev, race, reading.board);
+      /* ── WHEN THE ROOM ACTUALLY HEARD IT ────────────────────────────────
+       * Not `ev.t`, for the one event where the two differ. A BOUT ends when
+       * one of them is done — `runSpectacle` breaks out of the gate loop — so
+       * the Pit's `result` carries the gate the fight stopped on while the
+       * room's window runs to `runs` hours regardless. Measured: a Pit bout
+       * ended on gate 10 of 54, the call landed 44 gates in the past, and the
+       * crowd's roar at the result faded to ZERO before the result was ever
+       * printed. The call is heard when the feed prints it, which is the end
+       * of the window; everything else is heard at its own gate. */
+      const heard = ev.type === 'result' ? (race.ground.segments || 1) : (ev.t || 0);
+      const g = Math.max(0, reading.hour - (race.hour + heard * perGate));
+      const fade = Math.max(0, 1 - g / fadeH);
+      if (d * fade > drama) { drama = d * fade; moment = ev.type; since = g; }
+    }
+  }
+  const voice = crowdVoice(v.crowd, { drama, fill });
+  return {
+    says: v.crowd.says, size: v.crowd.size, temper: v.crowd.temper,
+    /* THE TWO INPUTS, HANDED BACK BESIDE THE THREE OUTPUTS. `fill` and `drama`
+     * are what `crowdVoice` was given and the rest is what it answered, so a
+     * reader — or a check — can recompute the room from the venue's own row
+     * and prove the row is what it was built from. A reading whose derivation
+     * cannot be re-run is the same thing as a field with no reader. */
+    fill: Math.round(fill * 10000) / 10000,
+    in: voice.voices, level: voice.level, swell: voice.swell,
+    moment, drama: Math.round(drama * 1000) / 1000, since: Math.round(since * 10000) / 10000,
+  };
+}
+
+/**
+ * THE CROWD, AS A READING OF ITS OWN — for a caller that wants the room and
+ * not the card. It is `watch().crowd` and nothing else, so there is one
+ * derivation and the panel and the room can never disagree about the noise.
+ */
+export function crowdAt(venueId, day = 0, hour = 0) {
+  return watch(venueId, day, hour).crowd;
+}
+
 /**
  * ══════════════════════════════════════════════════════════════════════════
  *  WATCH. NO STAKE, NO TICKET, NO PARAMETER ONE COULD HIDE IN.
@@ -894,10 +1147,24 @@ export function standingsAt(race, hour) {
 export function watch(venueId, day = 0, hour = 0) {
   const v = venueById(venueId);
   if (!v) throw new Error(`no such venue: ${venueId}`);
+  const reading = readVenue(v, day, hour);
+  /* ── AND THE ROOM IS FULL OF PEOPLE, WHO ARE LISTENING ─────────────────
+   * The last field on the reading, and the only one that is about the people
+   * in the seats rather than the card. It is computed HERE, once, off the
+   * finished reading, so the panel, the noise and the bodies in the room can
+   * never be reading three different crowds. It is not gated on a stake and
+   * cannot be: `readVenue` never saw one. */
+  reading.crowd = crowdIn(v, reading);
+  return reading;
+}
+
+/** The card half of a reading — everything above the crowd. */
+function readVenue(v, day, hour) {
+  const venueId = v.id;
   const card = cardAt(venueId, day);
   const all = card.meets.flatMap((m) => m.races);
   const reading = {
-    venue: v.id, place: v.place, name: v.name, word: v.word, crowd: v.crowd,
+    venue: v.id, place: v.place, name: v.name, word: v.word, crowd: null,
     day: day | 0, hour, dark: card.dark,
     meet: null, phase: 'dark', race: null, board: null,
     progress: 0, segment: 0, segments: 0,
@@ -974,14 +1241,25 @@ export function watch(venueId, day = 0, hour = 0) {
  * the house's cut: the board is deliberately FLATTER than the truth (it cannot
  * see the hidden terms, so from where it stands the race really is less
  * predictable), which prices outsiders shorter than they deserve, and a bettor
- * spreading his money evenly is mostly buying outsiders. That is the
- * favourite–longshot bias, it is what makes reading the form pay, and it
- * belongs in the check that measures bettors — `randomReturn` below — rather
- * than in the one that measures the window's cut.
+ * spreading his money evenly is mostly buying outsiders. That was read as the
+ * favourite–longshot bias and it was not one: `sigma` was mis-fitted, so the
+ * board's own market leader won oftener than any price on the board said he
+ * would, and the money on the floor was a broken model rather than a margin
+ * the house had chosen. Refitted — see `Spectacle.SKINS` — a bettor with no
+ * opinion now gets back `1 − take` whichever runner he picks, which is what an
+ * honest board means. Either way it belongs in the check that measures
+ * BETTORS and not in the one that measures the window's arithmetic.
+ *
+ * THE PIN USED TO BE MEASURED HERE TOO, by a `randomReturn` that walked one
+ * yard for thousands of days — long enough that every form log had saturated
+ * at `LOG_KEEP` and the punter being measured held a book no player is ever
+ * handed. `tools/checks/_tote-edge.mjs` does it on `bookAt`'s own fortnight,
+ * through `ticketFor` and `settleTickets`, and this file no longer keeps a
+ * second, kinder answer to the same question.
  *
  * THE BOOK IS BOUGHT AT A HUNDRED THOUSAND, for `settleTickets`'s reason: at a
  * stake of 1 the rounding IS the edge and every price change measures as no
- * change at all. No player may stake that — `MAX_STAKE` is 900 — which is the
+ * change at all. No player may stake that — `MAX_STAKE` is 2200 — which is the
  * point: a measurement is not a bet.
  */
 const BOOK_UNIT = 100000;
@@ -1011,37 +1289,4 @@ export function edgeOf(kind = 'win', { venue = 'holo-theatre', races = 3000, fro
     n++;
   }
   return { edge: staked ? 1 - back / staked : 0, races: n, staked, returned: back };
-}
-
-/**
- * WHAT A BETTOR WITH NO OPINION AT ALL GETS BACK — one unit on a runner picked
- * off the card with a pin, over thousands of races.
- *
- * It is NOT the house's cut and it is always worse than it, for the reason
- * `edgeOf` records. It is here because it is the floor every other bettor is
- * measured against: *"a good better will probably make money over time"* is a
- * claim about beating THIS number, and a claim about a number nobody computed
- * is a decoration.
- *
- * Averaged over every runner the pin could have landed on rather than sampled
- * by an actual coin — the same measurement with the picking noise taken out,
- * which is how a 7% edge is read in three thousand races instead of three
- * hundred thousand.
- */
-export function randomReturn({ venue = 'holo-theatre', kind = 'win', races = 3000, from = 0 } = {}) {
-  let staked = 0, back = 0, n = 0;
-  for (const step of walkVenue(venue, { from, days: races })) {
-    if (n >= races) break;
-    const board = boardFor(step.race);
-    if (kind === 'place' && !board.places) continue;
-    const tickets = board.runners.map((r) => ({
-      kind, on: r.id, price: kind === 'place' ? r.place : r.win,
-      stake: BOOK_UNIT, places: board.places,
-    }));
-    const led = settleTickets(tickets, resultOf(step.race));
-    staked += led.staked;
-    back += led.returned;
-    n++;
-  }
-  return { roi: staked ? back / staked - 1 : 0, races: n };
 }

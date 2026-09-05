@@ -1064,17 +1064,85 @@ export async function run({ check, assert, THREE }) {
     assert(empty.length === 0,
       `${empty.length} places are empty when they are supposed to be busiest:\n      ${empty.join('\n      ')}`);
 
-    /* §5.3: at least eight residents of every species are placed. */
-    const c = census(13);
-    const thin = [];
-    for (const [k, n] of c.bySpecies) {
-      /* The Vorlon is one, by construction, and is placed by hand at #37. */
-      if (k === 'vorlon') continue;
-      if (n < 8) thin.push(`${k}: ${n}`);
+    /**
+     * ══ §5.3: EIGHT OF EVERY SPECIES — ON EVERY DAY OF A YEAR ═════════════
+     *
+     * This asserted `census(13)` and nothing else, which is day 0, which is
+     * the one day the faces do not reroll on. Swept, the floor was a fiction:
+     * Grome and "other" stood at SEVEN on 222 days of 365, Vree and Abbai on
+     * some, and the Minbari — whose quarter seats three at midday — fell to
+     * six. The Vorlon stood at ZERO on all 365, and the line that skipped him
+     * said he was "placed by hand at #37", where the gazetteer gave him no
+     * head to stand on. A check that names the thing it is not checking.
+     *
+     * THE FLOOR IS THE ROSTER'S, NOT THIS FILE'S. `FLOOR` is the number
+     * `StationLife` builds to, and the one exception is read off the species
+     * row — `singleton` is what makes the Vorlon one — so a sixteenth species
+     * added to `SPECIES` is swept here the day it lands, with no list to edit.
+     */
+    const { SPECIES_KEYS, SPECIES_BY } = await import('../../src/game/StationCast.js');
+    const { FLOOR } = await import('../../src/game/StationLife.js');
+    const floorFor = (k) => (SPECIES_BY.get(k).singleton ? 1 : FLOOR);
+    const YEAR = 365;
+
+    const worst = new Map(SPECIES_KEYS.map((k) => [k, [Infinity, -1]]));
+    const vectors = new Set();
+    const spread = new Map(SPECIES_KEYS.map((k) => [k, new Set()]));
+    for (let day = 0; day < YEAR; day++) {
+      const c = census(13, day);
+      const v = [];
+      for (const k of SPECIES_KEYS) {
+        const n = c.bySpecies.get(k) || 0;
+        v.push(n);
+        spread.get(k).add(n);
+        if (n < worst.get(k)[0]) worst.set(k, [n, day]);
+      }
+      vectors.add(v.join(','));
     }
+    const thin = SPECIES_KEYS
+      .filter((k) => worst.get(k)[0] < floorFor(k))
+      .map((k) => `${k}: ${worst.get(k)[0]} on day ${worst.get(k)[1]} (floor ${floorFor(k)})`);
     assert(thin.length === 0,
-      `${thin.length} species have fewer than 8 residents at 13:00: ${thin.join(', ')}`);
-    console.log(`      census at 13:00: ${[...c.bySpecies].map(([k, n]) => `${k} ${n}`).join(', ')}`);
+      `over ${YEAR} days the 13:00 census falls under §5.3's floor for ${thin.length} species:\n      `
+      + thin.join('\n      '));
+
+    /**
+     * AND EVERY SPECIES IS ON THE STATION AT EVERY HOUR, not only at midday.
+     * The floor is a midday number because `occupant` may not read the clock;
+     * PRESENCE is not, and a species that vanishes from the station between
+     * 11:00 and 20:00 — which is what the Vorlon's curve did to him — is a
+     * species the player cannot be shown.
+     */
+    const gone = [];
+    for (const day of [0, 1, 7, 65, 199, 364]) {
+      for (let hour = 0; hour < 24; hour++) {
+        const c = census(hour, day);
+        const miss = SPECIES_KEYS.filter((k) => !(c.bySpecies.get(k) > 0));
+        if (miss.length) gone.push(`day ${day} ${hour}:00 — ${miss.join(', ')}`);
+      }
+    }
+    assert(gone.length === 0,
+      `${gone.length} hours hold fewer than all ${SPECIES_KEYS.length} species:\n      `
+      + gone.slice(0, 8).join('\n      '));
+
+    /**
+     * AND THE FLOOR IS A FLOOR, NOT A QUOTA. The failure mode of any top-up is
+     * that it flattens the thing it was fixing — every rare kind pinned at
+     * exactly eight for ever, which is a census that has stopped being a
+     * census. So: no two days of the year may read the same, and every kind
+     * that is not a singleton must take more than one value across it.
+     */
+    assert(vectors.size === YEAR,
+      `only ${vectors.size} distinct censuses over ${YEAR} days — the mix has stopped moving`);
+    const flat = SPECIES_KEYS.filter((k) => !SPECIES_BY.get(k).singleton && spread.get(k).size < 2);
+    assert(flat.length === 0,
+      `${flat.join(', ')} read the same number on all ${YEAR} days — that is a quota, not a floor`);
+
+    const line = SPECIES_KEYS.map((k) => {
+      const a = [...spread.get(k)];
+      return `${k} ${Math.min(...a)}–${Math.max(...a)}`;
+    }).join(', ');
+    console.log(`      census at 13:00 over ${YEAR} days: ${line}`);
   });
 
   /* ════════════════════════════════════════════════════════════════════════ */
@@ -2505,5 +2573,175 @@ export async function run({ check, assert, THREE }) {
       out.push('plan table → named, and released at 3 m');
     } finally { b.world.dispose?.(); S.setStationName(was); }
     return out.join('; ');
+  });
+
+  /* ══════════════════════════════════════════════════════════════════════ */
+
+  check('station: every lift floor names the shaft its car stands in', async () => {
+    /**
+     * ══ THE DEFECT: A CAR EIGHTY-TWO METRES FROM THE MAN WHO GOT OUT ═════
+     *
+     * `Levels.setLiftFloors`'s rows are the one table that says which of the
+     * drum's three shafts a floor's car is standing in — `main.enterStation`
+     * copies `row.shaft` onto `world._stationShaft` and `dressStation` reads
+     * it. Decks 12, 32 and 60 named theirs. Decks 40, 44 and 48 named none,
+     * and `world._stationShaft || 'arrivals'` fell to the first row of
+     * `SHAFTS` every time, on the three decks a player spends their whole
+     * visit on. `STATION_LEVEL.start` puts them down in the ATRIUM lobby, so
+     * the doors opened 82.8 m from the car.
+     *
+     * WHAT THIS ASSERTS, and it is deliberately not "the field is present":
+     * a row's shaft has to SERVE that deck, `dressStation` has to dress the
+     * one the row names, and the car it stands has to be within reach of
+     * where the level puts the player down. A row could satisfy the first two
+     * and still open its doors across the drum; the third clause is the one
+     * that is about a player.
+     */
+    await import('../../src/game/Levels.js');
+    const { liftFloors } = await import('../../src/game/DeckLift.js');
+    const { SHAFTS } = await import('../../src/game/StationPlan.js');
+    const St = await import('../../src/game/Station.js');
+    const start = St.STATION_LEVEL.start;
+    const rows = liftFloors().filter((f) => f.deck != null);
+    assert(rows.length >= 5, `the floor list has ${rows.length} station decks — Levels.js never installed it`);
+    const said = [];
+    for (const f of rows) {
+      assert(f.shaft, `the deck-${f.deck} floor row names no shaft, so the car falls to whichever `
+        + 'row of SHAFTS happens to be first — which is exactly how it ended up 82.8 m from the player');
+      const sh = SHAFTS.find((x) => x.id === f.shaft);
+      assert(sh, `the deck-${f.deck} row rides shaft '${f.shaft}', which is not in SHAFTS`);
+      assert(sh.decks.includes(f.deck),
+        `the deck-${f.deck} row rides the ${f.shaft} shaft, which does not reach that deck`);
+      said.push(`${f.deck}→${f.shaft}`);
+    }
+    /* AND THE DOORS OPEN WHERE THE PLAYER IS STANDING, on the three decks the
+     * level's own `start` was authored for. 12 and 32 are the hangar's frame
+     * and 60 is one room on the axis; the drum is what `start` describes. */
+    const far = [];
+    for (const f of rows.filter((x) => [40, 44, 48].includes(x.deck))) {
+      const sh = SHAFTS.find((x) => x.id === f.shaft);
+      const r = Math.hypot(sh.x, sh.z), k = (r + 3.2) / r;
+      const d = Math.hypot(sh.x * k - start[0], sh.z * k - start[1]);
+      if (d > 12) far.push(`deck ${f.deck}: the ${f.shaft} car stands ${d.toFixed(1)} m from [${start}]`);
+    }
+    assert(!far.length, `${far.length} decks put the player down nowhere near the car they arrived in:\n      `
+      + far.join('\n      '));
+    /* AND `dressStation` READS THE ROW. The table above is a declaration; this
+     * is the station actually built through the door the game uses. */
+    const a = await station(40);
+    try {
+      const want = rows.find((f) => f.deck === 40).shaft;
+      assert(a.world._station.shaft?.id === want,
+        `deck 40's row says ${want} and the deck dressed the ${a.world._station.shaft?.id} shaft`);
+    } finally { a.world.dispose?.(); }
+    return `${said.join(', ')}; the drum's cars all stand within 12 m of [${start}], and deck 40 dresses the one its row names`;
+  });
+
+  check('station: a keeper wears every field its row declares', async () => {
+    /**
+     * ══ THE SHAPE THIS CATCHES: A FIELD THAT ONLY A CHECK CAN SEE ════════
+     *
+     * `ARMOURER.keeper` said `{role:'smith', species:'human', helm:true,
+     * mando:true, name:'Bo Vhett'}`. `helm` and `mando` reached exactly one
+     * thing — `keeperOf`, which handed them straight back to `counter.mjs`,
+     * which asserted `smith.mando && smith.helm` and went green. The body
+     * actually standing behind #10's counter was `res_human` in robes, 62
+     * meshes, no plate and no bucket, for a whole lane. A guard that reads a
+     * field back out of the row it was declared in is not a guard.
+     *
+     * So this holds two things instead:
+     *
+     *   EVERY KEY A KEEPER ROW DECLARES CHANGES SOMETHING. Drop it and the
+     *   pair (what he is wearing, who he is) has to move. A new field added
+     *   to a `keeper` row with no reader fails here on the day it is written.
+     *
+     *   AND THE BODY IN THE ROOM IS THE ONE THE ROW ASKED FOR. Measured off a
+     *   booted station, not off `keeperArmour` — the pure function could be
+     *   perfect and still be called by nobody, which is the defect one level
+     *   up. The armoured body carries paint the robed one does not.
+     */
+    const St = await import('../../src/game/Station.js');
+    const V = await import('../../src/game/Vendors.js');
+    const { resident } = await import('../../src/game/StationCast.js');
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+
+    /**
+     * Everything downstream of a keeper row, as one string: what he has on,
+     * what he is called, and the person the seed builds under it.
+     *
+     * TWENTY SEEDS AND NOT ONE. A keeper is a draw — `species` constrains a
+     * distribution, so a single seed that happened to roll `human` anyway
+     * would report `species: 'human'` as a field with no reader. The union
+     * over a spread of seeds is what actually distinguishes "constrains the
+     * draw" from "changes nothing".
+     */
+    const facts = (want) => {
+      const rows = [];
+      for (let i = 0; i < 20; i++) {
+        rows.push(resident(`reader-probe:${i}`, {
+          species: want.species && want.species !== 'any' ? want.species : undefined,
+          role: want.role || undefined,
+        }));
+      }
+      return JSON.stringify({ armour: St.keeperArmour(want), name: want.name || null, rows });
+    };
+    const dead = [];
+    for (const c of V.COUNTERS) {
+      const want = c.keeper || {};
+      for (const key of Object.keys(want)) {
+        /* `species: 'any'` IS "no constraint", spelt out. `dressKeepers` and
+         * `keeperOf` both branch on it by name, so it is a value the code
+         * reads and deliberately does nothing with — deleting it has to be a
+         * no-op or the branch would be the lie instead. The KEY is still held
+         * to account everywhere it names a species. */
+        if (key === 'species' && want.species === 'any') continue;
+        const without = { ...want };
+        delete without[key];
+        if (facts(want) === facts(without)) dead.push(`${c.id}.keeper.${key}`);
+      }
+    }
+    assert(!dead.length, `${dead.length} keeper field(s) change nothing at all when deleted — `
+      + `${dead.join(', ')}. A field nothing reads is a lie about the game.`);
+
+    /* THE PAINT THE PLATE PUTS ON A BODY, measured off the builders rather
+     * than named: a robed resident and the same seed in beskar. */
+    const paints = (root) => { const out = new Set(); let n = 0;
+      root?.traverse?.((o) => { if (!o.isMesh) return; n++;
+        for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+          if (m?.color) out.add(m.color.getHexString());
+        } });
+      return { n, out }; };
+    const robed = paints(ARCHETYPES.res_human.build({}).rig.root);
+    const clad = paints(ARCHETYPES.res_human.build({ armour: St.keeperArmour(V.ARMOURER.keeper) }).rig.root);
+    const bare = paints(ARCHETYPES.res_human.build({ armour: St.keeperArmour({ mando: true, helm: false }) }).rig.root);
+    const plate = [...clad.out].filter((h) => !robed.out.has(h));
+    const bucket = [...clad.out].filter((h) => !bare.out.has(h));
+    assert(plate.length >= 3,
+      `a Mandalorian keeper and a man in robes come out of the builder wearing the same ${plate.length} `
+      + 'colours — `mando` reached the builder and changed nothing');
+    assert(bucket.length >= 1,
+      '`helm` on and `helm` off build the same head — the bucket is a field with no geometry behind it');
+
+    /* AND NOW THE MAN IN THE ROOM. Booting the station is the whole point:
+     * `keeperArmour` having the right answer proves nothing about whether
+     * `dressKeepers` ever asks it. */
+    const a = await station(40);
+    try {
+      const smith = (a.world._station.keepers || []).find((k) => k.id === 'armourer');
+      assert(smith?.body, 'nobody is standing behind #10 The Forge');
+      assert(smith.body.stationName === 'Bo Vhett',
+        `#10's counter has ${smith.body.stationName} behind it and the sign says Bo Vhett`);
+      const live = paints(smith.body.rig?.root);
+      const missing = plate.filter((h) => !live.out.has(h));
+      assert(!missing.length,
+        `the smith at #10 is ${live.n} meshes and is missing ${missing.length} of the ${plate.length} `
+        + 'colours the beskar plate is made of — the row asked for a Mandalorian and the room built a man in robes');
+      const line = St.keeperOf('armourer', a.world).said;
+      assert(/helmed/i.test(line) && /Mandalorian/i.test(line),
+        `the counter panel would say "${line}", which says nothing about the bucket or the beskar`);
+      return `${V.COUNTERS.length} keeper rows, every declared field moves something; the plate is `
+        + `${plate.length} colours a robed resident does not have and the bucket adds ${bucket.length} more; `
+        + `#10 stands a ${live.n}-mesh body wearing all of them, under "${line}"`;
+    } finally { a.world.dispose?.(); }
   });
 }
