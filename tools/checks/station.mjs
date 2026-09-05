@@ -688,10 +688,19 @@ export async function run({ check, assert, THREE }) {
       const median = (v) => { const q = v.slice().sort((x, y) => x - y); return q[q.length >> 1]; };
       const m = median(walk.map((r) => r.net));
       const pathM = median(walk.map((r) => r.path));
-      /* A MINUTE AT A WALK IS TENS OF METRES. The pace is 1.35 m/s, so a
-       * minute is about eighty; the bar is set at a quarter of that so a body
-       * that spent part of the window at a door still counts. */
-      assert(m >= 20,
+      /**
+       * ── A MINUTE AT A WALK IS TENS OF METRES, BOUNDED BY THE CULL ──────
+       *
+       * The pace is 1.35 m/s, so a minute is about eighty metres of PATH — but
+       * the NET is bounded by something else entirely, and it is worth saying
+       * which: a walker is seated inside 40 m of the player and dropped at 52,
+       * so no walker can ever show more than about fifty metres of
+       * displacement from where it was first seen. Fifteen is a fifth of the
+       * path and a third of the ceiling — comfortably past the 3.02 m the
+       * audit measured, and not a number that could only be hit by a body
+       * running the whole window in one direction.
+       */
+      assert(m >= 15,
         `the open walkways moved a median of ${m.toFixed(2)} m in sixty seconds — the ring is `
         + '537 m round, and this is a shuffle on the spot rather than a journey');
       /**

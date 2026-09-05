@@ -690,13 +690,18 @@ function destsOn(deck) {
  * off in the middle.
  *
  * So a trip is sized against the radius the pool pays for and not against the
- * ring: ten to forty-five metres is a crossing from one place to the next one
- * along, which is what the between-space is FOR and what most walking on a
- * concourse actually is. A walker then arrives, stands at the door a few
- * seconds, and sets off somewhere else — two or three journeys inside the
- * window a player is looking at it, rather than one third of one.
+ * ring. THE ARITHMETIC THAT PICKS THE NUMBER: a walker is seated inside 40 m
+ * of the player and dropped at 52, so the ground it has left is twelve metres
+ * at worst and about twenty-seven at the median — measured, with a 45 m cap:
+ * a median 41 m of path walked and **still zero arrivals**, every journey cut
+ * off a few metres short of its door. Eight to thirty metres fits inside that,
+ * and it is a crossing from one place to the next one along — what the
+ * between-space is FOR, and what most walking on a concourse actually is. A
+ * walker arrives, stands at the door a few seconds, and sets off somewhere
+ * else: two or three journeys inside the window a player is looking at it,
+ * rather than one third of one.
  */
-const TRIP = { near: 10, far: 45 };
+const TRIP = { near: 8, far: 30 };
 
 /**
  * WHICH PLACE, AND THE WEIGHT IS THE DESIRE LINE.
@@ -748,7 +753,7 @@ function pickDest(deck, hour, body) {
 /** How long somebody stands at the door they arrived at before setting off
  *  again. Long enough to read as an arrival, short enough that the corridor
  *  does not drain into the doorways over a minute. */
-const DWELL = { min: 3, span: 7 };
+const DWELL = { min: 2, span: 5 };
 
 /** Give a walker somewhere to be going, and the polyline to get there. */
 function setOut(deck, hour, body) {
