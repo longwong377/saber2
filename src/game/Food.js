@@ -327,7 +327,11 @@ export const GEAR = {
   fry: { vessel: 'vat', tool: 'spider', lid: false, fire: 'burner' },
   pot: { vessel: 'pot', tool: 'ladle', lid: true, fire: 'burner' },
   steam: { vessel: 'basket', tool: null, lid: true, fire: 'burner' },
-  grill: { vessel: 'grate', tool: 'brush', lid: false, fire: 'coals' },
+  /* THE SKEWER IS THE VESSEL, and the bars are not: the bars are the RANGE —
+   * static, merged, part of the stall whether you order or not (see
+   * `StationKit.cookRange`). What a move can pick up, turn and rest is the
+   * thing on them. */
+  grill: { vessel: 'skewer', tool: 'brush', lid: false, fire: 'coals' },
   /* THE ONE STALL WITH NOTHING ON IT TO COOK WITH, so what it has is the BELL
    * — `fixed`, meaning it is furniture the moves leave alone rather than
    * something he picks up. #15's kitchen is behind the hatch and the whole

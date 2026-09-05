@@ -647,9 +647,16 @@ export async function run({ check, assert }) {
    * a floor that says the form book is worth the walk and a ceiling that says
    * the window is still a window.
    *
-   * The long run behind them is `node tools/_toteedge.mjs`, at a quarter of a
-   * million bets a room; these are that measurement's numbers with room for
-   * the gate's much smaller sample.
+   * The long run behind them is `node tools/_toteedge.mjs`; measured there over
+   * 25,000 settled tickets a window, at 2,200 a ticket, on books `bookAt`
+   * itself would have handed over:
+   *
+   *     Holo-theatre   reader  +4.60% paid (+4.92% model)   pin −11.79%   leader −4.17%
+   *     The Pit        reader +12.79% paid (+13.63% model)  pin  −7.66%   leader −7.95%
+   *     The Arena      reader  +4.60% paid (+5.12% model)   pin  −4.52%   leader −4.53%
+   *
+   * The bands below are those numbers with room for the gate's much smaller
+   * sample, which is a thousand-odd tickets a window and reads them ±2%.
    *
    * ── AND WHY THE CEILINGS ARE NOT LOWER, WHICH IS A REAL CONSTRAINT ────
    *
@@ -665,7 +672,7 @@ export async function run({ check, assert }) {
    */
   const BAND = Object.freeze({
     'holo-theatre': [0.01, 0.09],
-    'the-pit': [0.03, 0.14],
+    'the-pit': [0.04, 0.19],
     'the-arena': [0.02, 0.11],
   });
 

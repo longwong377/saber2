@@ -3224,8 +3224,6 @@ const _ckD = new THREE.Vector3(), _ckE = new THREE.Vector3();
 const _ckQ = new THREE.Quaternion(), _ckE2 = new THREE.Euler();
 const UPV = new THREE.Vector3(0, 1, 0);
 
-/** How near the desk a keeper has to be for it to be HIS counter. */
-const AT_DESK = 2.2;
 /** Steam puffs. Three is enough to read as steam and cheap enough to throw away. */
 const PUFFS = 3;
 
@@ -3295,21 +3293,25 @@ export class CookSet {
       o.set(desk.at.x, desk.at.y, desk.at.z);
       fwd.set(desk.front.x - desk.at.x, 0, desk.front.z - desk.at.z).normalize();
       top = desk.h ?? 1.08;
-      /* AND HE STEPS DOWN THE ROW TO THE STALL YOU ARE AT. `dressKeepers`
-       * stands one man behind `desks[0]`, and `counterHere`'s own note says
-       * why that is right — "a row of stalls is one vendor's frontage" — but
-       * it leaves the cook seven metres from the counter you ordered at, and
-       * a stall that cooks with nobody behind it is worse than a banner. He
-       * is not put back afterwards on purpose: a man who moved down the row
-       * has moved down the row, and popping him home the moment the bowl
-       * lands is the only version of this a player could catch. */
-      /* WHERE HE STANDS TO WORK, and it is NOT `desk.behind`. That point is
-       * 0.55 m clear of the back edge — right for a man serving over a desk
-       * and half a metre too far for one whose hands have to be IN the pan: a
-       * human arm is 0.55 m from the shoulder and the far side of the top is
-       * 0.85 m from `behind`, so every hand target on the counter was out of
-       * reach and the solve straightened both arms at it. He steps in to
-       * work. */
+      /**
+       * ══ WHERE THE COOK STANDS, AND BOTH HALVES OF IT WERE MEASURED ═════
+       *
+       * HE STEPS DOWN THE ROW TO THE STALL YOU ARE AT. `dressKeepers` stands
+       * one man behind `desks[0]`, and `counterHere`'s own note says why that
+       * is right — "a row of stalls is one vendor's frontage" — but it leaves
+       * the cook 14.7 m from the counter you ordered at in #17, and a stall
+       * that cooks with nobody behind it is worse than a banner. He is not put
+       * back afterwards, on purpose: a man who moved down the row has moved
+       * down the row, and popping him home the moment the bowl lands is the
+       * only half of this a player standing at the counter could catch.
+       *
+       * AND IT IS NOT `desk.behind`. That point is 0.55 m clear of the back
+       * edge — right for a man serving over a desk, half a metre too far for
+       * one whose hands have to be IN the pan. An arm is 0.55 m from the
+       * shoulder and the far side of the top is 0.85 m from `behind`, so every
+       * hand target on the counter was out of reach and the solve straightened
+       * both arms at it. He steps in to work.
+       */
       this.stand = {
         x: o.x - fwd.x * (desk.d / 2 + 0.30),
         z: o.z - fwd.z * (desk.d / 2 + 0.30),
@@ -3332,11 +3334,12 @@ export class CookSet {
     this.z = fwd.clone();
     this.x = new THREE.Vector3().crossVectors(UPV, fwd).normalize();
     this.top = top;
-    /* He works facing the customer's side of his own counter. Written once
-     * and damped in `step`, because a man snapping round is a man teleporting
-     * — see the note there on why writing `facing` at all is safe. */
+    /* He works facing the customer's side of his own counter — `fwd` IS that
+     * side, and `Enemy` reads a yaw as `(sin, cos)` forward, so this is the
+     * bearing and not its opposite. Damped in `poseKeeper` rather than
+     * written once, because a man snapping round is a man teleporting. */
     this.keeper = body;
-    this.wantYaw = Math.atan2(-fwd.x, -fwd.z);
+    this.wantYaw = Math.atan2(fwd.x, fwd.z);
 
     /* ── the pieces, and only the ones this prep names ──────────────── */
     const g = new THREE.Group();

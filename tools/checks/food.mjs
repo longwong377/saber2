@@ -475,6 +475,7 @@ export async function run({ check, assert, THREE }) {
     const DT = 1 / 60;
     const worst = { jump: 0, id: null };
     let leastTravel = Infinity, leastId = null, leastBusy = 1, leastAny = 1, poorestHand = Infinity;
+    let farthestTouch = 0;
     let cooked = 0, piecesSeen = 0;
 
     for (const d of rows) {
@@ -490,6 +491,22 @@ export async function run({ check, assert, THREE }) {
        * of it, and the meshes are still readable. */
       const pieces = [...Object.values(set.parts), ...set.puffs];
       const dishMesh = set.parts.dish;
+      /**
+       * EVERY PIECE THE GEAR NAMES WAS ACTUALLY BUILT. The renderer matches
+       * `vessel`, `tool` and `lid` against ids it knows and silently builds
+       * nothing for one it does not — which is how `grill` shipped naming a
+       * 'grate' the builder had never heard of: the skewer over the coals was
+       * missing, and every bound in this check still passed on the tool and
+       * the dish alone. A word in one file and a branch in another is exactly
+       * the pair §2.3 says must fail loudly.
+       */
+      const gear = F.GEAR[prep.id];
+      for (const k of ['vessel', 'tool']) {
+        if (gear[k]) {
+          assert(set.parts[k], `${d.id} is made with a ${k} called '${gear[k]}' and the stall built none`);
+        }
+      }
+      assert(!gear.lid || set.parts.lid, `${d.id}'s prep has a lid and the stall built none`);
       assert(pieces.length >= 3, `${d.id} put ${pieces.length} pieces on the counter`);
       piecesSeen += pieces.length;
 
@@ -503,6 +520,10 @@ export async function run({ check, assert, THREE }) {
       let hL = rig.worldPos('handL', new THREE.Vector3());
       let hR = rig.worldPos('handR', new THREE.Vector3());
       let travel = 0, handTravel = 0, frames = 0, busy = 0, busyAny = 0, jump = 0;
+      /* HOW CLOSE HIS HANDS EVER GET TO THE THING HE IS COOKING WITH. See the
+       * assertion below — this is the one number that says the man and the
+       * stall are the same event rather than two animations side by side. */
+      let touch = Infinity;
       /* Per MOVE, so the last clause can ask whether the pan moved where the
        * line said it would. */
       const byMove = new Map();
@@ -522,6 +543,10 @@ export async function run({ check, assert, THREE }) {
         const nL = rig.worldPos('handL', new THREE.Vector3());
         const nR = rig.worldPos('handR', new THREE.Vector3());
         const hands = nL.distanceTo(hL) + nR.distanceTo(hR);
+        if (set.parts.vessel) {
+          const v = at(set.parts.vessel);
+          touch = Math.min(touch, v.distanceTo(nL), v.distanceTo(nR));
+        }
         handTravel += hands;
         hL = nL; hR = nR;
         travel += thisFrame;
@@ -541,6 +566,7 @@ export async function run({ check, assert, THREE }) {
 
       if (travel < leastTravel) { leastTravel = travel; leastId = d.id; }
       if (handTravel < poorestHand) poorestHand = handTravel;
+      if (touch < Infinity) farthestTouch = Math.max(farthestTouch, touch);
       leastBusy = Math.min(leastBusy, busy / frames);
       leastAny = Math.min(leastAny, busyAny / frames);
       if (jump > worst.jump) { worst.jump = jump; worst.id = d.id; }
@@ -573,6 +599,20 @@ export async function run({ check, assert, THREE }) {
        * from one move straight into the next: 155 to 884 mm, in a frame. */
       assert(jump < 0.15, `${d.id} moved a piece ${(jump * 1000).toFixed(0)} mm in one frame — that is a teleport, not a cook`);
 
+      /**
+       * AND HIS HANDS ACTUALLY REACH IT. Two animations that never meet — a
+       * pan tossing itself while a man waves half a metre behind it — would
+       * pass every bound above, and it is the failure this is most likely to
+       * ship: the cook is stood where `dressKeepers` put him, 0.55 m clear of
+       * the desk, and an arm is 0.55 m long. So the solve is asked for the
+       * closest a hand ever gets to the vessel over the whole cook.
+       */
+      if (gear.vessel) {
+        assert(touch < 0.30,
+          `${d.id}: the cook's nearest hand never got closer than ${(touch * 100).toFixed(0)} cm to `
+          + 'the thing he is cooking in — the man and the stall are two animations, not one');
+      }
+
       /* AND THE MOTION IS WHERE THE LINE IS. Every prep has at least one step
        * that does something and the doing steps beat the standing ones. */
       const still = byMove.get('still') || 0;
@@ -599,7 +639,8 @@ export async function run({ check, assert, THREE }) {
       + `${(leastTravel * 1000).toFixed(0)} mm with ${(poorestHand * 1000).toFixed(0)} mm of hand, `
       + `the stall itself worked on ${(leastBusy * 100).toFixed(0)}% of frames and something moved on `
       + `${(leastAny * 100).toFixed(0)}% of them; the worst single frame was `
-      + `${(worst.jump * 1000).toFixed(0)} mm`;
+      + `${(worst.jump * 1000).toFixed(0)} mm; the worst stall for it still put a hand `
+      + `${(farthestTouch * 100).toFixed(0)} cm from what it was cooking in`;
   });
 
   /* ══════════════════════════════════════════════════════════════════════ */
