@@ -68,6 +68,7 @@ import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { ARCHETYPES } from '../../src/game/Enemy.js';
 /* The Kennel's own door — see the fifth-door note below. */
 import { COMPANION_KINDS, COMPANION_ORDER } from '../../src/game/CompanionKinds.js';
+import { STATION_UNITS } from '../../src/game/StationCast.js';
 import { SET_PIECE, DOJO_MIX, MODES } from '../../src/game/Waves.js';
 import { TERRAIN_PRESETS } from '../../src/world/Terrain.js';
 
@@ -543,6 +544,31 @@ export function run({ check, assert }) {
       const a = COMPANION_KINDS[id]?.archetype;
       if (a && ARCHETYPES[a]) named.add(a);
     }
+    /**
+     * A SIXTH DOOR: YOU WALK UP TO THEM.
+     *
+     * The station's residents are `ARCHETYPES` rows like any other — a body
+     * with a silhouette, a name and a species — and `StationCast` merges them
+     * in with `Object.assign(ARCHETYPES, STATION_UNITS)`. They are never in a
+     * wave, never on a rung, never in the dojo and never on a saddle, because
+     * nothing on the station fights: `spawnResident` puts every one of them on
+     * `player.team` and `World.pickTarget` returns null for a
+     * `stationResident`. By this check's five doors they were 21 orphans —
+     * "content that shipped and cannot be met" — while being the most-met
+     * bodies in the game, standing in every room of a hub the player walks
+     * through between runs.
+     *
+     * SO IT IS A DOOR AND NOT AN EXEMPTION, on the same terms the companion
+     * paragraph above sets: the archetype has to be named by the real
+     * `STATION_UNITS` table that `StationCast` builds from `SPECIES` and
+     * `BORZ_RESIDENTS`. A body carrying no station row is still an orphan and
+     * still goes red, so a resident archetype somebody registers and never
+     * seats is caught exactly as the massiff was.
+     *
+     * Derived from the table rather than a `res_` prefix, because a prefix
+     * would exempt anything anybody chose to name that way.
+     */
+    for (const t of Object.keys(STATION_UNITS)) if (ARCHETYPES[t]) named.add(t);
     const orphan = Object.keys(ARCHETYPES)
       .filter((t) => !ARCHETYPES[t].training && !named.has(t));
     assert(!orphan.length,
