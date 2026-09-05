@@ -3662,6 +3662,23 @@ export class Player {
     this.guardForceSpent = 0;
     this.perfects = 0;
     this.limbsRemoved = 0;
+    /**
+     * HOW MANY TIMES THIS RUN REACHED FOR THE FORCE.
+     *
+     * `_spend` is the one door every power pays through, so this is a count of
+     * POWERS USED and 0 means the blade did all of it. Declared here so it is a
+     * number from the first frame, exactly as `saves` is.
+     *
+     * It exists because `Quests.SHAPES` asks *"do it without touching the
+     * Force"* and `run.forceCasts` was a field no ending had ever reported —
+     * absent reads as 0, so the job was kept by a run that gripped, threw and
+     * pushed its way through. `World.runStats` sums it over the players.
+     *
+     * NOT THE DEFLECTION POOL. Turning a bolt aside spends Force and is blade
+     * work; `guardSpent`/`guardForceSpent` above are that ledger and this is
+     * not fed by them.
+     */
+    this.forceCasts = 0;
 
     // ── force powers
     this.gripBody = null;
@@ -7514,7 +7531,11 @@ export class Player {
   get forceScale() { return this.world.settings?.forcePower ?? 1; }
   _spend(cost, partial = false) {
     const drain = this.world.settings?.forceDrain ?? 1;
-    if (drain <= 0) return true;                   // unlimited
+    /* COUNTED WHERE THE POWER IS PAID FOR, and on the unlimited path too: a
+     * player with `forceDrain` 0 who threw a walker across the field has
+     * touched the Force, and a job that asked them not to has not been kept.
+     * See `forceCasts` in the constructor. */
+    if (drain <= 0) { this.forceCasts = (this.forceCasts | 0) + 1; return true; }  // unlimited
     const c = cost * drain * this.boonMods.forceCost;
     if (this.force < c) {
       /* A SUSTAINED DRAIN TAKES WHAT IS LEFT AND SAYS SO, which a one-shot
@@ -7528,6 +7549,7 @@ export class Player {
       return false;
     }
     this.force -= c;
+    this.forceCasts = (this.forceCasts | 0) + 1;
     return true;
   }
   /**
@@ -11801,9 +11823,19 @@ export class Player {
    * paid to throw the finger, and whether it lands is the aim's problem.
    *
    * Measured, one press each at default Force power, where `_severBudget` is 2:
-   * b1 2 joints, tridroid 2, dwarfspider 2, clone trooper 0 — the flesh branch
-   * never reaches this at all. Buy Force power and both disassemblies grow
-   * together, which is the point of sharing the budget.
+   *
+   *   b1 2   b2 2   tridroid 2   dwarfspider 2   droideka 2   clone trooper 0
+   *
+   * — the flesh branch never reaches this at all. Buy Force power and both
+   * disassemblies grow together, which is the point of sharing the budget.
+   *
+   * TWO OF THOSE SIX READ WRONG UNTIL THE AUDIT DROVE THEM, and neither
+   * defect was here: the tridroid gave ONE joint because `Enemy.takeCut`
+   * dropped `ev.cutT` on a body it had just toppled (see the note at that call
+   * site), and the droideka gave 2 while REPORTING 0 because it carries no
+   * ragdoll and `actor.severedCount` — the number every instrument counted
+   * with — cannot move for it. `Enemy.partsOff` is the one reading that
+   * answers for both kinds of body.
    */
   disassembleBody(e, ctx = null, budget = null) {
     const centre = this._enemyPoint(e, _g1).clone();

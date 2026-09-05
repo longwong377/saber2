@@ -857,6 +857,139 @@ export async function run({ check, assert }) {
     return out.join('; ');
   });
 
+  check('flightops: the lap is flown by a real Starfury, not advanced by a number', async () => {
+    /**
+     * ══ THE ORPHAN THIS CHECK EXISTS FOR ══════════════════════════════════
+     *
+     * `src/game/Starfury.js` — 325 lines, `SHARK.md` §4's *"the one new
+     * system"*, 6-DOF Newtonian, ported clause for clause, and held green by
+     * `starfury.mjs` — **was in no shipped build.** `pack.mjs` walks the module
+     * graph from `index.play.html`'s entry and NOTHING under `src/` imported
+     * it: 96 of the 97 `src/game/*.js` files were in the manifest and that was
+     * the one. Its own suite reached it with `await import`, which is a
+     * statement about the file system and not about the game, so 264 lines of
+     * check passed over a file no player's browser ever received.
+     *
+     * `packed.mjs` now asks that of every file under `src/`. THIS asks the
+     * other half, which no import graph can: is the craft actually FLYING the
+     * thing, or is it imported and ignored? So every number below is read off
+     * the craft's own integrated position — `Starfury.step`, which has no
+     * damping term, through `Starfury.allocate`, which refuses to invent
+     * thrust the airframe does not have.
+     *
+     * The old lap was `_orbitU += ORBIT_SPEED * dt / CIRCUIT_LENGTH`. Every
+     * assertion here is unfailable against that line, which is the point: a
+     * parameter that is added to cannot miss a corner, cannot fly wide of a
+     * sight, and cannot be measured for clearance, because it is never
+     * anywhere except exactly on the track.
+     */
+    const { CircuitPilot, TOP_SPEED } = await import('../../src/game/Pilot.js');
+    const { Starfury } = await import('../../src/game/Starfury.js');
+
+    /* ── ONE LAP, FLOWN ──────────────────────────────────────────────────── */
+    const pilot = new CircuitPilot({ radius: 90 });
+    assert(pilot.craft instanceof Starfury, 'the pilot is flying something that is not a Starfury');
+    /**
+     * THE LAUNCH IS THE DRUM'S THROW. `Starfury.launchFromDrum` had no caller
+     * anywhere in the tree — the one function in that file whose whole subject
+     * is this station — and the craft now leaves the mouth carrying the rim
+     * speed of a drum spinning to make a g at 90 m: sqrt(9.81/90) × 90.
+     */
+    const rim = Math.sqrt(9.81 / 90) * 90;
+    assert(Math.abs(pilot.speed - rim) < 0.05,
+      `the craft leaves the mouth at ${pilot.speed.toFixed(1)} m/s against the drum's ${rim.toFixed(1)}`);
+
+    let t = 0, tight = Infinity, wide = 0, top = 0;
+    const named = [];
+    const closest = new Map(O.sights().map((x) => [x.id, Infinity]));
+    while (t < 90 && pilot.lap < 1) {
+      pilot.step(1 / 60);
+      t += 1 / 60;
+      const [x, y, z] = pilot.craft.position;
+      const here = { x, y, z };
+      tight = Math.min(tight, O.clearanceAt(here));
+      top = Math.max(top, pilot.speed);
+      const on = O.sample(pilot.progress);
+      wide = Math.max(wide, Math.hypot(on.x - x, on.y - y, on.z - z));
+      for (const sgt of O.sights()) {
+        const d = Math.max(0, Math.hypot(x - sgt.at[0], y - sgt.at[1], z - sgt.at[2]) - sgt.r);
+        if (d < closest.get(sgt.id)) closest.set(sgt.id, d);
+      }
+      const n = O.nearest(here).sight.id;
+      if (named[named.length - 1] !== n) named.push(n);
+    }
+    assert(pilot.lap === 1, `the craft did not get round: ${(pilot.travelled * 100).toFixed(0)}% in ${t.toFixed(0)} s`);
+
+    /**
+     * ── IT NEVER TOUCHES THE STATION ──────────────────────────────────────
+     *
+     * `Outside.CLEAR` is the bar the TRACK is held to and this holds the FLOWN
+     * PATH to the same one, which is the harder question: the track is a
+     * polyline through eleven waypoints and a craft with 18.4 m/s² cannot
+     * corner on a polyline, so the difference between the two is the whole
+     * cost of making this real.
+     */
+    assert(tight >= O.CLEAR,
+      `the flown lap came within ${tight.toFixed(1)} m of the hull, against Outside.CLEAR's ${O.CLEAR}`);
+    /**
+     * ── AND IT IS FLYING THE TRACK, NOT ITS OWN ORBIT ─────────────────────
+     *
+     * The bar is `STANDOFF`: a pilot that wanders further off the line than
+     * the line itself stands off the hull is not following it, it is going
+     * round the station near it. The first cut of this pilot integrated its
+     * track parameter instead of projecting onto it and finished 500 m wide
+     * with the lap reading complete — this is the clause that says so.
+     */
+    assert(wide < O.STANDOFF,
+      `the craft flew ${wide.toFixed(0)} m off the line, against a standoff of ${O.STANDOFF} m`);
+    /**
+     * ── THE FOUR SIGHTS ARE STILL NAMED, IN ORDER ─────────────────────────
+     *
+     * §3.2 #55's whole verb. `nearest` never answers `hull`, so four is all of
+     * them, and the ORDER is the circuit's — a lap that named them in a
+     * different order would be a craft flying the loop backwards.
+     */
+    assert(named.join('>') === 'mouth>throat>drum>dome>mouth',
+      `the flown lap named ${named.join(' > ')}`);
+    /**
+     * ── AND THE SPEED IS THE AIRFRAME'S ANSWER, NOT A CONSTANT ────────────
+     *
+     * `TOP_SPEED` is a ceiling the corner law is allowed to come nowhere near.
+     * If the craft ever held it exactly, the corner law would be doing nothing
+     * and this would be a rail again with a Starfury bolted to the side of it.
+     */
+    assert(top <= TOP_SPEED + 1e-6, `the craft exceeded its own ceiling: ${top.toFixed(1)} m/s`);
+    assert(top < TOP_SPEED - 2,
+      `the craft held ${top.toFixed(1)} of a ${TOP_SPEED} m/s ceiling — the corner law is not biting`);
+
+    /* ── AND THE SORTIE IN A REAL STATION IS FLOWN BY ONE ─────────────────── */
+    const { stationKey, stepStation } = await import('../../src/game/Station.js');
+    const world = await station(12);
+    let sawCraft = null, sawSpeed = 0;
+    try {
+      world.notify = () => {};
+      const bay = PLACE.get(5);
+      world.player.position.set(bay.x, floorOf(bay) + 1, bay.z);
+      world._flight = walkTheLadder().fold;
+      assert(stationKey(world) === true, 'the certified press was not spent');
+      for (let i = 0; i < 60 * 40; i++) {
+        stepStation(world, 1 / 60);
+        world.player.position.set(bay.x, floorOf(bay) + 1, bay.z);
+        if (world._pilot) { sawCraft = world._pilot.craft; sawSpeed = Math.max(sawSpeed, world._pilot.speed); }
+        if (sawCraft && !world._flying && world._sortie?.done) break;
+      }
+    } finally { world.dispose?.(); }
+    assert(sawCraft instanceof Starfury,
+      'a launch out of the Cobra bay put no Starfury outside — the lap is a number again');
+    assert(sawSpeed > 20, `the craft in the real sortie never got above ${sawSpeed.toFixed(1)} m/s`);
+
+    const sightList = [...closest].map(([k, v]) => `${k} ${v.toFixed(0)}`).join(', ');
+    return `${t.toFixed(1)} s round ${O.CIRCUIT_LENGTH.toFixed(0)} m, peak ${top.toFixed(1)} m/s of a `
+      + `${TOP_SPEED} ceiling; clearance ${tight.toFixed(1)} m (bar ${O.CLEAR}), ${wide.toFixed(0)} m off `
+      + `the line (bar ${O.STANDOFF}); closest ${sightList}; the real sortie flew a Starfury at `
+      + `${sawSpeed.toFixed(0)} m/s`;
+  });
+
   check('flightops: a sortie is not a run, and files nothing', async () => {
     /**
      * §14 and `Progress.js`: `station` is already on the refusal list and a

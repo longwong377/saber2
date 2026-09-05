@@ -738,8 +738,14 @@ function resolve(player, M, mods, ctx) {
      *
      * Measured, one press each at default Force power (budget 2), against the
      * flat 0 every one of them read before: 2 joints off a b1 — which is what
-     * kills it, at hp 28 -> -4 rather than -212 — 2 off a dwarfspider, 2 off a
-     * tridroid, and 0 off a clone trooper, which is where the fiction put it.
+     * kills it, at hp 28 -> -4 rather than -212 — 2 off a b2, 2 off a
+     * dwarfspider, 2 off a tridroid, 2 off a droideka, and 0 off a clone
+     * trooper, which is where the fiction put it.
+     *
+     * The tridroid was 1 and the droideka read 0 for a whole lane, and
+     * `melee.mjs`'s clause could not tell either from a pass, because it
+     * asserted `parts > 0`. It asserts the BUDGET per archetype now; the two
+     * defects were in `Enemy.js` and are named at their call sites.
      */
     let cut = 0;
     if (M.disassemble && machine) cut = player.disassembleBody?.(e, ctx) ?? 0;
