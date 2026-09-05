@@ -874,6 +874,146 @@ export async function run({ check, assert, THREE }) {
 
   /* ════════════════════════════════════════════════════════════════════════ */
 
+  check('station: the lift doors open on a station with people moving in it', async () => {
+    /**
+     * ══ THE CLAUSE ABOVE CANNOT SEE THE DEFECT, AND SAYS SO IN ITS OWN NOTE ══
+     *
+     * It TELEPORTS the player onto the first open walk stretch the deck
+     * declares and then FORCE-PRIMES the pool, and its comment admits why:
+     * booting and looking measured *"zero walkers, which says nothing about
+     * whether walkers walk"*. It says a great deal about what the player sees.
+     *
+     * MEASURED at `STATION_LEVEL.start` — the spot every player on this station
+     * arrives at, where the lift doors open — booting, not moving, not priming,
+     * and running frames the way the game runs them:
+     *
+     *     deck  hour  bodies  moved  ground   walkers  nearest walk slot
+     *       40  08:00     20      0     0.0 m       0            48.6 m
+     *       40  13:00     31      0     0.0 m       0            44.6 m
+     *       40  22:00     21      0     0.0 m       0            48.6 m
+     *
+     * Thirty-one live bodies and not one of them moved a millimetre in sixty
+     * seconds, at every hour of the day, because `World.pickTarget` stopped
+     * residents walking at the player and only `stepWalkers` was ever given a
+     * budget of motion — and because the nearest slot on any open stretch the
+     * deck declared was outside `LIVE_RADIUS`, so no walker could be built
+     * there however long you stood.
+     *
+     * ── SO THIS CLAUSE IS THE PLAYER'S OWN VIEW AND NOTHING ELSE ─────────
+     *
+     * It does not move him, it does not prime the pool, and it reads the same
+     * three numbers a person standing in the lobby would: how many people are
+     * there, how many of them are doing anything, and how much ground the
+     * room covers between them. The clause above keeps the harder property —
+     * that a walker completes a JOURNEY — and needs its teleport to isolate
+     * it; this one is the one that would have caught the statues.
+     *
+     * THREE HOURS AND THREE WORLDS. `fullness` is a curve over the day and the
+     * midday roll is the one that emptied the corridor, so the hour is a
+     * parameter and each is booted fresh — winding the clock on a live world
+     * measures the pool's re-seat trickle catching up rather than the station
+     * at that hour.
+     */
+    diskFetch();
+    const { STATION_LEVEL } = await import('../../src/game/Station.js');
+    const { wayPlacesOn, headcount, slotIn, LIVE_RADIUS } =
+      await import('../../src/game/StationLife.js');
+    const [sx, sz] = STATION_LEVEL.start;
+    const V0 = new THREE.Vector3();
+    const said = [];
+    for (const hour of [8, 13, 22]) {
+      const { world, idle } = await station(40, 'high');
+      try {
+        const life = world._stationLife;
+        /* WHERE THE LIFT PUT HIM, ASSERTED RATHER THAN ARRANGED. If the boot
+         * ever stops leaving the player on the level's own start, this clause
+         * has to know — measuring a spot nobody arrives at is the failure it
+         * exists to end. */
+        const p = world.player.position;
+        assert(Math.hypot(p.x - sx, p.z - sz) < 3,
+          `the world booted the player at (${p.x.toFixed(1)}, ${p.z.toFixed(1)}) and `
+          + `STATION_LEVEL.start is (${sx}, ${sz}) — this clause is not standing where a player does`);
+        world._station.hour = hour;
+
+        /* ── AND THE GEOMETRY HAS TO ALLOW IT AT ALL ─────────────────────
+         *
+         * Derived off `slotIn` and `headcount` — the same two functions
+         * `reseat` seats a body with — rather than typed, so the day a
+         * stretch moves the bar moves with it. Measured before the balcony
+         * stretches existed: 44.6 m, against a live radius of 40. */
+        let nearest = Infinity;
+        for (const w of wayPlacesOn(40)) {
+          if (w.way !== 'walk') continue;
+          const n = headcount(w, hour);
+          for (let i = 0; i < n; i++) {
+            slotIn(w, i, V0);
+            nearest = Math.min(nearest, Math.hypot(V0.x - sx, V0.z - sz));
+          }
+        }
+        assert(nearest < LIVE_RADIUS,
+          `at ${hour}:00 the nearest slot on any open walking stretch is ${nearest.toFixed(1)} m `
+          + `from where the lift puts the player and the pool only builds inside ${LIVE_RADIUS} m — `
+          + 'no walker can ever be seated in the lobby, however long anybody stands in it');
+
+        /* THE POOL FILLS THE WAY THE GAME FILLS IT: frames, and the prime
+         * slices `dressStation` already queued. No `primeStationLife` here. */
+        for (let i = 0; i < 360; i++) { world._station.hour = hour; world.update(1 / 60, idle); }
+
+        /* Keyed on the BODY, frozen where it leaves the pool — the same rule
+         * and the same reason as the clause above. */
+        const seen = new Map();
+        for (const [, b] of life.live) {
+          seen.set(b, { lx: b.position.x, lz: b.position.z, path: 0,
+            walk: b.stationWay === 'walk', gone: false });
+        }
+        for (let i = 0; i < 1200; i++) {
+          world._station.hour = hour;
+          world.update(1 / 60, idle);
+          for (const [b, a] of seen) {
+            if (a.gone) continue;
+            if (b.disposed || b.alive === false) { a.gone = true; continue; }
+            a.path += Math.hypot(b.position.x - a.lx, b.position.z - a.lz);
+            a.lx = b.position.x; a.lz = b.position.z;
+          }
+        }
+        let moved = 0, ground = 0, walkers = 0;
+        for (const [, a] of seen) {
+          if (a.path > 0.001) moved++;
+          ground += a.path;
+          if (a.walk) walkers++;
+        }
+        /* THE LOBBY IS NOT EMPTY. §11's pool is 60 at `high` and this is one
+         * end of a 180 m drum, so a fifth of it is the floor. */
+        assert(seen.size >= 12,
+          `${seen.size} live bodies where the lift doors open at ${hour}:00 — the drum is empty`);
+        /* AND FOUR IN FIVE OF THEM ARE DOING SOMETHING. A millimetre in twenty
+         * seconds is the lowest bar there is and it is the right one: the
+         * measurement it replaces read ZERO out of thirty-one. */
+        assert(moved >= Math.ceil(seen.size * 0.8),
+          `${moved} of ${seen.size} bodies in view at ${hour}:00 moved so much as a millimetre in `
+          + 'twenty seconds — a room full of people is a room full of statues');
+        /* AND THE ROOM COVERS GROUND BETWEEN THEM. A shuffle at a counter is
+         * a few metres a minute and a crossing is tens, so a dozen bodies over
+         * twenty seconds clears this without anybody having to be walking —
+         * what it refuses is a room that twitches and stays put. */
+        assert(ground >= 20,
+          `the ${seen.size} people in view at ${hour}:00 covered ${ground.toFixed(1)} m of ground `
+          + 'between them in twenty seconds');
+        /* AND SOMEBODY IS CROSSING IT. §2.5: *"in between places, the
+         * walkways"* — the lobby is one, and a lobby nobody walks through is a
+         * waiting room. */
+        assert(walkers >= 1,
+          `nobody in view at ${hour}:00 is on an open walking stretch — ${seen.size} people are `
+          + 'standing in the lift lobby and none of them is going anywhere');
+        said.push(`${hour}:00 ${seen.size} bodies, ${moved} moved, ${ground.toFixed(0)} m, `
+          + `${walkers} walking, nearest stretch ${nearest.toFixed(1)} m`);
+      } finally { world.unload(); }
+    }
+    return said.join('; ');
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
   check('station: somebody on the concourse has an animal with them', async () => {
     /**
      * V16 §G1: *"see a couple other people with companions of there own …
