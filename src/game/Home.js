@@ -77,6 +77,7 @@ import * as Food from './Food.js';
  */
 import {
   COMPANION_KINDS, COMPANION_UNITS, bodyScaleOf, growthOptsFrom,
+  GROWTH_STAGES, stageOf,
 } from './CompanionKinds.js';
 import { load as loadKennel } from './Kennel.js';
 import { companionOptsFrom } from './Bodies.js';
@@ -403,15 +404,79 @@ export function padSuit(kind) {
  * enough, otherwise nothing. `k` is a record already read, for a caller that
  * has one.
  *
- * IT IS THE LOCAL MACHINE'S KENNEL AND CAN NEVER BE A GUEST'S — `Coop.js`
- * §WHAT A GUEST SEES makes the same argument for the larder. So the FIXTURE
- * dresses in every apartment (it is a row of that apartment's record) and the
- * ANIMAL only ever stands in yours.
+ * IT IS THE LOCAL MACHINE'S KENNEL AND IS ONLY EVER YOURS — `Coop.js` §WHAT A
+ * GUEST SEES makes the same argument for the larder: there is one roll per
+ * machine and `loadKennel` reads it. A FRIEND'S animal therefore cannot come
+ * from here and does not — see `petIdent` below, which is the identity of it
+ * rather than the record, and is what crosses.
  */
 export function homeCompanion(k = null) {
   const rec = (k || loadKennel()).live;
   if (!rec || !padSuit(rec.kind)) return null;
   return rec;
+}
+
+/**
+ * ══ AND THE TWO FACTS ABOUT IT THAT CROSS A WIRE — V16 LANE F ═════════════
+ *
+ * The ask is *"visit your friend's apartment / SEE THEIR COMPANION"*, and the
+ * paragraph above is exactly why the room alone could not keep it: a guest's
+ * apartment was dressed from their record, and their record had no animal in
+ * it and could not borrow one from the Kennel standing behind it.
+ *
+ * SO THE ANIMAL IS NOT SENT — ITS IDENTITY IS, and the far end builds the body
+ * out of its own copy of the same tables. That is the same trade every other
+ * body in this game crosses on (`LOOK_KEYS`, the companion card, a trooper's
+ * kit): ids and numbers over the wire, geometry built locally.
+ *
+ * TWO FIELDS AND NOT A RECORD. `A.build` reads exactly three things off a
+ * companion — `bodyScaleOf`, `companionOptsFrom(look)` and `growthOptsFrom` —
+ * and two of those three are functions of ONE number, the growth stage. So the
+ * kind and the stage ARE the body; everything else on a Kennel record (xp,
+ * kills, tempers, the story, the name) is history nobody else's screen draws,
+ * and a record copied whole would be a second companion on a machine whose
+ * `Kennel.js` is the single writer of that fact.
+ *
+ * WHAT IS DELIBERATELY LEFT BEHIND, stated rather than discovered: the LOOK.
+ * A painted animal stands in its FACTORY COLOURS in a friend's cabin. It is
+ * eleven optional palette ids — the biggest thing on the record by bytes and a
+ * second bag of a stranger's strings to validate — against a fact the ask does
+ * not name; the kind, the size and the fixture are what make the room read as
+ * theirs. It is one field of `packHome` away the day somebody wants it.
+ */
+export function petIdent(rec) {
+  if (!rec || !padSuit(rec.kind)) return null;
+  return { kind: rec.kind, stage: stageOf(rec) };
+}
+
+/** The local cabin's animal as that pair. `Coop.publishApartment`'s one read. */
+export function homePetIdent() { return petIdent(homeCompanion()); }
+
+/**
+ * ══ …AND BACK INTO SOMETHING THE BODY BUILDERS WILL READ ══════════════════
+ *
+ * A record-SHAPED STUB and not a Kennel record: it carries the four fields
+ * `maturityOf` adds up and nothing else, because nothing else is read and a
+ * fuller forgery would be a companion this machine did not adopt sitting in a
+ * shape that looks like one it did.
+ *
+ * THE STAGE IS TURNED BACK INTO THE RUNS AND THE CARE THAT REACH IT, off
+ * `GROWTH_STAGES` itself, so `stageOf(cleanPet(petIdent(rec)))` is the stage
+ * that was sent — measured in `coop-home.mjs` over all four stages. Going the
+ * other way — synthesising a maturity and handing it straight to the builders
+ * — would need a second door into two functions that already take a record,
+ * which is the manufactured twin `HANDOFF` §2.4 names.
+ *
+ * REFUSED ON THE SAME RULE A LOCAL ANIMAL IS: `padSuit` answers null for a
+ * kind this build does not have and for anything over `PAD_MASS`, so no packet
+ * can stand a blurrg in a basket on your machine.
+ */
+export function cleanPet(v) {
+  const kind = typeof v?.kind === 'string' ? v.kind : null;
+  if (!kind || !padSuit(kind)) return null;
+  const i = Math.max(0, Math.min(GROWTH_STAGES.length - 1, Math.round(Number(v.stage) || 0)));
+  const G = GROWTH_STAGES[i];
+  return { kind, stage: i, look: {}, runs: G.runs, meals: G.care, grooms: 0, plays: 0 };
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -619,6 +684,14 @@ export function setPad(id, world = null) {
     h.state.pad = want;
     undressPad(h);
     dressPad(world, h);
+    /* AND EVERY OTHER MACHINE HAS TO BE TOLD. `Coop.publishApartment` gates on
+     * this counter and on nothing else that is cheap enough to read every
+     * frame, so a fixture chosen at the habitat and not counted here is a
+     * perch that never crosses — the room changed and the wire did not. It is
+     * the same bump every placement verb in this file makes, for the same
+     * reason and at the same cadence: a home changes when somebody moves a
+     * chair, and choosing where the animal sleeps is moving one. */
+    h.edits++;
   }
   return want;
 }
@@ -904,7 +977,9 @@ function spotOf(st, id) {
  *            is a control that ignores you.
  *
  * @param st the station record; `st.home` is what `SHAPES.twinroom` handed back.
- * @param opts `{ place, state, owner }` — the door, the dressing and whose.
+ * @param opts `{ place, state, owner, pet }` — the door, the dressing, whose,
+ *             and (for a guest's only) the identity of the animal that lives
+ *             in it. See `cleanPet`: yours is read off the Kennel instead.
  */
 export function dressHome(world, st, M, opts = {}) {
   const spot = spotOf(st, opts.place ?? st?.home?.id);
@@ -974,6 +1049,15 @@ export function dressHome(world, st, M, opts = {}) {
     edits: 0,
     /** V15 §1.3 — the perch/basket/charge pad, and what is standing on it. */
     pad: null,
+    /**
+     * V16 LANE F — WHOSE ANIMAL STANDS ON IT WHEN THE ROOM IS NOT YOURS.
+     *
+     * Null for your own cabin, and that is not an omission: yours is read off
+     * the Kennel at the moment it is seated, so it cannot be stale, and a copy
+     * held here would be a second opinion about an animal this machine owns.
+     * A guest's arrives on their home packet and is clamped by `cleanPet`.
+     */
+    pet: mine ? null : cleanPet(opts.pet),
     surfaces: null, mirror: null, galley: null, panel: null, sign: null, wheel: null, draws: 0,
     /** Every mesh this dressing put in the room's group — see `undressOne`. */
     built: [],
@@ -2174,12 +2258,14 @@ export function atPanel(world) {
  * same reason the galley and the swatch panel are not: everything against a
  * wall sits in the half metre the grid already keeps clear of it.
  *
- * ── AND THE ANIMAL IS THE LOCAL KENNEL'S, ALWAYS ──────────────────────────
+ * ── AND THE ANIMAL COMES FROM WHOEVER OWNS THE ROOM ───────────────────────
  *
- * `homeCompanion` says why: a friend's apartment gets their FIXTURE and never
- * their animal, because `loadKennel` reads this machine's roll and there is no
- * second one. It is also gated on `mine` here, which is the same fence every
- * placement verb in this file stands behind.
+ * Yours off the Kennel, a friend's off their home packet — `seatCompanion`
+ * below. This used to be gated on `mine`, so a visitor saw a bare wall where
+ * their friend's basket was; V16 Lane F asks for the other thing in the same
+ * sentence as the visit (*"see their companion"*), and what makes it safe is
+ * that the two sources are structurally distinct rather than a flag: the local
+ * roll is unreachable for anybody else's room and `h.pet` is null for yours.
  */
 const PAD_FIXTURES = {
   /** Two posts and a bar, with a tray under it for what a bird drops. */
@@ -2284,8 +2370,13 @@ function dressPad(world, h) {
  * companion grows, and growth is exactly what `bodyScaleOf` is for.
  */
 function seatCompanion(world, h) {
-  if (!h?.pad || !h.mine) return null;
-  const rec = homeCompanion();
+  if (!h?.pad) return null;
+  /* YOURS OFF THE KENNEL, A FRIEND'S OFF THE WIRE, and the two can never be
+   * swapped: `h.pet` is null for your own room by construction (`dressHome`),
+   * and `homeCompanion` reads a roll that only exists for the local player. So
+   * a machine can no more borrow your animal for a friend's cabin than it can
+   * put their furniture in yours. */
+  const rec = h.mine ? homeCompanion() : h.pet;
   if (!rec) return null;
   const K = COMPANION_KINDS[rec.kind];
   const A = COMPANION_UNITS[K?.archetype];

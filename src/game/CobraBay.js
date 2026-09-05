@@ -291,10 +291,15 @@ export function drawCobraBay(world, st) {
      * so a scroll of 34 m has run the whole shaft past exactly once and the
      * rate on screen is `Launch.js`'s rate rather than a guess. */
     const h = ((i * STRIP_PITCH - scroll) % WELL + WELL) % WELL;
+    /* AND `shaft` IS THE RATE, drawn as a STREAK. It is 0 while the well is
+     * still and 1 through the ride, and a strip light going past at forty
+     * metres a second is a line and not a lamp — which is the difference
+     * between a bay with the lights on and a launch. */
+    const streak = 1 + 2.4 * clamp01(bay.shaft);
     for (let k = 0; k < 2; k++) {
       _p.set(rig.place.x + r * Math.sin(a), rig.y0 + h + k * WELL / 2, rig.place.z + r * Math.cos(a));
       _q.setFromAxisAngle(UP, a);
-      _s.set(1, 1, 1);
+      _s.set(1, streak, 1);
       rig.strips.setMatrixAt(i * 2 + k, _m.compose(_p, _q, _s));
     }
   }

@@ -322,6 +322,10 @@ export function kineticContact(other, c) {
    */
   if (victim && sameCreature(self, other, victim)) return;
 
+  // The world itself: architecture, a wall, the ground. Nothing to hurt, but
+  // the thing that hit it can still break on it.
+  if (!victim) { _selfDamage(self, tune, dmg, _pt, _dir); _thud(_pt, dmg); return; }
+
   /**
    * ── NOBODY IS HURT ON THE CONCOURSE BY ACCIDENT ───────────────────────
    *
@@ -345,12 +349,15 @@ export function kineticContact(other, c) {
    * exactly the class §11's alarm was misreading, and it removes it at the
    * source rather than teaching every reader downstream to discount it.
    * There are no collapses on a station.
+   *
+   * BELOW THE `!victim` BRANCH, and it was written above it: a contact
+   * with the architecture — a wall, the ground — has no victim at all, so
+   * `victim.noAmbientHarm` threw on the first crate that hit a floor.
+   * `companions.mjs` caught it as "the eleven verbs do the thing they say",
+   * which is the shape of report this kind of fault always takes: the
+   * failure surfaces four files away from the line that caused it.
    */
   if (!source && victim.noAmbientHarm) return;
-
-  // The world itself: architecture, a wall, the ground. Nothing to hurt, but
-  // the thing that hit it can still break on it.
-  if (!victim) { _selfDamage(self, tune, dmg, _pt, _dir); _thud(_pt, dmg); return; }
 
   /**
    * ONE HIT PER VICTIM PER THROW. A contact start is once per meeting, which
