@@ -640,6 +640,223 @@ export async function run({ check, assert }) {
     return `${checked} minutes sampled: the glass and the banner are the same ${F.BOARD.rows} rows, and a sortie appears on it`;
   });
 
+  /* ════════════════════════════════════════════════════════════════════════
+   *  THE DOOR — and it is the thing this whole suite was green without
+   * ════════════════════════════════════════════════════════════════════════ */
+
+  check('flightops: the lift stops at every deck §7 lives on, and the car raises the row', async () => {
+    /**
+     * ══ WHAT THIS SUITE COULD NOT SEE, AND WAS 15/15 OVER ═══════════════════
+     *
+     * Every check above this one reaches the rooms by calling `station(12)` or
+     * `station(32)` — booting the level at a deck directly, which is what
+     * `main.js` does AFTER the lift has handed it a floor row. Nothing asked
+     * whether a floor row exists. Measured:
+     *
+     *   liftFloors()   BRIDGE | station 40 | station 44 | station 48
+     *   decks §7 needs 32 (#2 #3 #4) and 12 (#5 #6)
+     *
+     * So the five rooms, their five verbs, the cert ladder, the launch and the
+     * tower's traffic board were unreachable by any player, and this file was
+     * green throughout — the same instrument defect `_casinoprobe.mjs`'s header
+     * describes for `Games.js`, one layer up: there the module had no importer,
+     * here the deck had no door.
+     *
+     * THE DECKS ARE DERIVED FROM THE GAZETTEER, never typed. The five ids are
+     * §7's own — the same five `Station.FLIGHT_PLACES` dispatches — and their
+     * DECKS are read off `StationPlan.PLACE`, so moving the ready room down a
+     * deck fails this the day it moves rather than the day somebody notices.
+     */
+    const { liftFloors } = await import('../../src/game/DeckLift.js');
+    await import('../../src/game/Levels.js');   // `setLiftFloors` runs on its import
+    const rows = liftFloors();
+    const need = new Set([2, 3, 4, 5, 6].map((id) => PLACE.get(id).deck));
+    const blind = [...need].filter((d) => !rows.some((f) => f.deck === d && f.level === 'station'));
+    assert(blind.length === 0,
+      `§7's rooms live on decks ${[...need].join(' and ')} and the lift stops at `
+      + `${rows.filter((f) => f.deck).map((f) => f.deck).join(', ')} — deck(s) ${blind.join(', ')} `
+      + 'have no floor row, so nothing in this file is reachable by a player');
+
+    /**
+     * AND THE CAR ACTUALLY GOES THERE. A row in a table is not a door: the
+     * column has to be able to land on it, the readout has to agree with the
+     * button, and the ride has to raise `onDeckLift` with THAT row — which is
+     * the object `main.js` turns into `_stationFloor`. Driven from the
+     * Concourse, with `liftKey` doing the pressing, because that is the key a
+     * player has.
+     */
+    const { RIDE, atTheDoors, liftKey, liftPick } = await import('../../src/game/DeckLift.js');
+    const { LIFT } = await import('../../src/game/Hangar.js');
+    const { run: step, idleInput } = await import('./_coop.mjs');
+    const said = [];
+    for (const deck of [...need].sort((a, b) => a - b)) {
+      const world = await station(40);
+      try {
+        const idle = idleInput();
+        const car = world._deckLift, sh = world._station.shaft;
+        /* Out of the doorway and let it go, then call it back: a car standing
+         * open never leaves. `station.mjs` does the same dance for the same
+         * reason. */
+        world.player.position.set(sh.x * 0.6, world._station.deckY + 1.0, sh.z * 0.6);
+        world.player.body?.setTransform?.(world.player.position, null);
+        step(world, 8.0, idle);
+        let found = null;
+        for (let dr = 0; dr <= 8 && !found; dr += 0.5) {
+          for (let a = 0; a < 32 && !found; a++) {
+            const th = (Math.PI * 2 * a) / 32;
+            const x = sh.x + Math.cos(th) * dr, z = sh.z + Math.sin(th) * dr;
+            world.player.position.set(x, world._station.deckY + 1.0, z);
+            if (atTheDoors(world)) found = [x, z];
+          }
+        }
+        assert(found && liftKey(world), `deck ${deck}: the call key at the doors was not taken`);
+        step(world, RIDE.arrive + RIDE.doors + 0.4, idle);
+
+        const at = car.place(LIFT.x, 0, LIFT.z);
+        const stand = () => {
+          world.player.position.set(at.x, at.y + 1.0, at.z);
+          world.player.body?.setTransform?.(world.player.position, null);
+        };
+        stand();
+        let taps = 0;
+        while (liftPick(world).deck !== deck && taps <= liftFloors().length) {
+          liftKey(world); taps++; step(world, 1 / 60, idle);
+        }
+        assert(liftPick(world).deck === deck,
+          `the button column never landed on deck ${deck} in ${taps} taps`);
+        /* THE RULE `decklift.mjs` HOLDS, held here too — the readout is the
+         * button column's answer and the two cannot disagree. */
+        assert(car.readout.caption === String(liftPick(world).label).toUpperCase(),
+          `deck ${deck}: the readout says "${car.readout.caption}" and the column is on `
+          + `"${liftPick(world).label}"`);
+        /* Read while the car is WAITING. Once it is riding the plate counts
+         * decks and says `DECK ▲`, which is the right answer to a different
+         * question. */
+        const showed = `${String(car.readout.number).padStart(2, '0')} ${car.readout.caption}`;
+
+        let row = null, left = 0;
+        world.onDeckLift = (r) => { row = r; };
+        world.onDeckLeave = () => { left++; };
+        step(world, 1.4 + RIDE.doors + RIDE.settle + RIDE.ride, idle, stand);
+        assert(row && row.deck === deck,
+          `the ride to deck ${deck} raised onDeckLift(${row ? row.deck : 'nothing'}) `
+          + `and onDeckLeave ${left} times — that hook is what \`main.js\` turns into \`_stationFloor\``);
+        assert(row.level === 'station',
+          `deck ${deck}'s row names level '${row.level}', which \`enterStation\` will not build`);
+        assert(left === 0, `a chosen floor also raised onDeckLeave ${left} times — that is the menu`);
+        said.push(`${taps} tap(s) → "${showed}" (shaft ${row.shaft ?? 'arrivals'})`);
+      } finally { world.dispose?.(); }
+    }
+    return said.join('; ');
+  });
+
+  check('flightops: all five rooms answer the real key, and the tower board builds', async () => {
+    /**
+     * ══ THE PRESS, NOT THE CALL ═════════════════════════════════════════════
+     *
+     * `stationKey(world)` is what every other check in this file reaches for,
+     * and it is the wrong instrument for this one: the defect being guarded
+     * against is a BRANCH THAT NEVER RUNS, and the audit found exactly that
+     * shape one file over — `Station.js`'s counter branch sat below the kiosk
+     * branch and two shops were unreachable while `_doorprobe.mjs`, which
+     * calls the hook, was green over it. So this presses `focus` into a real
+     * frame and lets `Player._readInput` → `stationKey` → `flightKey` be the
+     * path.
+     *
+     * THE PRESS IS SHAPED LIKE `Input`, AND THAT MATTERS. `Input.actHit` is
+     * IDEMPOTENT within a frame — the edge set is read as many times as
+     * anything asks and `end()` clears it — while `_readInput` reads
+     * `actHit('thrust')` twice on the melee path. A "genuine one-shot" input
+     * that consumed itself on the first read would starve the second and make
+     * a working feature look dead.
+     *
+     * THE DECKS COME OFF THE FLOOR LIST, not off a literal, so this measures
+     * the rooms a player can actually stand in. With no row for a deck there
+     * is nothing to boot and the assertion below names the room.
+     *
+     * TWO PRESSES PER ROOM, AND THE SECOND IS THE ONE MEASURED. `stepStation`
+     * raises the arrival prompt — `notify(place.name, place.verb)` — the first
+     * frame you are in a new place, so the first press comes with the prompt
+     * beside it. The second is the room alone.
+     *
+     * AND WHAT IT MUST NOT SAY IS THE VERB. `stationKey`'s last line is
+     * `notify(place.name.toUpperCase(), place.verb)` — the fallback for a room
+     * with nothing behind it, and it is exactly what all five of these printed
+     * before `flightKey` existed. A press that answers with the prompt text is
+     * a press that reached no branch.
+     */
+    const { liftFloors } = await import('../../src/game/DeckLift.js');
+    await import('../../src/game/Levels.js');
+    const { idleInput } = await import('./_coop.mjs');
+    /** One press, in `Input`'s own shape: true for every read this frame. */
+    const press = () => {
+      const hits = new Set(['focus']);
+      const i = idleInput();
+      i.act = (a) => hits.has(a);
+      i.actHit = (a) => hits.has(a);
+      i.end = () => hits.clear();
+      return i;
+    };
+
+    const byDeck = new Map();
+    for (const id of [2, 3, 4, 5, 6]) {
+      const d = PLACE.get(id).deck;
+      const row = liftFloors().find((f) => f.deck === d && f.level === 'station');
+      assert(row, `#${id} ${PLACE.get(id).name} is on deck ${d} and no lift floor reaches it`);
+      if (!byDeck.has(d)) byDeck.set(d, []);
+      byDeck.get(d).push(id);
+    }
+
+    const out = [];
+    for (const [deck, ids] of [...byDeck].sort((a, b) => a[0] - b[0])) {
+      const world = await station(deck);
+      try {
+        const st = world._station;
+        st.hour = 13.5;                       // an hour with traffic and a shift in the pit
+        const said = [];
+        world.notify = (a, b) => said.push([a, b]);
+        for (const id of ids) {
+          const p = PLACE.get(id);
+          const put = (y) => {
+            world.player.position.set(p.x, floorOf(p) + y, p.z);
+            world.player.body?.setTransform?.(world.player.position, null);
+          };
+          put(1.0);
+          world.update(1 / 60, press());       // press 1: the arrival prompt rides along
+          said.length = 0;
+          world.update(1 / 60, press());       // press 2: the room, alone
+          assert(said.length >= 1,
+            `#${id} ${p.name}: one press of \`focus\` on the deck said NOTHING — the key never `
+            + 'reached the room');
+          const [head, line] = said[said.length - 1];
+          assert(line !== p.verb,
+            `#${id} ${p.name}: the press answered with the gazetteer's prompt ("${line}"), which is `
+            + '`stationKey`\'s fallback for a room with nothing behind it');
+          out.push(`#${id} "${head}: ${String(line).slice(0, 44)}"`);
+        }
+        /* ── AND THE TOWER'S BOARD IS A THING IN THE ROOM ──────────────────
+         *
+         * `st.traffic` is what `StationBoards.dressFlightBoard` hangs on the
+         * glass, and it was null on every deck a player could reach, so
+         * `trafficRows` had never run in a game. It is asserted on the deck
+         * #2 is on and asserted ABSENT everywhere else, because a board on a
+         * deck with no tower would be a second copy of the room. */
+        const hasTower = ids.includes(2);
+        assert(!!st.traffic === hasTower,
+          `deck ${deck} ${st.traffic ? 'has' : 'has no'} traffic board and ${hasTower ? 'has' : 'has no'} tower`);
+        if (hasTower) {
+          const { trafficRows } = await import('../../src/game/StationBoards.js');
+          const glass = trafficRows({ day: st.day ?? 0, hour: st.hour, theatre: st.theatre, name: st.name });
+          assert(glass.length === F.BOARD.rows + 1,
+            `the glass printed ${glass.length} lines against ${F.BOARD.rows} rows and a header`);
+          assert(String(glass[0]).includes(st.name), `the board's header reads "${glass[0]}"`);
+          out.push(`board ${glass.length - 1} rows under "${glass[0]}"`);
+        }
+      } finally { world.dispose?.(); }
+    }
+    return out.join('; ');
+  });
+
   check('flightops: a sortie is not a run, and files nothing', async () => {
     /**
      * §14 and `Progress.js`: `station` is already on the refusal list and a

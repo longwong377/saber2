@@ -865,7 +865,8 @@ export async function run({ check, assert }) {
                 point: e.position.clone().setY(1), impulse: V(0, 0, -1) }, null);
               n++; if (r === 'turned') turned++;
             }
-            return { n, turned, legs: e.legsLost || 0, toppled: !!e.toppled, dead: e.dead };
+            return { n, turned, legs: e.legsLost || 0, toppled: !!e.toppled, dead: e.dead,
+              hp: e.hp, maxHp: e.maxHp };
           } finally { e.dispose?.(); }
         };
         const plate = run((c) => !c.shield && !c.covers && c.vital < 0.9);
@@ -886,9 +887,46 @@ export async function run({ check, assert }) {
         assert(joint.legs >= plate.legs,
           `${type}: working the joints took ${joint.legs} limbs off against ${plate.legs} from `
           + 'the plate beside them — the gap is not buying the thing it exists to buy');
-        assert(joint.dead, `${type} survived ${joint.n} joint passes`);
+        /**
+         * ── AND IT ENDS THE FIGHT, WHICH IS TWO OUTCOMES AND NOT ONE ───────
+         *
+         * This asserted `joint.dead` alone, and it passed on a body that could
+         * not be killed through its joints at all — because a joint on a
+         * RAGDOLLED body never ran out. `Enemy.takeCut` called
+         * `actor.cutRagdoll(bone, impulse)` with no stump, which breaks the
+         * joint and leaves `bone.cutT` untouched, so `capsules()` went on
+         * offering the same gap in the same full-length bone for ever. Driven
+         * on the SPHA before that was fixed: **seventeen passes through
+         * `tibia0.root`, one leg, `legsLost` 16.** Every body here "died to its
+         * joints" because one joint could be chopped until the health ran out.
+         *
+         * With the stump passed (`cutRagdoll(bone, impulse, ev.cutT)`) a bone
+         * shortens as it is worked and its declared gap eventually sits past
+         * the stub, which is the same arithmetic `capsules()` already applies
+         * to a standing body. Thirteen of the fourteen still die on this route.
+         * The NR-N99 does not, and it is not a defect: `buildSnailTank` states
+         * that the two sprockets are "the tank's only weak point because they
+         * are the only place the track is not lying flat against armour", so
+         * its whole joint route is ONE bone, and cutting a tread down to a
+         * quarter of the hull height leaves nothing for a sprocket to be a hole
+         * in. Measured after the fix: 2 passes, `legsLost` 2, TOPPLED,
+         * 180 hp of 1150.
+         *
+         * So the bar is the CHECK'S OWN TITLE — the joints put it on the
+         * ground — plus the health that came off with them, and it is STRONGER
+         * than what stood here: `joint.toppled` is the claim this check is
+         * named for and it was printed and never asserted.
+         */
+        assert(joint.dead || joint.toppled,
+          `${type}: the joint route neither killed it nor put it on the ground in `
+          + `${joint.n} passes`);
+        assert(joint.dead || joint.hp <= joint.maxHp * 0.25,
+          `${type}: the joint route ran out after ${joint.n} passes with `
+          + `${joint.hp.toFixed(0)} of ${joint.maxHp} hp still on it — working the gaps has to `
+          + 'end the fight, whether by the kill or by the floor');
         rows.push(`${type} plate ${plate.n}p/${plate.turned}t/${plate.legs}L`
-          + ` → joint ${joint.n}p/0t/${joint.legs}L${joint.toppled ? '+topple' : ''}`);
+          + ` → joint ${joint.n}p/0t/${joint.legs}L${joint.toppled ? '+topple' : ''}`
+          + `${joint.dead ? '+dead' : ` (${((joint.hp / joint.maxHp) * 100).toFixed(0)}% left)`}`);
       }
       assert(rows.length >= 6, `only ${rows.length} bodies had a joint to work`);
       return rows.join(' · ');

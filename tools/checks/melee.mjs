@@ -494,9 +494,9 @@ export async function run({ check, assert, THREE }) {
     } finally { world.dispose?.(); }
   });
 
-  check('melee: the One Point disassembles a droid, and does not touch a man', async () => {
+  check('melee: the One Point takes the whole budget off every machine, and nothing off a man', async () => {
     /**
-     * ══ FINDING 6 ══════════════════════════════════════════════════════════
+     * ══ FINDING 6, AND THE AUDIT THAT CAUGHT WHAT IT COULD NOT SEE ═════════
      *
      * The player, verbatim: *"it completely dissassembles them just like your
      * regular dissassmble move but with melee."* What shipped was
@@ -504,9 +504,36 @@ export async function run({ check, assert, THREE }) {
      * b1: hp 28 -> -212, `dead=true`, `actor.severedCount` **0** — an ordinary
      * blunt death with nothing off it. An 8x multiplier wearing the name.
      *
-     * So this counts PARTS, not damage, and it counts them on three machines
-     * and on a man. `severedCount` is the ragdoll's own tally, which is what
-     * `forceDisassemble` moves and what a cut moves; nothing else can raise it.
+     * ── AND THEN THE CLAUSE ASSERTED `parts > 0`, WHICH IS NOT THE PROMISE ──
+     *
+     * "Completely disassembles" is a COUNT, and `parts > 0` cannot tell two
+     * joints from one from a body the instrument is blind to. Driven three
+     * times each on the five machines and the man, it read:
+     *
+     *   b1 2   b2 2   dwarfspider 2   tridroid 1   droideka 0   trooper 0
+     *
+     * and passed on all six. Two of those numbers were wrong and the clause
+     * had no way to say so:
+     *
+     *   THE TRIDROID gave one joint of two. `Enemy.takeCut` called
+     *     `actor.cutRagdoll(bone, impulse)` with no stump, which is the branch
+     *     that breaks a joint and keeps no ledger — the trap
+     *     `Command._desecrateFinish` already has a paragraph about. The
+     *     Octuptarra is `toppleAt: 1` with nothing but legs to shed, so the
+     *     first cut ragdolls it and the second landed on that branch. Fixed at
+     *     the call site: `cutRagdoll(bone, impulse, ev.cutT)`.
+     *
+     *   THE DROIDEKA gave two legs and reported zero. It carries NO RIG — its
+     *     capsules are synthesised and `_cutDroideka` counts `legsLost` — so
+     *     `actor?.severedCount ?? 0`, the number this check counted, could
+     *     never move for it. `Enemy.partsOff` is the one reading that answers
+     *     for both kinds of body, and it is what this counts now.
+     *
+     * SO THE BAR IS THE BUDGET, PER ARCHETYPE. `_severBudget` is the player's
+     * own number and does not vary by body, so "took the budget off it" is the
+     * whole of the promise and a machine that sheds one joint of two fails it
+     * by name. The set of joints each machine HAS is asserted first, so the
+     * bar is one a body can meet rather than a number typed at it.
      */
     const { bootWorld, idleInput } = await import('./_coop.mjs');
     const drive = async (kind) => {
@@ -523,6 +550,14 @@ export async function run({ check, assert, THREE }) {
         assert(e, `no ${kind} to point at`);
         e.noReact = true;
         const hp0 = e.hp;
+        /* WHAT THIS BODY COULD SHED, asked BEFORE the strike and off the
+         * player's own reader, so the bar below is one the machine can meet.
+         * A body with fewer joints than the budget would fail an assertion
+         * about the budget for a reason that is not a defect, and the check
+         * has to be able to tell those two apart. */
+        const centre = p._enemyPoint(e, new THREE.Vector3()).clone();
+        const joints = new Set(p._severable(e, centre).map((c) => c.covers ?? c.name)).size;
+        const budget = p._severBudget();
         const i = idleInput();
         i.act = (a) => a === 'stance';
         i.actHit = (a) => a === 'thrust';
@@ -532,19 +567,39 @@ export async function run({ check, assert, THREE }) {
           if (!e.dead) e.position.copy(at);
           world.update(1 / 60, idle);
         }
-        return { parts: e.actor?.severedCount ?? 0, limbs: p.limbsRemoved, hp0, hp: e.hp, hits: p._melee.lastHits };
+        /* `partsOff` AND NOT `actor.severedCount`. See the header: the
+         * droideka has no rig and no actor, so the old reading was structurally
+         * incapable of counting the two legs it had just lost. */
+        return { parts: e.partsOff, limbs: p.limbsRemoved, hp0, hp: e.hp,
+          hits: p._melee.lastHits, joints, budget };
       } finally { world.dispose?.(); }
     };
 
-    const b1 = await drive('b1');
-    const tri = await drive('tridroid');
-    const spider = await drive('dwarfspider');
-    for (const [k, r] of [['b1', b1], ['tridroid', tri], ['dwarfspider', spider]]) {
-      assert(r.parts > 0,
-        `the One Point took ${r.parts} parts off a ${k} — the move's whole brief is that it `
-        + 'disassembles a machine, and an 8x damage multiplier is not that');
-      assert(r.limbs > 0, `${k}: the player's own limbsRemoved never moved, so nothing was credited`);
-      assert(r.hits > 0, `${k}: the strike reported itself as a miss while taking a limb off`);
+    /**
+     * ALL FIVE MACHINES, and the two that were wrong are in the list by name.
+     * `b2` and `droideka` were never driven here at all — the audit measured
+     * them by hand and found the droideka's zero — so a suite that is about
+     * "it disassembles a machine" now drives every machine the finger is
+     * plausibly thrown at.
+     */
+    const rows = [];
+    for (const kind of ['b1', 'b2', 'tridroid', 'dwarfspider', 'droideka']) {
+      const r = await drive(kind);
+      rows.push([kind, r]);
+      assert(r.joints >= r.budget,
+        `a ${kind} offers ${r.joints} severable joint(s) against a budget of ${r.budget} — `
+        + 'the bar below is asking for more than the body has, which is an archetype problem '
+        + 'and not a disassembly one');
+      /* THE BAR: the budget, exactly. `parts > 0` passed a tridroid shedding
+       * one joint of two for a whole lane. */
+      assert(r.parts === r.budget,
+        `the One Point took ${r.parts} joint(s) off a ${kind} and the budget is ${r.budget} — `
+        + '"completely dissassembles them" is a count, and a machine that comes half apart '
+        + 'is the defect this clause exists to name');
+      assert(r.limbs === r.budget,
+        `${kind}: the player was credited ${r.limbs} limbs for ${r.parts} that came off — `
+        + 'a joint the body never lost must not be billed to the player either');
+      assert(r.hits > 0, `${kind}: the strike reported itself as a miss while taking a limb off`);
     }
 
     /**
@@ -580,8 +635,70 @@ export async function run({ check, assert, THREE }) {
       'forceDisassemble no longer runs through the shared severing loop, so the finger and '
       + 'the Force are two copies again');
 
-    return `b1 ${b1.parts} parts, tridroid ${tri.parts}, dwarfspider ${spider.parts}, `
-      + `clone trooper 0 (blunt only, ${(man.hp0 - man.hp).toFixed(0)} hp); one takeCut loop for both moves`;
+    return rows.map(([k, r]) => `${k} ${r.parts}/${r.budget} of ${r.joints}`).join(', ')
+      + `, clone trooper 0 (blunt only, ${(man.hp0 - man.hp).toFixed(0)} hp); `
+      + 'one takeCut loop for both moves';
+  });
+
+  check('melee: a leg already on the floor is not cut again — the droideka has no rig to refuse it', async () => {
+    /**
+     * ══ THE GUARD EVERY RIGGED BODY HAS AND THIS ONE DID NOT ═══════════════
+     *
+     * `Ragdoll.isSevered` is asked twice about a rigged body — once when
+     * `Enemy.capsules()` builds the list and again inside `Player._sever`'s
+     * loop — so a bone that is gone is never offered and never billed. The
+     * droideka carries no rig: its four capsules are synthesised in
+     * `capsules()` from `built.legs`, and that loop did not look at `leg.gone`.
+     *
+     * Measured before the fix, two One Points at budget 1 on one droideka:
+     *
+     *   press 1   leg0 comes off   legsLost 1   hp 170  → 98.3
+     *   press 2   leg0 AGAIN       legsLost 1   hp  98.3 → 26.6
+     *
+     * `_cutDroideka`'s own `!leg.gone` guard meant nothing came off the second
+     * time, so a full leg's `SEVER_LETHALITY` share was billed for a limb that
+     * was already lying on the deck and `_sever` counted a joint that does not
+     * exist. Three presses killed a three-legged machine through one leg.
+     *
+     * DRIVEN AT BUDGET 1 on purpose: the default budget of 2 takes two legs on
+     * the first press and kills it before a second press can show anything.
+     */
+    const { bootWorld } = await import('./_coop.mjs');
+    const { world } = await bootWorld({});
+    try {
+      const p = world.player;
+      const at = p.position.clone(); at.z -= 1.6;
+      const e = world.spawnEnemy('droideka', at);
+      assert(e, 'no droideka to take apart');
+      e.noReact = true;
+      assert(!e.actor, 'the droideka grew a rig — this clause is about the body that has none');
+      const legs = (e.built.legs || []).length;
+      assert(legs === 3, `a droideka with ${legs} legs`);
+
+      const seen = [];
+      const hps = [e.hp];
+      for (let press = 0; press < 3; press++) {
+        /* The budget is handed in rather than bought, which is what
+         * `disassembleBody`'s third argument is for — one joint a press. */
+        const took = p.disassembleBody(e, null, 0.25);
+        seen.push(took);
+        hps.push(e.hp);
+      }
+      const gone = (e.built.legs || []).filter((l) => l.gone).length;
+      assert(gone === 3, `${gone} of 3 legs actually came off across three presses`);
+      assert(e.partsOff === 3, `partsOff reads ${e.partsOff} for a machine with 3 legs down`);
+      /* AND NO PRESS WAS SPENT ON A LEG THAT WAS ALREADY GONE. */
+      assert(seen.every((n) => n === 1), `the three presses took ${seen.join(', ')} joints`);
+      /* ONE MORE PRESS HAS NOTHING LEFT TO TAKE, which is the other half of the
+       * same guard: with no legs left the severable list is empty and
+       * `disassembleBody` returns 0 rather than billing the stumps. */
+      const after = e.dead ? null : p.disassembleBody(e, null, 0.25);
+      if (after !== null) {
+        assert(after === 0, `a legless droideka shed ${after} more joints`);
+      }
+      return `three presses, three different legs (hp ${hps.map((h) => h.toFixed(0)).join(' → ')}), `
+        + `partsOff ${e.partsOff}${after === null ? '' : `, a fourth press took ${after}`}`;
+    } finally { world.dispose?.(); }
   });
 
   check('melee: the HUD says the fists exist, and the binding says what the key does', async () => {

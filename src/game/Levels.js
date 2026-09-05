@@ -5085,8 +5085,93 @@ if (STATION_ENABLED) {
    * this is the fix that puts the name in front of a player on deck 48, where
    * there is no board and no platform sign to carry it.
    */
+  /**
+   * ── AND THE TWO FLIGHT-OPS DECKS, WHICH NO CAR HAS EVER STOPPED AT ─────
+   *
+   * ══ THE DEFECT: FIVE ROOMS AND A TRAFFIC BOARD NO PLAYER COULD REACH ══
+   *
+   * SHARK §7 is five places — #2 the deck control tower, #3 the pilots' ready
+   * room, #4 the fighter maintenance pit, #5 the Cobra bay, #6 the fighter
+   * rack — and every one of them was built, dressed, wired to a verb and
+   * covered by a green 15/15 suite while being UNREACHABLE. Measured:
+   *
+   *   liftFloors()            BRIDGE | station 40 | station 44 | station 48
+   *   placesOn(40|44|48)      #2–#6 present: NONE, on any of the three
+   *   level 'hangar'          world._station === null
+   *
+   * `Player._readInput` gates the station's one key on `world._station`, which
+   * only `dressStation` writes, so on the flight deck `stationKey` never runs;
+   * and #2–#4 are on deck 32 and #5–#6 on deck 12, which no floor row named.
+   * `flightKey`, `readTower`, `signInReadyRoom`, `walkThePit`, `cobraBay` and
+   * `fighterRack` had no reachable caller, and `st.traffic` — the tower's own
+   * board — was null on all three decks a player could stand on, so
+   * `StationBoards.dressFlightBoard` and `trafficRows` never ran in a game.
+   * `tools/checks/flightops.mjs` was 15/15 because it boots `station(12)`
+   * directly, which is the instrument that cannot see this class of defect.
+   *
+   * ── WHY THE DOOR IS A LIFT FLOOR AND NOT A DISPATCHER ON THE HANGAR ────
+   *
+   * The other route is to give the flight deck a `_station`-like object of its
+   * own so `stationKey` runs on the hangar's world. It is refused for two
+   * reasons, and the second is the one that settles it:
+   *
+   *   IT CANNOT REACH #5 AND #6 AT ALL. `DECK_Y[12]` is −46 against the flight
+   *     deck's −22: the launch well is hung twenty-four metres UNDER the deck,
+   *     a shaft and a catapult, and it is not the hangar under any reading. So
+   *     that route still needs a lift floor for deck 12 — it is this fix plus
+   *     a second mechanism, not an alternative to it.
+   *
+   *   A `_station` ON THE HANGAR'S WORLD IS WHAT §9.2 FORBIDS BY NAME. The
+   *     kill switch's guarantee is that with `STATION_ENABLED` off "the tree
+   *     behaves as it does today", held by a recorded trace of the hangar
+   *     visit — the lift ride, the deck's first 600 frames, the pack's module
+   *     list — being IDENTICAL. A dispatcher, a `placeUnder`, three
+   *     `StationKit` rooms and a `StationLife` pool inside `Hangar.js` is a
+   *     second station living in the one level that is supposed to be
+   *     untouched, and it is a second copy of `dressStation` besides.
+   *
+   * Whereas the station's own machinery already does all of this and has since
+   * the gazetteer was written. `SHAFTS.flight` declares `decks: [12, 32, 40,
+   * 44, 48]`; `DECK_PALETTE[32]` is authored ("the hangar's own steel,
+   * unwarmed") and `DECK_PALETTE[12]` aliases it; `placesOn(32)` hands back
+   * #2/#3/#4 and `placesOn(12)` hands back #5/#6; `dressStation` builds both,
+   * picks the flight shaft, dresses the car and sets `st.traffic`. Measured by
+   * booting the level at each deck before this change:
+   *
+   *   deck 12   places 5,6      25 draws   shaft 'flight'   traffic false
+   *   deck 32   places 2,3,4    16 draws   shaft 'flight'   traffic TRUE
+   *
+   * Everything was standing. The floor list was the one table that never
+   * learnt what the plan had said all along, and this is that one table.
+   *
+   * ── THE COST, STATED: TWO LOADS ON ONE DECK NUMBER ────────────────────
+   *
+   * `DeckLift.FLIGHT_DECK` is 32 and the hangar's readout reads `32 FLIGHT
+   * DECK` — so deck 32 now names two places. That is what the deck IS: §3.2
+   * #1 is the flight deck, `external: true`, "the hangar, unchanged —
+   * `Hangar.js` builds it and nothing here touches it", and `placesOn` drops
+   * it, so nothing here rebuilds the bay. The tower cantilevered over the
+   * hangar mouth, the ready room under it and the pit beside it are the rest
+   * of the same floor, and the lift is the door between the two — which is
+   * exactly what §7 says the lift is ("the lift is the load screen and always
+   * was"). The caption carries the difference the number cannot: the bay says
+   * FLIGHT DECK, the gallery says `<NAME> · FLIGHT OPS`.
+   *
+   * The label is §6's own word for these five rooms — step 7 is "Flight ops
+   * (#2–#6)" — and NOT "flight deck", deliberately: two floors reading FLIGHT
+   * DECK is the one thing a caption on a lift must never do.
+   *
+   * ── AND THE ORDER IS THE ORDER THE CAR PASSES THEM ────────────────────
+   *
+   * `MENU_FLOOR` stays first (§5.2, and `floorTarget` reads it for the ride
+   * out), and the rest run bottom to top the way the shaft does, so the button
+   * column climbs the building. Six rows against `DeckLift`'s six modelled
+   * buttons, which is what `lit = pick % 6` has been waiting for.
+   */
   setLiftFloors([
     MENU_FLOOR,
+    { n: 12, get label() { return `${stationName()} · Launch well`; }, level: 'station', deck: 12, shaft: 'flight' },
+    { n: 32, get label() { return `${stationName()} · Flight ops`; }, level: 'station', deck: 32, shaft: 'flight' },
     { n: 40, get label() { return `${stationName()} · Concourse`; }, level: 'station', deck: 40 },
     { n: 44, get label() { return `${stationName()} · Living deck`; }, level: 'station', deck: 44 },
     { n: 48, get label() { return `${stationName()} · Working deck`; }, level: 'station', deck: 48 },

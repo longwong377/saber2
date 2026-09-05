@@ -4219,6 +4219,32 @@ export class Enemy {
         r: 0.34 * this.A.scale, toughness: this.A.toughness, enemy: this, vital: severance('core') });
       const legs = this.built.legs || [];
       for (const leg of legs) {
+        /**
+         * ── A LEG ON THE FLOOR IS NOT A LEG YOU CAN CUT ────────────────────
+         *
+         * `Actor.isSevered` is what keeps a rigged body from being billed
+         * twice for one limb — `capsules()` never offers a severed bone and
+         * `takeCut` refuses one anyway. This body has no rig and had neither
+         * guard: `_cutDroideka` removed the mesh and set `leg.gone`, and the
+         * next call to this function offered `leg0` again as though it were
+         * still there.
+         *
+         * Measured, two One Points at budget 1 on the same droideka:
+         *
+         *   press 1   leg0 off, legsLost 1, hp 170 → 98.3
+         *   press 2   leg0 AGAIN, legsLost 1,  hp  98.3 → 26.6
+         *
+         * `_cutDroideka`'s own `!leg.gone` guard meant nothing came off the
+         * second time, so `takeCut` billed a full leg's `SEVER_LETHALITY`
+         * share for nothing and `Player._sever` counted a joint that does not
+         * exist. Three presses kill a three-legged machine through ONE leg.
+         * The guard belongs here, where the rigged bodies keep theirs.
+         *
+         * `legs.indexOf(leg)` and not a running counter: the name is the leg's
+         * position in `built.legs`, which is what `_cutDroideka` parses back
+         * out of it, so skipping one must not renumber the rest.
+         */
+        if (leg.gone) continue;
         leg.leg.getWorldPosition(_v2);
         leg.lower.getWorldPosition(_v3);
         out.push({ name: 'leg' + legs.indexOf(leg), p0: _v2.clone(), p1: _v3.clone(),
@@ -4499,7 +4525,35 @@ export class Enemy {
 
     if (this.actor) {
       const impulse = _v1.copy(ev.impulse).multiplyScalar(0.35);
-      if (this.actor.ragdolled) this.actor.cutRagdoll(bone, impulse);
+      /**
+       * ── AND THE STUMP IS PASSED ON A BODY THAT IS ALREADY DOWN ──────────
+       *
+       * This read `cutRagdoll(bone, impulse)` and dropped `ev.cutT` on the
+       * floor. `Ragdoll.cutRagdoll`'s third argument is the stump, and with
+       * the default `t = 0` it takes the branch that ONLY breaks a joint: the
+       * bone keeps its full length, `bone.cutT` is untouched, `bone.severed`
+       * is never set — so `severedCount` never moves and `isSevered` answers
+       * false for a limb that is hanging by nothing. `Ragdoll.cut` passes `t`
+       * straight through on the same branch, and `Command._desecrateFinish`
+       * carries a paragraph naming this exact trap ("with the default `t = 0`
+       * `cutRagdoll` only breaks the joint … nothing came off and nothing
+       * said so"). This call site was the one that never learnt it.
+       *
+       * WHAT IT COST, measured with the One Point at budget 2:
+       *
+       *   tridroid   1 joint of 2   b1 2   dwarfspider 2
+       *
+       * The Octuptarra is `toppleAt: 1` and its whole severable set is three
+       * legs — `_severable` drops the hub and the head as core — so the FIRST
+       * cut topples it and every cut after it lands on a ragdoll. Half the
+       * disassembly was landing on the branch that keeps no ledger, on the one
+       * machine in the game where the ordering rule in `Player._sever` ("legs
+       * LAST") has nothing but legs to order.
+       *
+       * `ev.cutT` is the same fraction the standing branch below is handed, so
+       * a joint costs the same whether the body is on its feet or on its back.
+       */
+      if (this.actor.ragdolled) this.actor.cutRagdoll(bone, impulse, ev.cutT);
       else this.actor.cut(bone, ev.cutT, impulse, ev.point, { spin: 1.2 });
       this.world.onLimbSevered?.(this, bone, ev.point, source);
     } else if (this.group) {
@@ -4765,6 +4819,32 @@ export class Enemy {
       }
     }
     if (bone === 'head' || bone === 'neck') { this.blinded = true; this.hp = Math.min(this.hp, this.maxHp * 0.1); }
+  }
+
+  /**
+   * ══ HOW MUCH OF THIS BODY HAS ACTUALLY COME OFF IT ════════════════════════
+   *
+   * ONE QUESTION, TWO LEDGERS, and everything that asked it was only ever
+   * reading one of them. `Ragdoll.severedCount` is the tally for the 30-odd
+   * bodies that carry a rig; the droideka carries none — its capsules are
+   * synthesised in `capsules()` and `_cutDroideka` takes its legs off by
+   * removing the mesh and counting `legsLost`. So `e.actor?.severedCount ?? 0`
+   * — which is what `melee.mjs` counted the One Point with, and what
+   * `smoke.mjs` still counts a blade with — answers a flat 0 for a machine
+   * that has just lost two of its three legs on screen.
+   *
+   * Measured, One Point at budget 2: droideka `severedCount` 0, `legsLost` 2,
+   * `disassembleBody` 2, three leg meshes down to one. Nothing was wrong with
+   * the machine; the instrument could not see it.
+   *
+   * A GETTER RATHER THAN A THIRD COUNTER. A body has exactly one of the two
+   * mechanisms, so this reads whichever it has and never adds them: a walker
+   * has BOTH an actor and a `legsLost` (`_loseLimbBehaviour` counts legs for
+   * the topple whether or not the rig lost the bone), and summing them would
+   * report a tridroid's two severed legs as four.
+   */
+  get partsOff() {
+    return this.actor ? (this.actor.severedCount || 0) : (this.legsLost || 0);
   }
 
   _onSever(bone, point) {
