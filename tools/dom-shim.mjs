@@ -51,8 +51,27 @@ class Canvas {
 
 class Elem {
   constructor(tag) { this.tagName = tag; this.style = {}; this.children = []; this.dataset = {}; this.className = ''; }
-  appendChild(c) { this.children.push(c); return c; }
-  removeChild(c) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); }
+  /**
+   * ── AND A CHILD KNOWS ITS PARENT, BECAUSE CODE ASKS ────────────────────
+   *
+   * `appendChild` pushed onto `children` and set nothing on the child, so
+   * `el.parentElement` was `undefined` for every node this shim ever built.
+   * A clause driving `Screens.loading` — which hides the progress bar by
+   * reaching for `fill.parentElement` — could not see the bar at all and
+   * reported the fix as absent. Same shape as the inert `classList` this file
+   * carried for the life of the project: a stub that cannot be wrong is a stub
+   * nothing can be tested through.
+   */
+  appendChild(c) {
+    this.children.push(c);
+    if (c && typeof c === 'object') { c.parentElement = this; c.parentNode = this; }
+    return c;
+  }
+  removeChild(c) {
+    const i = this.children.indexOf(c);
+    if (i >= 0) this.children.splice(i, 1);
+    if (c && typeof c === 'object' && c.parentElement === this) { c.parentElement = null; c.parentNode = null; }
+  }
   setAttribute() {} getAttribute() { return null; }
   addEventListener() {} removeEventListener() {}
   querySelector() { return null; } querySelectorAll() { return []; }

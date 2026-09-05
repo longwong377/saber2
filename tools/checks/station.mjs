@@ -1121,8 +1121,13 @@ export async function run({ check, assert, THREE }) {
     }
     /* AND THE FAR SIDE USES IT. `enterStation`/`enterHangar` take `opts.still`
      * and turn it into the `{ still }` bag `Screens.loading` reads. */
-    assert((code.match(/opts\.still\s*\?\s*\{\s*still:\s*opts\.still\s*\}/g) || []).length >= 2,
+    assert((code.match(/opts\.still\s*\?\s*\{\s*still:\s*opts\.still\b/g) || []).length >= 2,
       'a door takes a still and never builds the bag Screens.loading reads');
+    /* AND IT HANDS OVER A LINE IN THE FICTION rather than letting the loader's
+     * own stage names through — see the clause below for what that is for. */
+    assert((code.match(/say:\s*'[^']+'/g) || []).length >= 2,
+      'a door builds the seam bag without a line for the car to say, so a long '
+      + 'ride falls back to whatever the loader was calling its current stage');
 
     /**
      * ── AND THE SCREEN ITSELF, DRIVEN ─────────────────────────────────────
@@ -1140,20 +1145,57 @@ export async function run({ check, assert, THREE }) {
      * back in the `finally`. Nothing else in the process sees it. */
     const el = document.createElement('div');
     el.className = 'screen hidden';
+    /* The bar and the caption are the subject of the second half, so they are
+     * real elements with a real parent — a null here would make the clause
+     * pass by finding nothing to complain about. */
+    const bar = document.createElement('div');
+    const fill = document.createElement('div');
+    bar.appendChild(fill);
+    const msg = document.createElement('div');
     const was = document.getElementById;
-    document.getElementById = (id) => (id === 'loading' ? el : null);
+    document.getElementById = (id) => (id === 'loading' ? el
+      : id === 'load-fill' ? fill : id === 'load-msg' ? msg : null);
     try {
       const sc = new Screens();
-      sc.loading(0.3, 'the station', { still: 'data:image/png;base64,AA' });
+      sc.loading(0.3, 'raising the ground', { still: 'data:image/png;base64,AA' });
       assert(el.classList.contains('still'),
         'a loading screen handed a still did not wear it — the player gets the plate mid-ride');
       assert(!el.classList.contains('hidden'), 'the loading screen stayed hidden');
       assert(/data:image/.test(el.style.backgroundImage || ''), 'the still was not painted');
+      /**
+       * ── AND THE STILL WAS ONLY HALF THE ANSWER ──────────────────────────
+       *
+       * *"no loading screens … should feel like just going to a different
+       * place, not two separate games."* A hostile pass polled the DOM through
+       * a real deck change and found, for 24.8 s: the photograph, correct —
+       * and over it a 220 px progress bar and a caption reading "raising the
+       * ground", "lighting the sky", "dressing the level". That is a loading
+       * screen with a picture behind it, and the words are the names of engine
+       * stages. This is the clause that says so.
+       */
+      assert(bar.style.display === 'none',
+        'the progress bar draws over the seam — a bar on a photograph of a lift is a loading screen');
+      assert(msg.textContent === '',
+        `the seam says "${msg.textContent}" — the loader's own stage names are not what a `
+        + 'player standing in a lift is looking at');
+      /* AND IT DOES SAY SOMETHING IF THE RIDE OUTLASTS THE SHAFT, in the
+       * fiction, and only then. The clock is the screen's own. */
+      const { SEAM_QUIET } = await import('../../src/ui/Screens.js');
+      sc._seamAt = Date.now() - (SEAM_QUIET + 1) * 1000;
+      sc.loading(0.6, 'dressing the level', { still: 'data:image/png;base64,AA', say: 'the car is still moving' });
+      assert(msg.textContent === 'the car is still moving',
+        `after ${SEAM_QUIET}s the seam said "${msg.textContent}" rather than the line the door handed it`);
+      /* AND AN ORDINARY LOAD IS UNTOUCHED — the menu deploy still gets its bar
+       * and its stage names, because there is no fiction to be inside of. */
+      sc.loading(0.5, 'lighting the sky', null);
+      assert(bar.style.display !== 'none' && msg.textContent === 'lighting the sky',
+        'the ordinary loading screen lost its bar — this is about the seam, not about loads');
       sc.hideLoading();
       assert(!el.classList.contains('still') && !el.style.backgroundImage,
         'the still outlived the load — the menu now wears a photograph of a lift');
     } finally { document.getElementById = was; }
-    return 'both lift handlers capture before teardown and hand it on; the screen wears it and gives it back';
+    return 'both lift handlers capture before teardown and hand it on; the screen wears it, shows no '
+      + 'bar and no engine talk over it, says one line in the fiction if the ride runs long, and gives it back';
   });
 
   /* ════════════════════════════════════════════════════════════════════════ */

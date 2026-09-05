@@ -79,6 +79,17 @@ export const LIVE = ['playing', 'paused', 'draft', 'dead', 'meditation', 'muster
  */
 export const OVERLAY_STATES = ['draft', 'dead', 'muster', 'deploy'];
 
+/**
+ * HOW LONG A SEAM MAY BE SILENT BEFORE IT SAYS ANYTHING AT ALL, in seconds.
+ *
+ * The lift's own ride is 3.4 s of shaft and the rebuild happens behind it, so
+ * a load that finishes inside this said nothing and needed to say nothing —
+ * which is the whole of "it should feel like going to a different place". Past
+ * it the player is waiting, and a line in the fiction is better than a silent
+ * photograph. It is never a percentage and never the name of an engine stage.
+ */
+export const SEAM_QUIET = 4;
+
 export class Screens {
   /**
    * @param {object} io
@@ -199,15 +210,52 @@ export class Screens {
       el.style.backgroundImage = '';
     }
     el.classList.remove('hidden');
+    /**
+     * ── AND ON A SEAM THERE IS NO BAR AND NO ENGINE TALK ──────────────────
+     *
+     * *"no loading screens … should feel like just going to a different place,
+     * not two separate games."*
+     *
+     * The still was half the answer and it was read as the whole of it. A
+     * hostile pass polled the DOM through a real deck change and found, for
+     * 24.8 s: the photograph of the car, correct — and over it a 220 px
+     * progress bar and a caption reading "raising the ground", "lighting the
+     * sky", "dressing the level". That is a loading screen with a picture
+     * behind it, and the words are the names of engine stages.
+     *
+     * So on a seam the bar does not draw and the loader's own labels are
+     * dropped on the floor. What CAN appear is a line the caller wrote in the
+     * fiction — `opts.say` — and only after `SEAM_QUIET`, because a ride that
+     * finishes inside four seconds should say nothing at all. A player who is
+     * standing in a lift does not need to be told the lift is a lift; a player
+     * who has been standing in it for six seconds does.
+     *
+     * THE BAR IS REMOVED RATHER THAN HIDDEN BY CSS. A width still written to
+     * an invisible element is a fact this file would keep having to remember
+     * is invisible, and the class it hangs on has been read as "the still is
+     * handled" once already.
+     */
+    const seam = !!still;
     const fill = document.getElementById('load-fill');
-    if (fill) fill.style.width = `${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%`;
+    if (fill) fill.style.width = seam ? '0%' : `${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%`;
+    const bar = fill?.parentElement;
+    if (bar) bar.style.display = seam ? 'none' : '';
     const msg = document.getElementById('load-msg');
-    if (msg && label) msg.textContent = label;
+    if (msg) {
+      if (!seam) { if (label) msg.textContent = label; }
+      else {
+        if (this._seamAt == null) this._seamAt = Date.now();
+        const waited = (Date.now() - this._seamAt) / 1000;
+        msg.textContent = (waited > SEAM_QUIET && opts?.say) ? opts.say : '';
+      }
+    }
+    if (!seam) this._seamAt = null;
     this._loading = true;
   }
 
   /** Take it down. Called by `clear()`, and by `set()` through it. */
   hideLoading() {
+    this._seamAt = null;
     if (typeof document === 'undefined') return;
     const el = document.getElementById('loading');
     if (el) { el.classList.add('hidden'); el.classList.remove('still'); el.style.backgroundImage = ''; }

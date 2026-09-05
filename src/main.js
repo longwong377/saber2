@@ -985,7 +985,12 @@ async function enterHangar(arrival = null, opts = {}) {
     const outside = theatreFor(sessionOr('mode'), sessionOr('level'), null);
     /* The ride back off the station holds the car's own last frame too — the
      * seam is the same seam and it is one argument (V15 §1.5). */
-    const shot = opts.still ? { still: opts.still } : null;
+    /* WHAT THE CAR SAYS IF THE RIDE OUTLASTS THE SHAFT. `Screens.loading` keeps
+   * this quiet for `SEAM_QUIET` seconds and then prints it INSTEAD of a
+   * percentage and instead of the loader's own stage names — see its note. A
+   * player standing in a lift does not need to be told it is a lift; a player
+   * who has been standing in it for six seconds does. */
+  const shot = opts.still ? { still: opts.still, say: 'the car is still moving' } : null;
     await buildWorld('hangar', (frac, label) => screens.loading?.(frac, label, shot), null,
       { mode: 'hangar', level: 'hangar', allies: 0 },
       /* THE RECORD, not the key: `Hangar.js` imports no levels — see
@@ -1153,7 +1158,12 @@ async function enterStation(floorRow = null, opts = {}) {
   const deck = floorRow?.deck ?? 40;
   /* The ride's own last frame, so the build happens behind the car rather than
    * behind the menu plate. See `onDeckLift`. */
-  const shot = opts.still ? { still: opts.still } : null;
+  /* WHAT THE CAR SAYS IF THE RIDE OUTLASTS THE SHAFT. `Screens.loading` keeps
+   * this quiet for `SEAM_QUIET` seconds and then prints it INSTEAD of a
+   * percentage and instead of the loader's own stage names — see its note. A
+   * player standing in a lift does not need to be told it is a lift; a player
+   * who has been standing in it for six seconds does. */
+  const shot = opts.still ? { still: opts.still, say: 'the car is still moving' } : null;
   try {
     /* The rooms, before the world. See the note above. */
     const { prepareStation } = await import('./game/Station.js');
