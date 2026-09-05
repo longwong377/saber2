@@ -3393,6 +3393,42 @@ export class World {
    *     the second loop finds nothing and this costs one `canHarm` per body.
    */
   pickTarget(enemy) {
+    /**
+     * ══ A SHOPKEEPER IS NOT FIGHTING ANYBODY ══════════════════════════════
+     *
+     * `StationLife.spawnResident` puts every resident on `player.team` and its
+     * note says why: *"nothing in the game hunts a resident and no director
+     * can ever be handed one as an objective."* That is true and it is only
+     * half the sentence. The other half — the resident does not hunt YOU — was
+     * never written, and `friendlyFire` quietly undoes the half that was:
+     * `world.rules` on a station reads `{pvp:false, friendlyFire:true}`, so
+     * `canHarm` answers true between two bodies on team 0 and `hostileTo`
+     * hands this method the player.
+     *
+     * And the friendly fire is not a mistake to be turned off. It is what
+     * makes §11's *"cut or throw one"* possible at all: the player must be
+     * able to harm a resident, and the resident must not be able to harm the
+     * player. That asymmetry cannot be expressed by a team, so it is
+     * expressed here.
+     *
+     * MEASURED BEFORE, deck 40, player standing still and pressing nothing:
+     * every one of 28 bodies carried `target = THE PLAYER` with a live wish
+     * vector, and over five seconds they walked a median 13.57 m — 2.7 m/s,
+     * on 292 of 300 frames, with zero teleports, closing a median 4.86 m on
+     * the player. The whole concourse jogged after you.
+     *
+     * `dressKeepers` had `if (body.brain) body.brain.idle = true`, which is a
+     * no-op because `Enemy` has no `brain` field — the intent to hold them
+     * still was written and never executed. This is that intent, at the one
+     * place the game answers "who am I fighting", which is where this method's
+     * own note says a targeting rule belongs rather than in the twelve places
+     * that read `enemy.target`.
+     *
+     * NOT the guards. §11's patrol is spawned by `witness` as a `bodyguard` on
+     * team 1 and carries no `stationResident`, so it comes for you exactly as
+     * it did.
+     */
+    if (enemy?.stationResident) return null;
     if (enemy?.trooper && this.command) {
       /* THE INDEX RATHER THAN THE WHOLE OPPOSED ARMY. `_hostilesFor` builds a
        * list of every hostile on the field, once per trooper per frame, so that
