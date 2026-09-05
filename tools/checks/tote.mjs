@@ -648,15 +648,16 @@ export async function run({ check, assert }) {
    * the window is still a window.
    *
    * The long run behind them is `node tools/_toteedge.mjs`; measured there over
-   * 25,000 settled tickets a window, at 2,200 a ticket, on books `bookAt`
-   * itself would have handed over:
+   * 200,000 SETTLED TICKETS a window — 600,000 tickets and 1.42 million races
+   * in all — at 2,200 a ticket, struck through `ticketFor` against boards
+   * `boardFor` priced on books `bookAt` itself would have handed over:
    *
-   *     Holo-theatre   reader  +4.60% paid (+4.92% model)   pin −11.79%   leader −4.17%
-   *     The Pit        reader +12.79% paid (+13.63% model)  pin  −7.66%   leader −7.95%
-   *     The Arena      reader  +4.60% paid (+5.12% model)   pin  −4.52%   leader −4.53%
+   *     Holo-theatre  6% take   reader  +6.81% ±0.74   pin −12.29% ±0.37   leader −4.47%
+   *     The Pit       8% take   reader +14.04% ±0.74   pin  −6.65% ±0.31   leader −8.93%
+   *     The Arena     5% take   reader  +5.07% ±0.25   pin  −4.54% ±0.03   leader −4.64%
    *
    * The bands below are those numbers with room for the gate's much smaller
-   * sample, which is a thousand-odd tickets a window and reads them ±2%.
+   * sample, which is a thousand-odd tickets a window.
    *
    * ── AND WHY THE CEILINGS ARE NOT LOWER, WHICH IS A REAL CONSTRAINT ────
    *

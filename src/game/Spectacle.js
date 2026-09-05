@@ -283,13 +283,19 @@ const FIGHT_HAZARDS = [
  *               two and makes more a bet than the Holo-theatre's, who backs
  *               one in two of a much flatter book.
  *
- * MEASURED, at the values below, on the book the window hands over and through
- * `ticketFor`/`settleTickets`: a punter who reads the card and backs the
- * overlays returns +4.0% at the Holo-theatre, +8.1% in the Pit and +3.3% at
- * the Arena; one who picks with a pin returns −8.3%, −4.2% and −4.0%; one who
- * backs the shortest price on the board returns −5.1%, −10.7% and −6.1%. Every
- * one of those is held to a band by `tools/checks/tote.mjs` and the long run
- * at a quarter of a million bets a window is `node tools/_toteedge.mjs`.
+ * MEASURED, at the values below, over 200,000 settled tickets a window on the
+ * book the window actually hands over and through `ticketFor`/`settleTickets`:
+ * a punter who reads the card and backs the overlays returns +6.8% at the
+ * Holo-theatre, +14.0% in the Pit and +5.1% at the Arena; one who picks with a
+ * pin returns −12.3%, −6.7% and −4.5%; one who backs the shortest price on the
+ * board returns −4.5%, −8.9% and −4.6%. Every one of those is held to a band
+ * by `tools/checks/tote.mjs`, and the long run is `node tools/_toteedge.mjs`.
+ *
+ * THE PIT IS THE READING ROOM, which is the opposite of what this table used
+ * to say. Six in a bout, a fortnight of them and hidden terms that barely move
+ * with the going: a form LINE reads it almost perfectly and a going SPLIT
+ * cannot read it at all, which is why it was the worst window on the station
+ * to be clever at and is now the best.
  */
 export const SKINS = Object.freeze({
   /**

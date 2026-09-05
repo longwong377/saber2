@@ -5209,17 +5209,21 @@ export async function run({ check, assert }) {
     const shyRun = async (body) => {
       body._cmpDuty = { id: 'ward' };
       const home = new THREE.Vector3();
-      const foe = { position: body.position.clone(), team: (F.p.team ?? 0) + 1, dead: false };
-      foe.position.x += 1;
-      const takes = () => { C.stationFor(body, home); return C.dutyAllows(body, foe, home, 1e9); };
+      /* THE HOSTILE IS PUT A METRE FROM THE PLAYER AND NOT FROM THE ANIMAL,
+       * because WARD measures from YOU — that is the whole of the order. Put
+       * beside the animal it drifts out of a KEPT record's own (narrowed)
+       * ring as the animal walks, and the check then measures the ward it
+       * just changed rather than the panic. */
+      const foe = { position: F.p.position.clone(), team: (F.p.team ?? 0) + 1, dead: false };
+      const put = () => { foe.position.copy(F.p.position); foe.position.x += 1; };
+      put();
+      const takes = () => { put(); C.stationFor(body, home); return C.dutyAllows(body, foe, home, 1e9); };
       const before = takes();
       body.hp = (body.hp ?? body.maxHp) - 12;
       tick(F.world, F.input, F.p, 1);
-      foe.position.copy(body.position); foe.position.x += 1;
       const during = takes();
       const station = home.distanceTo(F.p.position);
       tick(F.world, F.input, F.p, Math.ceil((C.SHY.run + 0.3) / STEP));
-      foe.position.copy(body.position); foe.position.x += 1;
       const after = takes();
       return { before, during, after, station, shies: body._cmpShies | 0 };
     };
