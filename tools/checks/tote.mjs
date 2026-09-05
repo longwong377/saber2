@@ -1368,6 +1368,7 @@ export async function run({ check, assert }) {
     const P = await import('../../src/game/StationPlan.js');
     const L = await import('../../src/game/StationLife.js');
     const { audio } = await import('../../src/engine/Audio.js');
+    const Save = await import('../../src/game/StationSave.js');
 
     /* The station's rooms are loaded off disk in the browser; headless they
      * come off the filesystem, exactly as `station.mjs` does it. */
@@ -1389,7 +1390,45 @@ export async function run({ check, assert }) {
 
     let out = '';
     try {
+      /**
+       * ── WHICH DAY THE STATION IS ON IS NOT THIS CHECK'S TO DECIDE ───────
+       *
+       * This used to pick the first day with a card, write `st.day = day`, and
+       * read the room. `st.day` IS NOT A FIELD A CALLER OWNS: `tickStationClock`
+       * assigns `st.day = stationDay()` on every frame, out of the durable fold
+       * in `StationSave`, which is the whole point of the repair that gave the
+       * station more than one day. So the write was a no-op from the first
+       * frame, and what the room actually read was whatever day the FOLD was
+       * on — process-wide state, shared by every suite in the gate.
+       *
+       * On a clean fold that is day 0 and the check was green. Any suite that
+       * runs before this one and moves the clock through a midnight — the ward
+       * mending a company over 720 hours, a run coming home, a station world
+       * driven past 24:00 — leaves the fold on some other day, and this check
+       * then measured day 0's race hour against day N's card. Measured over the
+       * first forty days: 24 of them have no meet at day 0's 15:11, so the room
+       * is correctly silent and this reads as `peak 0.000 — it never reacted`,
+       * a green build reported as a dead crowd. It is the classic shape — an
+       * instrument inventing its own defect — and it is not order-dependence in
+       * the game, which is why it is fixed here and not there.
+       *
+       * So the day is TAKEN from the fold rather than assumed, and if the venue
+       * is dark on it the fold is wound forward through its own shipped door
+       * (`passStationHours`, whole days, forward only) until it is not. The
+       * station is then really on the day whose race this measures, whatever
+       * ran before it. Every one of the first forty days answers with a peak
+       * between 0.19 and 0.45 and three or more kinds of moment, so the bar
+       * below is not day-specific.
+       */
       await St.prepareStation();
+      const v = venueById('holo-theatre');
+      const dayWas = Save.stationDay();
+      let day = dayWas, races = [];
+      while (!races.length && day < dayWas + 60) { races = racesOn(v.id, day); if (!races.length) day++; }
+      assert(races.length, `${v.id} has no card in the sixty days after ${dayWas}`);
+      if (day > dayWas) Save.passStationHours(24 * (day - dayWas));
+      assert(Save.stationDay() === day,
+        `the station is on day ${Save.stationDay()} and this is measuring day ${day}`);
       const { world } = await bootWorld({
         level: 'station',
         settings: { mode: 'station', level: 'station', allies: 0 },
@@ -1397,15 +1436,12 @@ export async function run({ check, assert }) {
       });
       const idle = idleInput();
       const st = world._station;
-      const v = venueById('holo-theatre');
       const place = P.PLACES.find((x) => x.id === v.place);
 
       /* Stand in the middle of the room. */
       world.player.position.set(place.x, st.deckY + 1.6, place.z);
       world.player.camera?.obj?.position?.set(place.x, st.deckY + 1.6, place.z);
 
-      let day = 0, races = [];
-      while (!races.length && day < 60) { races = racesOn(v.id, day); if (!races.length) day++; }
       const race = races[0];
       /**
        * ── HOW THE SEATS ARE COUNTED, AND WHY IT IS NOT A HEADCOUNT ────────
@@ -1429,8 +1465,11 @@ export async function run({ check, assert }) {
        * `stepStation` winds it and a check that let it run would be measuring
        * a different hour by the end. */
       const quiet = (() => { for (let h = 0; h < 24; h += 0.25) if (!meetAt(v.id, day, h)) return h; return 4; })();
-      st.day = day;
+      /* `st.day` is deliberately NOT written here — see the note above. The
+       * loop puts the fold's day on it every frame, and that is asserted. */
       for (let i = 0; i < 600; i++) { st.hour = quiet; world.update(1 / 60, idle); }
+      assert(st.day === day,
+        `the station ran on day ${st.day} while this measured day ${day} — the fold and the room disagree`);
       const idleHeads = extras();
       const idleIn = st.crowd?.in ?? -1;
       assert(st.crowd, 'the shipped loop left no crowd on the station at all — nothing calls stepCrowd');
@@ -1455,6 +1494,10 @@ export async function run({ check, assert }) {
       }
       const roars = (st.crowd.roars | 0) - before;
 
+      /* The day is asserted BEFORE the noise is, so a fold that moved under
+       * the check says so in one line instead of reporting a silent room. */
+      assert(st.day === day,
+        `the station turned over to day ${st.day} mid-race while this measured day ${day}`);
       assert(peak > 0.1, `${frames} frames of the shipped loop over a live race and the room's loudest `
         + `moment was ${peak.toFixed(3)} — it never reacted`);
       assert(roars >= 2, `the room roared ${roars} times in a whole race`);
@@ -1476,7 +1519,7 @@ export async function run({ check, assert }) {
         'the tote crowd is smaller than the gazetteer headcount it is meant to be adding to');
       assert(st.crowd.turned > 0, 'nobody in the room ever turned to look at the race');
 
-      out = `${frames} frames at §3.4's rate: ${roars} roars (${[...moments].join(', ')}), peak swell `
+      out = `${frames} frames at §3.4's rate on the station's own day ${day}: ${roars} roars (${[...moments].join(', ')}), peak swell `
         + `${peak.toFixed(3)}, loudest cue gain ${loudest.gain} shout ${loudest.shout} freq ${loudest.freq} Hz; `
         + `#${v.place} seated ${idleHeads} bodies past its own headcount between meets and ${heads} `
         + `with a card on (the tote's crowd went ${idleIn} → ${st.crowd.in})`;

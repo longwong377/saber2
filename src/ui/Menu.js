@@ -4239,8 +4239,28 @@ export class Menu {
     if (!cr || !br || !(br.height > 0)) return;
     const below = cr.bottom - (br.bottom - SCROLL_FADE);
     const above = (br.top + SCROLL_FADE) - cr.top;
-    if (below > 0) box.scrollTop += below;
-    else if (above > 0) box.scrollTop -= above;
+    /**
+     * ROUNDED UP, AND THAT IS THE WHOLE DIFFERENCE BETWEEN REVEALED AND
+     * ALMOST REVEALED.
+     *
+     * `scrollTop` is not a free-floating number: Chromium snaps a scroll
+     * offset to a physical pixel, so `scrollTop += 0.58` moves the column by
+     * ZERO and the card stays 0.58 px under the fade. Card heights here are
+     * fractional (35.66 px at 1280x720), so `below` almost always has a
+     * fraction, and whether the fraction survives the snap is a coin toss on
+     * where the list happens to sit — measured in Chromium at 1280x720:
+     * Commander Battle left at a residual of +0.55 px, Command at +0.58 px,
+     * both after a reveal that believed it had cleared the fade.
+     *
+     * Nothing about the mode list caused that and nothing about it fixed it:
+     * taking Training and the Sandbox off the list (V16 §A2) only moved every
+     * card below them by 86 px and changed which of them lands on a bad
+     * fraction. `lineseen.1` is the check that reads the residual, and the
+     * honest answer to a snap is to ask for the whole pixel — at most one
+     * extra pixel of scroll, against a 26 px fade.
+     */
+    if (below > 0) box.scrollTop += Math.ceil(below);
+    else if (above > 0) box.scrollTop -= Math.ceil(above);
     /**
      * …AND THE FADE HAS TO BE TOLD, because it is what this method scrolls
      * AROUND. The bottom gradient is painted by `.more` alone

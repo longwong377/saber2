@@ -602,12 +602,36 @@ export async function run({ check, assert }) {
     assert(/poseSaberArm\(p\.figure\.rig, p\.saber\)/.test(body),
       'the new hilt is placed by some other means than the one statement of how a hand holds one');
     assert(/previewContent\(/.test(body), 'a longer blade does not re-measure the shot');
-    // and every control that only changes the weapon uses it
+    /*
+     * AND EVERY CONTROL THAT ONLY CHANGES THE WEAPON USES IT.
+     *
+     * These patterns say "this control reaches _refreshPreview('saber')", not
+     * "this control is written on one line". The forge Length slider was a
+     * one-liner when this was written and stopped being one the moment it
+     * grew a second statement (it now also calls `hooks.onBladeLength`, which
+     * is what makes the blade live on the saber the player is holding) — a
+     * `[^\n]*` span turned that into a red with the weapon-only path fully
+     * intact, which is the check pinning the formatting instead of the
+     * behaviour. The span is now newline-crossing but fenced: it may not step
+     * over another `_slider(` registration, so a slider that dropped its
+     * handler cannot be covered by its neighbour's call.
+     */
     for (const [what, re] of [
-      ['the forge length slider', /'opt-bladelen'[^\n]*_refreshPreview\('saber'\)/],
-      ['the core width slider', /'opt-bladewidth'[^\n]*_refreshPreview\('saber'\)/],
+      ['the forge length slider', /'opt-bladelen'(?:(?!_slider\()[\s\S]){0,400}?_refreshPreview\('saber'\)/],
+      ['the core width slider', /'opt-bladewidth'(?:(?!_slider\()[\s\S]){0,400}?_refreshPreview\('saber'\)/],
       ['the hilt cards', /this\.s\.hiltStyle = h;[\s\S]{0,220}_refreshPreview\('saber'\)/],
-      ['the training length slider', /'opt-train-bladelen'[\s\S]{0,600}?_refreshPreview\('saber'\)/],
+      /*
+       * The Training panel registered `bladeLength` a second time, under
+       * `opt-train-bladelen`, and its handler was the one BOTH sliders fired.
+       * The panel was deleted; the id is now in no source file and no markup,
+       * so asserting it exists asserts a control back into being. The row is
+       * kept and made conditional instead of dropped: if the training slider
+       * ever returns it is held to the same weapon-only path from its first
+       * commit, and while it is absent there is nothing to hold.
+       */
+      ...(menu.includes('opt-train-bladelen')
+        ? [['the training length slider', /'opt-train-bladelen'(?:(?!_slider\()[\s\S]){0,600}?_refreshPreview\('saber'\)/]]
+        : []),
     ]) assert(re.test(menu), `${what} still rebuilds the whole figure`);
     return 'blade length, core width and hilt style re-forge the weapon only (2.7-11.7 ms against 73-234)';
   });
