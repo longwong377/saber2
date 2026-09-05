@@ -3051,6 +3051,9 @@ function endSortie(world, st, why = null) {
   leaveSeat(world);
   world._sortie = null;
   world._pilot = null;
+  /* The autopilot's own clock, so the NEXT sortie does not start half way to
+   * its ceiling — `seat.t` belongs to a seat that has just been thrown away. */
+  world._sortieT = 0;
   if (was) {
     keepFlight(world, flew(flightFold(world)));
     st.mine = null;

@@ -295,6 +295,215 @@ export async function run({ check, assert }) {
 
   /* ════════════════════════════════════════════════════════════════════════ */
 
+  check("co-op home: a guest's companion stands in their apartment on the other machine", async () => {
+    /**
+     * ══ LANE F'S OTHER HALF — *"visit your friend's apartment / SEE THEIR
+     *    COMPANION"* ═══════════════════════════════════════════════════════
+     *
+     * The apartment half has been driven since the lane landed. The animal
+     * half was not merely undrawn: `pad` was off the wire, so a guest's
+     * fixture did not exist on anybody else's machine, and `seatCompanion` is
+     * only ever reached through `dressPad`. A friend's cabin had a bare wall
+     * where their basket is.
+     *
+     * THE TRAP THIS CHECK IS BUILT AROUND, and it is the reason for the one
+     * strange line in the middle: `localStorage` is ONE store per process, so
+     * both simulated players read ONE Kennel. An animal appearing in the
+     * host's room on the guest's machine would prove nothing while that store
+     * still holds one. So the Kennel is EMPTIED before the guest's copy is
+     * dressed — after which the only thing on that machine that knows there is
+     * a tooka anywhere is the packet.
+     */
+    const C = await import('../../src/game/Coop.js');
+    const H = await import('../../src/game/Home.js');
+    const K = await import('../../src/game/Kennel.js');
+    const CK = await import('../../src/game/CompanionKinds.js');
+    const { packSnapshot } = await import('../../src/net/Net.js');
+    const THREE = await import('../../vendor/three/three.module.js');
+    const { clearStation } = await import('../../src/game/StationSave.js');
+    clearStation();
+    /* THE ONE KENNEL IN THE PROCESS IS BORROWED AND PUT BACK. The suite's
+     * checks run concurrently and there is one `localStorage` behind all of
+     * them, so a check that empties the roll and walks away has emptied
+     * somebody else's. */
+    const kennelWas = K.load();
+    K.clear();
+    const s = await coopStation(2);
+    try {
+      const host = s.host, guest = s.clients[0];
+      const hostId = host.net.peer.id;
+
+      /* WHAT THE WIRE COST BEFORE ANY OF THIS, measured rather than typed —
+       * every bound below is derived from these two numbers. */
+      const bare = JSON.stringify(C.packHome(host.world._home.state, 1)).length;
+      const snapBefore = JSON.stringify({ ...packSnapshot(host.world), e: [] }).length;
+
+      /* THE HOST'S ANIMAL. Eight runs and six acts of care is SEASONED — the
+       * third of four rungs — so "the right growth stage" has three wrong
+       * answers available and they are different SIZES: a fresh tooka builds
+       * at 0.340 and this one at 0.467. */
+      const rec = K.readOne({ id: 'coop-pet', kind: 'tooka', name: 'PIP',
+        runs: 8, meals: 3, grooms: 2, plays: 1 });
+      K.save({ ...K.blank(), live: rec });
+      const stage = CK.stageOf(rec);
+      assert(stage === 2, `the fixture animal is at stage ${stage} — this check wants a middle rung`);
+      assert(H.padSuit(rec.kind) === 'beast', `a ${rec.kind} is not what a basket is for`);
+
+      /* THE CHOICE, THROUGH THE SHIPPED VERB — `Home.setPad` is what the
+       * habitat presses, and it re-dresses the chooser's own room. */
+      H.setPad('basket', host.world);
+      assert(host.world._home.pad?.id === 'basket', 'the host has no basket in their own cabin');
+      assert(host.world._home.pad?.root, 'the host\'s own cabin seats nothing — nothing else can be true');
+      s.pump(0.8);
+
+      /* ══ WHAT IS ON THE WIRE, AND WHAT IT COST ═══════════════════════════ */
+      const msg = C.packHome(host.world._home.state, 1, H.homePetIdent());
+      const full = JSON.stringify(msg).length;
+      assert(msg.p === 'basket', `the packet's fixture is ${JSON.stringify(msg.p)}`);
+      assert(Array.isArray(msg.c) && msg.c[0] === 'tooka' && msg.c[1] === stage,
+        `the packet's animal is ${JSON.stringify(msg.c)}`);
+      assert(!('look' in msg) && !JSON.stringify(msg).includes('runs'),
+        'the packet carries the animal\'s record rather than its identity');
+
+      /**
+       * THE BOUND IS DERIVED FROM THE TABLES AND FROM THE PACKET THAT WAS
+       * MEASURED A MOMENT AGO, not typed: the widest thing these two fields
+       * can ever be is the longest `PADS` id and the longest kind id that fits
+       * on a fixture, at the top rung of the ladder. A typed 30 here would be
+       * a number nobody could re-derive the day a fixture is renamed.
+       */
+      const widestPad = H.PADS.map((q) => q.id).sort((a, b) => b.length - a.length)[0];
+      const widestKind = Object.keys(CK.COMPANION_KINDS).filter((k) => H.padSuit(k))
+        .sort((a, b) => b.length - a.length)[0];
+      const ceiling = JSON.stringify({ p: widestPad, c: [widestKind, CK.GROWTH_STAGES.length - 1] }).length - 2;
+      assert(full - bare <= ceiling,
+        `the fixture and the animal cost ${full - bare} B on top of ${bare} B, and the widest they `
+        + `can be is ${ceiling} B`);
+
+      /* AND THE SNAPSHOT DID NOT MOVE A BYTE. This is the fact the co-op lane
+       * bought at 2836 → 118 B and the one a companion in a room is most
+       * likely to undo: an animal that rode the 18 Hz record would be a body
+       * on the wire pretending to be a home. Enemy rows are emptied on both
+       * readings because they are whoever happens to be walking past. */
+      const snapAfter = JSON.stringify({ ...packSnapshot(host.world), e: [] }).length;
+      assert(snapAfter <= snapBefore,
+        `the snapshot grew from ${snapBefore} B to ${snapAfter} B when a companion appeared in a room`);
+      assert(!/tooka|basket/.test(JSON.stringify(packSnapshot(host.world))),
+        'the animal or the fixture is in the 18 Hz snapshot');
+
+      /* ══ THE FAR END ═════════════════════════════════════════════════════ */
+      const row = C.apartment(guest.world, hostId);
+      assert(row?.rec?.pad === 'basket', `the guest holds fixture ${JSON.stringify(row?.rec?.pad)}`);
+      assert(row.pet?.kind === 'tooka' && row.pet?.stage === stage,
+        `the guest holds animal ${JSON.stringify(row.pet)}`);
+      assert(CK.stageOf(row.pet) === stage,
+        `the stub the guest rebuilt reads as stage ${CK.stageOf(row.pet)} and ${stage} was sent`);
+      assert(Math.abs(CK.bodyScaleOf('tooka', row.pet) - CK.bodyScaleOf('tooka', rec)) < 1e-9,
+        `the rebuilt animal is ${CK.bodyScaleOf('tooka', row.pet).toFixed(4)} where the owner's is `
+        + `${CK.bodyScaleOf('tooka', rec).toFixed(4)} — the stage did not survive the wire`);
+      assert(Math.abs(CK.bodyScaleOf('tooka', row.pet) - CK.bodyScaleOf('tooka', H.cleanPet({ kind: 'tooka', stage: 0 }))) > 0.05,
+        'a fresh tooka and a seasoned one are the same size — this check cannot see a stage at all');
+
+      /* THE ONE KENNEL IN THE PROCESS, EMPTIED. Everything below this line is
+       * dressed on a machine that has no animal of its own. */
+      K.clear();
+      assert(K.load().live === null && H.homeCompanion() === null,
+        'the shared Kennel still holds an animal — the seating below could be a local read');
+      H.undressApartment(guest.world, row.h); row.h = null; row.drawn = -1;
+      assert(C.dressApartments(guest.world) === 1, 'the guest re-dressed no room');
+
+      const theirs = C.apartment(guest.world, hostId).h;
+      assert(theirs, 'the guest has no copy of the host\'s apartment');
+      /* WALK IN, and ask the question a co-op key asks. */
+      standAt(guest.world, theirs.spot, theirs.y);
+      assert(H.homeUnder(guest.world) === theirs && theirs.mine === false,
+        'the guest is not standing in the host\'s cabin');
+      assert(theirs.pad?.id === 'basket',
+        `the fixture in the friend's room is ${JSON.stringify(theirs.pad?.id)}`);
+
+      const root = theirs.pad.root;
+      assert(root, 'the fixture in a friend\'s apartment has nothing standing on it');
+      assert(theirs.pad.body?.rec?.kind === 'tooka',
+        `a ${theirs.pad.body?.rec?.kind} is standing on the host's basket`);
+      assert(theirs.pad.body.rec.stage === stage,
+        `it is at stage ${theirs.pad.body.rec.stage} and its owner's is at ${stage}`);
+      let meshes = 0;
+      root.updateMatrixWorld(true);
+      root.traverse((o) => { if (o.isMesh) meshes++; });
+      assert(meshes > 10, `the body in the friend's room is ${meshes} meshes — that is not an animal`);
+
+      /* ON THE FIXTURE, BY MEASUREMENT — the same millimetre `Home.js` holds
+       * its own seating to, on a body built from two fields off a wire. */
+      const box = new THREE.Box3().setFromObject(root);
+      const rest = theirs.y + theirs.pad.rest;
+      const lift = Math.abs(box.min.y - rest);
+      const plan = Math.hypot(root.position.x - theirs.pad.at.x, root.position.z - theirs.pad.at.z);
+      assert(lift < 0.001, `its feet are ${(lift * 1000).toFixed(1)} mm off the basket`);
+      assert(plan < 0.001, `it stands ${(plan * 1000).toFixed(1)} mm away from the basket in plan`);
+
+      /* AND IT IS IN THE ROOM'S OWN GROUP, so the cull switches it off with
+       * the door and `undressApartment` frees it with the dressing. */
+      assert(root.parent === theirs.group,
+        'the animal was added to the scene rather than to the apartment it lives in');
+      /* …AND THE GUEST'S OWN CABIN HAS NOTHING IN IT, which is the other half
+       * of "one animal per apartment, and it is that apartment's owner's". */
+      assert(!guest.world._home.pad?.root,
+        'the guest seated an animal in their own room out of somebody else\'s packet');
+
+      /* ══ AND A HOST WITH NO COMPANION SEATS NOTHING ══════════════════════
+       *
+       * The Kennel is still empty, so the host now publishes a fixture and no
+       * animal. The fixture must stay — it is a piece of furniture and it is
+       * theirs — and the basket must be EMPTY rather than holding whatever was
+       * on it last time, which is what a re-dress that kept the old body would
+       * look like.
+       */
+      assert(H.addPiece(host.world, 'crate'), 'the catalogue would not give up a crate');
+      H.movePiece(host.world, 2.0, 2.0);
+      assert(H.dropPiece(host.world), 'the crate would not go down');
+      s.pump(0.8);
+      const empty = C.packHome(host.world._home.state, 2, H.homePetIdent());
+      assert(empty.p === 'basket' && !('c' in empty),
+        `a host with no animal published ${JSON.stringify(empty.c)}`);
+      const after = C.apartment(guest.world, hostId);
+      assert(after.pet === null, `the guest still holds ${JSON.stringify(after.pet)} for a host with no animal`);
+      assert(after.h?.pad?.id === 'basket', 'the fixture went away with the animal');
+      assert(after.h.pad.root === null,
+        'a host with no companion still has one standing in their apartment');
+      assert(after.h.state.pieces.some((q) => q.k === 'crate'),
+        'the re-dress that emptied the basket did not carry the placement that caused it');
+
+      /* ══ AND A PACKET CANNOT PUT SOMETHING IMPOSSIBLE IN A BASKET ════════ */
+      const wire = (c, p = 'basket') => C.readHome({ t: 'home', seq: 5, a: C.HOST_ROOM,
+        s: ['dark', 'hull', 'strip'], f: [], p, c });
+      assert(wire(['blurrg', 3]).pet === null,
+        'a peer stood a 640 kg blurrg on a perch in somebody\'s living room');
+      assert(wire(['nonesuch', 1]).pet === null, 'a kind this build has never heard of was seated');
+      assert(wire(['tooka', 99]).pet.stage === CK.GROWTH_STAGES.length - 1,
+        'the growth ladder is not clamped on the way in');
+      assert(wire(['tooka', -4]).pet.stage === 0, 'a negative rung came through');
+      assert(wire(null).pet === null, 'a packet with no animal on it produced one');
+      assert(wire(['tooka', 2], 'nonsense').rec.pad === null,
+        'a fixture that is not on the table was taken');
+
+      return `the host chose a basket and a SEASONED tooka; ${full} B on the wire against ${bare} B `
+        + `without it (+${full - bare}, ceiling ${ceiling}) and the snapshot unmoved at ${snapAfter} B; `
+        + `with this process's only Kennel emptied the guest still dresses ${theirs.address} with a `
+        + `${theirs.pad.id} and a ${theirs.pad.body.rec.kind} at stage ${theirs.pad.body.rec.stage} `
+        + `standing on it — ${meshes} meshes, feet ${(lift * 1000).toFixed(2)} mm off the fixture and `
+        + `${(plan * 1000).toFixed(2)} mm off it in plan, scale `
+        + `${CK.bodyScaleOf('tooka', row.pet).toFixed(3)} against the owner's `
+        + `${CK.bodyScaleOf('tooka', rec).toFixed(3)}; a host with no animal seats nothing and keeps `
+        + `the basket`;
+    } finally {
+      K.save(kennelWas);
+      for (const nd of s.nodes) nd.world.dispose?.();
+      s.close();
+    }
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
   check('co-op home: a guest may look and may not write — at the key and on the wire', async () => {
     const C = await import('../../src/game/Coop.js');
     const H = await import('../../src/game/Home.js');

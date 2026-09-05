@@ -1931,9 +1931,10 @@ function stepHandlers(world, life) {
      * high quality: the world died on frame 98 the moment the first animal was
      * fielded. The fix is one line in that file — the `noAmbientHarm` test
      * belongs BELOW the null guard, not above it — and it is not this lane's
-     * to make. It reaches further than this file: the player is armed with the
-     * same tune and sprints at 7.45 m/s, so a sprint into a wall is the same
-     * throw on every level in the game.
+     * to make. Nor is it only this file's problem: `Player` and `DeckCast` arm
+     * their bodies with the same tune, so anything of theirs that clears the
+     * jostle floor against architecture takes the same throw. Disarming the
+     * animal is right on its own terms and is NOT a fix for that.
      */
     disarmKinetic(pet.body);
     pet.stationName = H.animal;

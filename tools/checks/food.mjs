@@ -1038,6 +1038,15 @@ export async function run({ check, assert, THREE }) {
       'a trooper walked into the fancy room');
     assert(B.grantLeave('republic', 'CT-1021', 999, at).refused[0]?.why === 'no such room',
       'a pass was written to a room that does not exist');
+    /* AND A MAN IN THE GLASS IS NOT IN A BAR. `Medbay.js` is mending him by the
+     * hour; a pass would take him out of `fieldable` and seat him nowhere —
+     * `onLeave` refuses to put a tank name in a room, so the board must refuse
+     * to write one. */
+    const ward = Co.load('republic');
+    ward.ward = { ...ward.ward, tanks: ['CT-1014', null, null, null, null] };
+    Co.save(ward);
+    assert(B.grantLeave('republic', 'CT-1014', open.id, at).refused[0]?.why === 'in the ward',
+      'a man in a bacta tank was granted an evening out');
 
     /* AND THE BERTHS RUN OUT, WHICH IS WHAT MAKES IT A CHOICE. A third of the
      * roll, `Bars.LEAVE_SHARE`'s own share — the same size evening the hash

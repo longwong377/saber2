@@ -632,8 +632,15 @@ export function grantLeave(army, who, bar, now = null) {
   }
   let out = (c.men || []).filter((m) => leaveOf(m)).length;
   const room = berths(c);
+  /* A MAN IN THE GLASS IS NOT IN A BAR — this file's own rule, stated in the
+   * header and enforced by `onLeave` for the seated crowd. It has to be
+   * enforced HERE as well or the board could write a pass the room would then
+   * refuse to seat: he would be out of `Company.fieldable`, out of the run,
+   * and standing in neither place. */
+  const inTank = new Set((c.ward?.tanks || []).filter(Boolean));
   for (const m of want) {
     if (leaveOf(m)) { refused.push({ designation: m.designation, why: 'already out' }); continue; }
+    if (inTank.has(m.designation)) { refused.push({ designation: m.designation, why: 'in the ward' }); continue; }
     if (!admits(b, m)) { refused.push({ designation: m.designation, why: 'not admitted' }); continue; }
     if (out >= room) { refused.push({ designation: m.designation, why: 'no berth' }); continue; }
     m.leave = { bar: b.id, since: at };
