@@ -975,7 +975,17 @@ export async function run({ check, assert }) {
       for (let i = 0; i < 60 * 40; i++) {
         stepStation(world, 1 / 60);
         world.player.position.set(bay.x, floorOf(bay) + 1, bay.z);
-        if (world._pilot) { sawCraft = world._pilot.craft; sawSpeed = Math.max(sawSpeed, world._pilot.speed); }
+        /**
+         * WHICHEVER OF THE TWO IS FLYING IT. A launch with a player on the
+         * deck now puts them IN the craft — `world._seat`, `Pilot.PlayerPilot`,
+         * six axes on the keys they already have — and `world._pilot` is the
+         * autopilot that flies a sortie nobody boarded. Both carry a
+         * `Starfury`, which is the whole of what this line is asking, and this
+         * check drives `stepStation` alone rather than a world's frame, so it
+         * is the seat's own hands-off path that answers here.
+         */
+        const flying = world._seat || world._pilot;
+        if (flying) { sawCraft = flying.craft; sawSpeed = Math.max(sawSpeed, flying.speed); }
         if (sawCraft && !world._flying && world._sortie?.done) break;
       }
     } finally { world.dispose?.(); }

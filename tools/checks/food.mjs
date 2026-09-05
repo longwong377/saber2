@@ -559,7 +559,7 @@ export async function run({ check, assert }) {
        */
       assert(busyAny / frames > 0.9,
         `${d.id} moved nothing at all on ${frames - busyAny} of ${frames} frames`);
-      assert(busy / frames > 0.35,
+      assert(busy / frames > 0.45,
         `${d.id} moved a piece of the stall on only ${busy} of ${frames} frames — a cook is not one busy frame`);
       /* AND NO FRAME CARRIES THE COOK. Measured across the table the worst
        * single frame is 1.7% of its own cook's travel; a piece that arrived
