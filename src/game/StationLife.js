@@ -460,6 +460,27 @@ function boxHas(p, x, z) {
   return Math.abs(dx * c - dz * sn) <= p.w / 2 && Math.abs(dx * sn + dz * c) <= p.d / 2;
 }
 
+/**
+ * FETCH THE COMPANION MACHINERY, AND NOT AT DRESS TIME.
+ *
+ * The first cut fired this from `dressStationLife` and MEASURED `cmp: false`
+ * for ever, with four bodies waiting for an animal and none built. The reason
+ * is the cycle this import exists to get round: `dressStation` runs inside
+ * `World.loadLevel`, which runs inside `Levels.js`'s own graph, and asking for
+ * `Companions.js` from in there asks for a module that is still being
+ * evaluated — so the promise rejects and the `catch` swallowed it silently.
+ *
+ * Asked from the STEP instead, every module in the graph is finished and it
+ * resolves. A failure is retried rather than latched, on a slow clock, because
+ * the one thing worse than an animal that arrives a second late is a station
+ * that decided on frame one it would never have any.
+ */
+function wantCompanions(life) {
+  if (life.cmp || life.cmpIn > 0) { life.cmpIn--; return; }
+  life.cmpIn = 120;
+  import('./Companions.js').then((m) => { life.cmp = m; }).catch(() => {});
+}
+
 /** A stub shorter than this is not a corridor anybody walks. */
 const SPAN_MIN = 8;
 
@@ -1092,7 +1113,7 @@ export function dressStationLife(world, st) {
      * already caps itself at one of those a frame for the reason written on
      * the cap. Draining one animal a frame puts the two under the same rule.
      */
-    cmp: null, wantPets: [],
+    cmp: null, cmpIn: 0, wantPets: [],
     reseatIn: 0,
     /** True until the first re-seat has run — see `dressStationLife`. */
     priming: true,
@@ -1131,9 +1152,6 @@ export function dressStationLife(world, st) {
     spawned: 0, despawned: 0,
   };
   world._stationLife = life;
-  /* The companion machinery, fetched off the import cycle. Resolved long
-   * before the first handler is drawn — the prime takes seven frames. */
-  import('./Companions.js').then((m) => { life.cmp = m; }).catch(() => {});
   /**
    * ══ FRIENDLY FIRE IS ON, AND IT IS THE WHOLE SANDBOX ═══════════════════
    *
@@ -1844,8 +1862,9 @@ const WALK_DROP = DROP_RADIUS;
  * exactly the same reason.
  */
 function stepHandlers(world, life) {
+  if (!life.wantPets.length) return false;
   const m = life.cmp;
-  if (!m || !life.wantPets.length) return false;
+  if (!m) { wantCompanions(life); return false; }
   /* ONE A FRAME. See `wantPets`. */
   const body = life.wantPets.shift();
   if (!body || body.disposed || body._stationAnimal || !life.live.has(`${body.stationPlace}:${body.stationSlot}`)) return false;
