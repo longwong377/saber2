@@ -322,6 +322,32 @@ export function kineticContact(other, c) {
    */
   if (victim && sameCreature(self, other, victim)) return;
 
+  /**
+   * ── NOBODY IS HURT ON THE CONCOURSE BY ACCIDENT ───────────────────────
+   *
+   * `jostle` above answers a SHOULDER. It cannot answer a shoulder that
+   * weighs 900 kg: the curve is `m·v²·k`, so an 80 kg resident at a walk
+   * reads 0.11 and a heavy body at the same walk reads 1.9, and the second
+   * one clears any floor low enough to let a charge through. Measured after
+   * `jostle` landed: 60 s of an idle deck 40 still took one resident to 74%
+   * of health, all of it from the heavy end of a crowd nobody was touching.
+   *
+   * Raising the floor to catch that would price a real charge at nothing, so
+   * the answer is not a bigger number — it is that the STATION IS NOT A
+   * BATTLEFIELD. `noAmbientHarm` is a property of the victim, the way
+   * `hurtsProps` is a property of the striker, and it says: this body may be
+   * hurt by somebody who MEANT it and by nothing else. An unauthored contact
+   * — a crowd, a door, a passing droid — passes through.
+   *
+   * It costs nothing the station wants. A crate you threw carries
+   * `hurledBy`, so `source` is set and the blow lands in full; a blade, a
+   * bolt and a blast never come through this file at all. What it removes is
+   * exactly the class §11's alarm was misreading, and it removes it at the
+   * source rather than teaching every reader downstream to discount it.
+   * There are no collapses on a station.
+   */
+  if (!source && victim.noAmbientHarm) return;
+
   // The world itself: architecture, a wall, the ground. Nothing to hurt, but
   // the thing that hit it can still break on it.
   if (!victim) { _selfDamage(self, tune, dmg, _pt, _dir); _thud(_pt, dmg); return; }

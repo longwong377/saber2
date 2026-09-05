@@ -3629,13 +3629,15 @@ function showLeave() {
     }).join('') + '</div>';
   }
 
-  html += '<div class="acts"><button class="care" data-do="slate">Read the Muster slate</button></div>';
+  html += '<div class="acts"><button class="care" data-do="slate">Read the Muster slate</button>'
+    + '<button class="care" data-do="leave">Leave</button></div>';
   el.innerHTML = html + '</div>';
 
   for (const btn of el.querySelectorAll('button.care')) {
     btn.addEventListener('click', () => {
       const d = btn.dataset;
       if (d.room) { leavePick = Number(d.room); showLeave(); return; }
+      if (d.do === 'leave') { screens.clear(); return; }
       if (d.do === 'slate') { closePane('leave'); openKiosk('muster'); return; }
       /* THE CLOCK IS HANDED IN AND NOT READ OFF THE STORE, because the world's
        * hour is the fractional one the station is actually keeping and

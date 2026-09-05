@@ -42,7 +42,7 @@ function foldSnapshot() {
   return out.sort().join('\n');
 }
 
-export async function run({ check, assert }) {
+export async function run({ check, assert, THREE }) {
   const { clocked } = await import('./_shared.mjs');
   check = await clocked(check);
 

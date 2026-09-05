@@ -40,15 +40,25 @@ function diskFetch() {
   };
 }
 
-/** The station, booted through the same door the game uses. */
-async function station(deck = 40) {
+/**
+ * The station, booted through the same door the game uses.
+ *
+ * `quality` IS A PARAMETER BECAUSE THE POOL IS A FUNCTION OF IT. `bootWorld`
+ * defaults every headless world to `low`, which is right for a check about
+ * geometry and wrong for one about POPULATION: §12.3 scales the live pool
+ * 30/45/60/60 across the tiers, so a clause counting bodies on a `low` world
+ * is measuring the smallest station the game ships and calling it the station.
+ * `Menu.DEFAULT_SETTINGS.quality` is `high`, which is what a player gets
+ * unless they say otherwise, and the clauses that count people say so.
+ */
+async function station(deck = 40, quality = null) {
   const { bootWorld, idleInput } = await import('./_coop.mjs');
   const { prepareStation, ROOM_FILES } = await import('../../src/game/Station.js');
   diskFetch();
   await prepareStation();
   const { world } = await bootWorld({
     level: 'station',
-    settings: { mode: 'station', level: 'station', allies: 0 },
+    settings: { mode: 'station', level: 'station', allies: 0, ...(quality ? { quality } : {}) },
     onWorld: (w) => { w._stationFloor = deck; },
   });
   return { world, idle: idleInput() };
@@ -547,7 +557,9 @@ export async function run({ check, assert, THREE }) {
      * pass the first three and delete the fixtures.
      */
     diskFetch();
-    const { world, idle } = await station(40);
+    /* THE TIER A PLAYER ACTUALLY GETS — see `station()`: the pool is 30 at
+     * `low` and 60 at `high`, and this clause counts bodies. */
+    const { world, idle } = await station(40, 'high');
     try {
       const life = world._stationLife;
       /**
@@ -858,7 +870,7 @@ export async function run({ check, assert, THREE }) {
      * same census slot.
      */
     diskFetch();
-    const { world, idle } = await station(40);
+    const { world, idle } = await station(40, 'high');
     try {
       const life = world._stationLife;
       const { wayPlacesOn, primeStationLife } = await import('../../src/game/StationLife.js');

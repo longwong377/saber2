@@ -1865,6 +1865,11 @@ export function dressKeepers(world, st) {
     body.team = world.player?.team ?? 0;
     body.stationResident = true;
     body.stationName = want.name || who.name;
+    /* A resident may be hurt by somebody who meant it, and by nothing else.
+     * See `Impact.kineticContact`'s note on `noAmbientHarm`: the station is
+     * not a battlefield, and an unauthored contact in a crowd was reading to
+     * §11's alarm as an assault. */
+    body.noAmbientHarm = true;
     body.stationRole = want.role || who.role;
     body.stationSpecies = who.species;
     body.stationFaction = who.faction;

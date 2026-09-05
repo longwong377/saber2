@@ -639,13 +639,24 @@ function destsOn(deck) {
 }
 
 /**
- * HOW FAR A WALK MAY BE. The ring is 537 m round and a walk is 1.35 m/s, so a
- * destination on the far side is six and a half minutes away — which is a
- * walker who never arrives anywhere the player can see it arrive. Between
- * fifteen and a hundred and thirty metres is thirty seconds to a minute and a
- * half, which is a crossing rather than an errand or a hike.
+ * ══ HOW FAR A WALK MAY BE, AND THE CULL RADIUS IS WHAT DECIDES IT ═════════
+ *
+ * The ring is 537 m round and a walk is 1.35 m/s, so a destination on the far
+ * side is six and a half minutes away. The first cut allowed up to 130 m and
+ * MEASURED as a walk nobody ever finished: deck 40, sixty seconds, median path
+ * 40.4 m and **zero arrivals**, because a body is dropped once it is
+ * `DROP_RADIUS` from the player and a walker starting inside the live radius
+ * has about forty metres of walking before that happens. Every journey was cut
+ * off in the middle.
+ *
+ * So a trip is sized against the radius the pool pays for and not against the
+ * ring: ten to forty-five metres is a crossing from one place to the next one
+ * along, which is what the between-space is FOR and what most walking on a
+ * concourse actually is. A walker then arrives, stands at the door a few
+ * seconds, and sets off somewhere else — two or three journeys inside the
+ * window a player is looking at it, rather than one third of one.
  */
-const TRIP = { near: 15, far: 130 };
+const TRIP = { near: 10, far: 45 };
 
 /**
  * WHICH PLACE, AND THE WEIGHT IS THE DESIRE LINE.
@@ -697,7 +708,7 @@ function pickDest(deck, hour, body) {
 /** How long somebody stands at the door they arrived at before setting off
  *  again. Long enough to read as an arrival, short enough that the corridor
  *  does not drain into the doorways over a minute. */
-const DWELL = { min: 3, span: 9 };
+const DWELL = { min: 3, span: 7 };
 
 /** Give a walker somewhere to be going, and the polyline to get there. */
 function setOut(deck, hour, body) {
@@ -1453,6 +1464,8 @@ function spawnResident(world, st, place, i) {
   body.stationResident = true;
   /* What the nameplate says when you look at them (§14). */
   body.stationName = r.name;
+  /* See `Impact.kineticContact`'s `noAmbientHarm`. */
+  body.noAmbientHarm = true;
   body.stationRole = r.role;
   body.stationSpecies = r.species;
   body.stationFaction = r.faction;
@@ -1853,6 +1866,8 @@ function stepHandlers(world, life) {
      * handler's own seed, so it is the same name in the corridor and on the
      * pit's card. */
     pet.stationName = H.animal;
+    /* An animal at heel is a resident too. */
+    pet.noAmbientHarm = true;
     pet.stationRole = `${H.kind} — ${H.who}'s`;
     pet.stationPlace = body.stationPlace;
     body._stationAnimal = pet;

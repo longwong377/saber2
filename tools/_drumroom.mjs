@@ -24,23 +24,30 @@ await page.waitForSelector('#menu:not(.hidden)', { timeout: 1500000 });
 await page.evaluate(() => window.SABER.enterStation());
 await page.waitForFunction(() => !!window.SABER.world?._station, null, { timeout: 1500000 });
 
+/* AN HOUR WHOSE NEXT TURN PAYS SOMEBODY, so the settle being proved is a
+ * PAYMENT and not only a loss. `drumAt` is pure, so this is knowable here. */
+const { drumTable, drumBets } = await import('../src/game/Casino.js');
+const { drumPays } = await import('../src/game/Games.js');
+let START = 9;
+for (let h = 0; h < 24; h++) if (drumTable((h + 1) % 24, 0).deck !== null) { START = h; break; }
+
 let bad = 0;
 const say = (ok, label, detail) => { if (!ok) bad++; console.log(`  ${ok ? '✓' : '✗'} ${label.padEnd(44)} ${detail}`); };
 
 /* ── 1. WALK TO #60 AND PRESS THE KEY, stepping the world by hand. */
-const up = await page.evaluate(() => {
+const up = await page.evaluate((START) => {
   const W = window.SABER, w = W.world;
   let row = null;
   for (const rec of w._station.places.values()) if (rec.place.id === 60) row = rec.place;
   if (!row) return { why: '#60 is not on this deck' };
-  w._station.hour = 9.2;                       // a known hour to bet from
+  w._station.hour = START + 0.2;               // an hour whose next turn pays
   w.player.position.set(row.x, w.player.position.y, row.z);
   W.input.touchHitSet.add('focus');
   w.update(1 / 60, W.input);                   // the frame the press is read on
   const el = document.getElementById('casino');
   return { why: null, state: W.screens.state, open: !!el && !el.classList.contains('hidden'),
     head: el?.querySelector('h2')?.textContent, hour: w._station.hour };
-});
+}, START);
 if (up.why) { say(false, 'the key raises the Wheelhouse', up.why); }
 else say(up.open && up.state === 'casino', 'the key raises the Wheelhouse',
   `${up.head} at hour ${up.hour.toFixed(2)}, screens.state=${up.state}`);
@@ -55,8 +62,6 @@ say(after > before && moved > 2 && moved < 4.5, 'the clock runs with the panel u
   `hour ${before.toFixed(4)} -> ${after.toFixed(4)} in 3.0 real s = ${moved.toFixed(2)} s of station time`);
 
 /* ── 3. PLACE A REAL BET on the row that will win the next turn. */
-const { drumTable, drumBets } = await import('../src/game/Casino.js');
-const { drumPays } = await import('../src/game/Games.js');
 const day = await page.evaluate(() => window.SABER.world._station.day ?? 0);
 const bet = await page.evaluate(() => {
   const W = window.SABER;

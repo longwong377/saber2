@@ -114,25 +114,49 @@ export async function run({ check, assert }) {
       + `alarm ${life.alarm.toFixed(1)}, ${life.guards.length} guards`;
   });
 
-  check('consequence: a jostle buys nothing and a charge still lands', async () => {
-    const { KINETIC_BODY, KINETIC, KINETIC_THROWN } = await import('../../src/game/Impact.js');
+  check('consequence: a jostle buys nothing and a heavy striker still lands', async () => {
+    const { KINETIC_BODY, KINETIC, KINETIC_THROWN, KINETIC_MIN_APPROACH } = await import('../../src/game/Impact.js');
     const { impactDamage } = await import('../../src/game/Combat.js');
-    const { KINETIC_MIN_APPROACH } = await import('../../src/game/Impact.js');
     assert(KINETIC_BODY.jostle > 0, 'KINETIC_BODY declares no jostle floor');
-    /* The two numbers are derived from the curve, not typed: what a walking
-     * body reads at the approach gate must be refused, and what it reads at a
-     * run must not. 80 kg is the mass the residents are built at. */
-    const MASS = 80;
-    const brush = impactDamage(MASS, KINETIC_MIN_APPROACH, KINETIC_BODY);
-    const charge = impactDamage(MASS, 4, KINETIC_BODY);
+    /**
+     * The curve is `m·v²·k`, and BOTH bounds are read off it rather than
+     * typed. The tuning note above `KINETIC_MIN_APPROACH` prices its example
+     * at "a walker reads 8.6 at 4 m/s" — that is the 900 kg WALKER, the
+     * vehicle, not a person walking, and reading it the other way is what
+     * this clause got wrong the first time it was written. A person is 80 kg
+     * and reads 0.77 at the same speed.
+     */
+    const PERSON = 80, WALKER = 900;
+    const brush = impactDamage(PERSON, KINETIC_MIN_APPROACH, KINETIC_BODY);
+    const heavy = impactDamage(WALKER, 4, KINETIC_BODY);
     assert(brush < KINETIC_BODY.jostle,
-      `a body at the approach gate reads ${brush.toFixed(2)}, which the jostle floor of ${KINETIC_BODY.jostle} lets through`);
-    assert(charge > KINETIC_BODY.jostle,
-      `a body at 4 m/s reads ${charge.toFixed(2)} and the jostle floor of ${KINETIC_BODY.jostle} eats it`);
+      `a person at the approach gate reads ${brush.toFixed(2)}, which the floor of ${KINETIC_BODY.jostle} lets through`);
+    assert(heavy > KINETIC_BODY.jostle,
+      `a 900 kg walker at 4 m/s reads ${heavy.toFixed(2)} and the floor of ${KINETIC_BODY.jostle} eats it`);
     /* It is on the body tune ALONE. A crate is not a shoulder, and a thrown
      * thing has KINETIC_THROWN's floor of 8 precisely because you meant it. */
     assert(!KINETIC.jostle, 'the crate tune grew a jostle floor — a dropped crate is not a shoulder brush');
     assert(!KINETIC_THROWN.jostle, 'the throw tune grew a jostle floor — a throw is an act, not a contact');
-    return `brush ${brush.toFixed(2)} refused, charge ${charge.toFixed(2)} lands, floor ${KINETIC_BODY.jostle}`;
+    return `person-brush ${brush.toFixed(2)} refused, 900 kg walker ${heavy.toFixed(2)} lands, floor ${KINETIC_BODY.jostle}`;
+  });
+
+  check('consequence: a resident is hurt by somebody who meant it, and nothing else', async () => {
+    const { idleInput } = await import('./_coop.mjs');
+    const world = await station(40);
+    const input = idleInput();
+    for (let f = 0; f < 60 * 6; f++) world.update(1 / 60, input);
+    const res = world.enemies.filter((e) => e.stationName);
+    assert(res.length > 4, `only ${res.length} residents — this proves nothing`);
+    assert(res.every((e) => e.noAmbientHarm === true),
+      'a station resident is not marked noAmbientHarm, so a crowd can still bill it');
+    const one = res[0];
+    const before = one.hp;
+    /* Unauthored — a crowd, a door, a passing droid. It must pass through. */
+    one.damage(12, one.position.clone(), null, 'force');
+    assert(one.hp === before, `an unauthored contact took ${(before - one.hp).toFixed(1)} off a resident`);
+    /* Authored — a hand that meant it. It must land in full. */
+    one.damage(12, one.position.clone(), world.player, 'force');
+    assert(one.hp < before, 'a blow the player meant did not land on a resident');
+    return `unauthored 12 -> no change at ${before.toFixed(0)} hp; the player's 12 -> ${one.hp.toFixed(0)} hp`;
   });
 }

@@ -47,7 +47,7 @@ world._cook = set;
 
 const names = [...Object.keys(set.parts), 'steam0'];
 const meshOf = (n) => (n === 'steam0' ? set.puffs[0] : set.parts[n]);
-const prev = new Map(), total = new Map(), maxv = new Map();
+const prev = new Map(), total = new Map(), maxv = new Map(), seen = new Map();
 const snap = () => {
   world.scene.updateMatrixWorld(true);
   for (const n of names) {
@@ -55,12 +55,13 @@ const snap = () => {
     if (!m) continue;
     const p = new THREE.Vector3().setFromMatrixPosition(m.matrixWorld);
     const q = prev.get(n);
-    if (q) {
+    if (q && m.visible && seen.get(n)) {
       const d = p.distanceTo(q);
       total.set(n, (total.get(n) || 0) + d);
       maxv.set(n, Math.max(maxv.get(n) || 0, d));
     }
     prev.set(n, p);
+    seen.set(n, m.visible);
   }
 };
 const rig = keeper.body.rig;
@@ -123,20 +124,26 @@ const bench = (label, n, fn) => {
   return ms;
 };
 const mk = () => new CookSet(world, counter, new Food.Cook(row, { say: () => {}, done: () => {} }), Food.prepOf(row).id);
-const A = bench('world.update, no cook  ', 400, () => world.update(dt, idle));
-/* one set, never allowed to finish, so this is the STEADY cost and not the
- * build */
+const run = (n, fn) => { const t0 = process.cpuUsage(); for (let i = 0; i < n; i++) fn(); const c = process.cpuUsage(t0); return (c.user + c.system) / 1000 / n; };
 const held = mk();
-world._cook = held;
-const B = bench('world.update, cooking  ', 400, () => {
+const cooking = () => {
   held.done = false; held.cook.done = false;
   if (held.cook.i >= held.cook.steps.length - 1) { held.cook.i = 0; held.cook.t = 0; held.cook._said = -1; }
   world._cook = held;
   world.update(dt, idle);
-});
+};
+const idleFrame = () => { world._cook = null; world.update(dt, idle); };
+for (let i = 0; i < 6; i++) { idleFrame(); cooking(); }
+const As = [], Bs = [];
+for (let i = 0; i < 8; i++) { As.push(run(120, idleFrame)); Bs.push(run(120, cooking)); }
+const med = (a) => a.slice().sort((x, y) => x - y)[a.length >> 1];
+console.log(`# world.update, no cook : median ${med(As).toFixed(3)} ms/frame over 8 x 120`);
+console.log(`# world.update, cooking : median ${med(Bs).toFixed(3)} ms/frame over 8 x 120`);
+console.log(`# the cook costs ${((med(Bs) - med(As)) * 1000).toFixed(0)} us on a steady frame (medians)`);
+const C = run(4000, () => { held.done = false; held.cook.done = false; if (held.cook.i >= held.cook.steps.length - 1) { held.cook.i = 0; held.cook.t = 0; held.cook._said = -1; } held.step(dt); });
+console.log(`# CookSet.step alone: ${(C * 1000).toFixed(0)} us/frame over 4000`);
 held.dispose();
 world._cook = null;
-console.log(`# the cook costs ${((B - A) * 1000).toFixed(0)} us on a steady frame`);
 const t0 = process.cpuUsage();
 const N = 40;
 for (let i = 0; i < N; i++) { const s2 = mk(); s2.dispose(); }
