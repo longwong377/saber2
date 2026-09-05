@@ -558,8 +558,30 @@ export async function run({ check, assert }) {
       assert(stationKey(world) === true, 'the certified press was not spent');
       assert(world._sortie && !world._sortie.done, 'the press did not start a sortie');
 
-      let frames = 0, outAt = -1, home = -1;
+      /**
+       * ══ AND THIS ROUND TRIP IS THE STATION'S, NOT THE PLAYER'S ═════════
+       *
+       * `stepStation` is the station's own half of a frame and `Player.update`
+       * is the other half — this check drives only the first, deliberately,
+       * because what it is measuring is that going outside RE-DRESSES NOTHING.
+       * But that means `PlayerPilot.update` never runs, `seat.tick` is never
+       * set, and `stepSortie` flies the craft with `autoStep`: the lap below
+       * is the autopilot's.
+       *
+       * That was the whole suite's round trip for a while, and a player at the
+       * stick got a quarter of a lap and a tow with nothing red. THE PLAYER'S
+       * ROUND TRIP IS `starfury.mjs`'s — flown by hand through the six axes,
+       * with `tick` counted on every frame and `autoStep` asserted to have run
+       * on none. This one says out loud which of the two it is, and asserts
+       * it, so the pair cannot quietly become one check again.
+       */
+      let frames = 0, outAt = -1, home = -1, autos = 0, seatSeen = null;
       while (frames < 60 * 40) {
+        if (!seatSeen && world._seat) {
+          seatSeen = world._seat;
+          const auto = seatSeen.autoStep.bind(seatSeen);
+          seatSeen.autoStep = (adt) => { autos++; return auto(adt); };
+        }
         stepStation(world, 1 / 60);
         stand();
         frames++;
@@ -568,6 +590,9 @@ export async function run({ check, assert }) {
       }
       assert(outAt > 0, 'the launch never put the player outside');
       assert(home > outAt, 'the sortie never came home on its own');
+      assert(!seatSeen || autos > 0,
+        'a seat driven with no player tick was never flown by the station — `stepSortie` '
+        + 'left the craft frozen at the mouth, which is what `autoStep` exists to answer');
       assert(world._station === st, 'the world was re-dressed to go outside — that is a load');
       assert(world.props.length === props, `props went ${props} → ${world.props.length} across a sortie`);
       assert(st.places.size === places, `places went ${places} → ${st.places.size} across a sortie`);

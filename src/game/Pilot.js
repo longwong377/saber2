@@ -133,6 +133,51 @@ function turnRadius(u, window = WINDOW) {
 const capped = (v, m) => (norm(v) > m ? scale(unit(v), m) : v);
 
 /**
+ * ══ THE ONE PLACE A DEMAND IS HANDED TO THE AIRFRAME ══════════════════════
+ *
+ * ── THE DEFECT, AND IT IS THE ONE THAT STOPPED THE LAP CLOSING ────────────
+ *
+ * `Starfury.allocate` opens each thruster at `lin + rot` — how well it serves
+ * the commanded translation plus how well it serves the commanded rotation,
+ * clamped into 0..1 — and it is right to. But the four MAINS are the only
+ * thrusters on this airframe with any pitch or yaw authority at all (the
+ * lateral and vertical nozzles fire through the centre of mass and make no
+ * torque), and a main's `lin` against an AFT demand is −1. Measured:
+ *
+ *     allocate([0, 0, −1], [0, −1, 0])  →  retro 1.00, mains 0.00 × 4
+ *
+ * Full stick, and every nozzle that could have answered it is held shut by the
+ * throttle hand. **A pilot asking to slow down has no attitude control at all
+ * for as long as they ask**, and the craft that most needs to turn round — one
+ * that has run off the line, whose whole demand is astern — is the one that
+ * can never do it. That is finding (3): held throttle, then a stick that could
+ * not bring it back; 53 km out at two and a half minutes with `u` frozen at
+ * 0.21, ending at `SORTIE_CEILING` every time.
+ *
+ * ── AND THE FIX IS NOT A SECOND FLIGHT MODEL ──────────────────────────────
+ *
+ * There is exactly ONE thruster on the ship that answers an aft demand — the
+ * retro, `rcs_retro`, 8.4 kN — and nothing competes with it: its own torque is
+ * zero (it is on the centreline), so `rot` never opens it and no other nozzle
+ * points that way. So the aft component is taken OUT of the vector handed to
+ * the allocator and put straight onto that one nozzle. Every other thruster
+ * allocates exactly as it did; the sum, the partial satisfaction and the
+ * clamp are untouched. What changes is only that asking for the retro no
+ * longer commands the mains SHUT.
+ *
+ * The airframe is still honest about what it can do: there is no reverse
+ * engine, holding the aft key gets you 0.57 m/s² and the way to actually stop
+ * is still to turn round and light the mains — which is now a manoeuvre the
+ * pilot can fly, because the stick still works while they are doing it.
+ */
+function command(craft, translate, rotate, throttles) {
+  const aft = Math.max(0, Math.min(1, -translate[2]));
+  craft.allocate([translate[0], translate[1], Math.max(0, translate[2])], rotate, throttles);
+  if (aft > 0) throttles.set('rcs_retro', Math.max(throttles.get('rcs_retro') || 0, aft));
+  return throttles;
+}
+
+/**
  * ══ ONE CRAFT, FLYING ONE CIRCUIT ═════════════════════════════════════════
  *
  * `u` is where on the track the craft IS — the nearest point, searched
@@ -223,14 +268,12 @@ export class CircuitPilot {
   step(dt) {
     if (!(dt > 0)) return this.u;
     const craft = this.craft;
-    const next = projectOnto(craft.position, this.u);
     /* Distance round the loop, accumulated from the wrapped step rather than
      * read off `u` — `u` is a position and 0.99 → 0.01 is a metre of travel,
      * not a lap gone backwards. `lap` is what the sortie's recovery waits on,
-     * so getting this wrong is a player who never comes home. */
-    this.travelled += wrapU(next - this.u);
-    this.u = ((next % 1) + 1) % 1;
-    while (this.travelled >= 1) { this.travelled -= 1; this.lap++; }
+     * so getting this wrong is a player who never comes home. `advanceOn` is
+     * the one copy of that, and of the re-acquisition under it. */
+    advanceOn(this, craft.position);
 
     guideRound(craft, this.u, dt, this.throttles);
     return this.u;
@@ -251,15 +294,76 @@ export class CircuitPilot {
  * is how the two would come to disagree about which lap they were on.
  */
 export function projectOnto(position, from) {
+  return scan(position, from, -8, 40, 3).u;
+}
+
+/**
+ * ══ AND A CRAFT THAT IS NOWHERE NEAR THE LINE FINDS IT AGAIN ══════════════
+ *
+ * ── THE DEFECT THIS EXISTS FOR ────────────────────────────────────────────
+ *
+ * The window above is 120 m ahead and 24 m behind, which is exactly right for
+ * a craft ON the track and is a TRAP for one that is not. An autopilot is
+ * never off the line, so nothing found this until a player was: fly straight
+ * out for ten seconds and the nearest point of the circuit is half a lap from
+ * where the window is looking, so `u` freezes — measured, at 0.21 — and it
+ * freezes for good. Every sight is named off `u`, the lap counter is fed off
+ * `u`, and the recovery waits on the lap. A player who left the line could not
+ * finish the sortie by flying, only by pressing the drive key or waiting out
+ * the four-minute ceiling.
+ *
+ * So when the local window's answer is more than `OFF_TRACK` away, the whole
+ * circuit is searched — coarse, then refined — and the craft is re-acquired
+ * wherever it actually is. It costs 133 samples on the frames a ship is lost
+ * and nothing at all on the frames it is not.
+ *
+ * `LAP` FRAUD IS THE THING THIS MUST NOT INTRODUCE, and `advanceOn` is where
+ * that is answered: a re-acquisition credits NO distance travelled. You are
+ * given back your place on the track; you are not given the piece of it you
+ * flew round the outside of.
+ */
+export const OFF_TRACK = 150;
+
+/** One sweep of the track: `n0`..`n1` steps of `step` metres from `from`. */
+function scan(position, from, n0, n1, step) {
   let best = from, bd = Infinity;
   const [x, y, z] = position;
-  for (let k = -8; k <= 40; k++) {
-    const u = from + k * (3 / CIRCUIT_LENGTH);
+  for (let k = n0; k <= n1; k++) {
+    const u = from + k * (step / CIRCUIT_LENGTH);
     const p = sample(u);
     const d = (p.x - x) ** 2 + (p.y - y) ** 2 + (p.z - z) ** 2;
     if (d < bd) { bd = d; best = u; }
   }
-  return best;
+  return { u: best, d: Math.sqrt(bd) };
+}
+
+/** The nearest point of the WHOLE circuit, coarse then fine. */
+export function reacquire(position) {
+  const coarse = scan(position, 0, 0, 131, CIRCUIT_LENGTH / 132);
+  return scan(position, coarse.u, -5, 5, CIRCUIT_LENGTH / 132 / 5);
+}
+
+/**
+ * Where the craft has got to, and how much of the loop that is worth. Shared
+ * by both pilots for `projectOnto`'s own reason: two copies of a search with
+ * this many opinions in it is how the two come to disagree about which lap
+ * they are on.
+ *
+ * `state` is `{ u, travelled, lap }` — a `CircuitPilot` or a `PlayerPilot`.
+ */
+function advanceOn(state, position) {
+  const local = scan(position, state.u, -8, 40, 3);
+  let next = local.u, credit = true;
+  if (local.d > OFF_TRACK) {
+    const far = reacquire(position);
+    /* Only if it is genuinely a better answer — a metre of slack so a craft
+     * hovering at the threshold does not flicker between the two. */
+    if (far.d < local.d - 1) { next = far.u; credit = false; }
+  }
+  if (credit) state.travelled += wrapU(next - state.u);
+  state.u = ((next % 1) + 1) % 1;
+  while (state.travelled >= 1) { state.travelled -= 1; state.lap++; }
+  return state.u;
 }
 
 /**
@@ -290,7 +394,26 @@ export function guideRound(craft, u, dt, throttles) {
    */
   const off = sub(craft.position, aim);
   const lateral = sub(off, scale(T, dot(off, T)));
-  const want = sub(scale(T, hold), scale(lateral, CROSS));
+  /**
+   * AND THE PULL BACK ONTO THE LINE IS WHAT THE SHIP CAN STOP FROM.
+   *
+   * `CROSS · lateral` is a spring, and a spring has no idea how far away it
+   * is: measured from 8 km off the track it asked for **4 000 m/s** of closing
+   * speed, the craft did what it was told, arrived at 500 m/s, could not stop,
+   * and flew out the other side — a phugoid that was still swinging at the
+   * ceiling. It never showed on the circuit because a craft ON the line is
+   * never more than about 70 m off it and the spring is the smaller of the two
+   * terms there (35 m/s against 47), so this changes NOTHING about the flown
+   * lap: 21.9 s and 29.9 m of worst clearance, before and after.
+   *
+   * Past 125 m the braking law takes over — `sqrt(2 · aMax · d · MARGIN)` is
+   * the speed a ship with `aMax` can still shed in `d` metres — and a craft
+   * that has run right off the circuit closes on it as fast as it can stop,
+   * which is the difference between coming home and swinging past.
+   */
+  const d = norm(lateral);
+  const pull = Math.min(CROSS * d, Math.sqrt(2 * aMax * d * MARGIN));
+  const want = sub(scale(T, hold), d > 1e-6 ? scale(lateral, pull / d) : lateral);
   const accel = capped(scale(sub(want, craft.velocity), 1 / TAU), aMax);
 
   /**
@@ -302,10 +425,32 @@ export function guideRound(craft, u, dt, throttles) {
    * what the source calls normal operation.
    */
   const dir = norm(accel) > 1e-6 ? unit(accel) : unit(craft.velocity);
-  const axisBody = craft.worldToBody(cross(craft.forward, dir));
+  /**
+   * ══ AND THE TURN HAS A SINGULARITY AT A HUNDRED AND EIGHTY DEGREES ══════
+   *
+   * `cross(nose, dir)` is the axis that swings the nose onto the burn, and it
+   * is ZERO both when the craft already points at it AND when it points
+   * EXACTLY AWAY from it — which is not a corner case out here, it is the
+   * commonest attitude there is: a craft that has run off the line is flying
+   * straight down its own nose and everything it needs to do is behind it.
+   *
+   * MEASURED, with `command` below already in place: a craft 2 km off the
+   * track at 281 m/s, demanding an acceleration dead astern, computed an axis
+   * of nought, never rolled a degree, and coasted — 53 KILOMETRES out at the
+   * two-and-a-half-minute mark with the track parameter frozen at `u = 0.21`
+   * the whole way. It could only ever end at `SORTIE_CEILING`.
+   * `PlayerPilot.update`'s kill-velocity brake already carried this exact rule
+   * and this law did not, so the one manoeuvre that gets a lost ship home was
+   * the one manoeuvre neither pilot could fly.
+   *
+   * Started over the top, pitch rather than yaw, for no reason but that a
+   * pilot pulls — the same choice, and the same three lines, as the brake.
+   */
+  let axisBody = craft.worldToBody(cross(craft.forward, dir));
+  if (norm(axisBody) < 1e-3 && dot(craft.forward, dir) < 0) axisBody = [1, 0, 0];
   const spin = capped(sub(scale(axisBody, K_POINT), scale(craft.angularVelocity, K_RATE)), 1);
 
-  craft.allocate(scale(craft.worldToBody(accel), 1 / aMax), spin, throttles);
+  command(craft, scale(craft.worldToBody(accel), 1 / aMax), spin, throttles);
   craft.step(dt, throttles);
   return craft;
 }
@@ -401,6 +546,33 @@ export const STICK = Object.freeze({
 export const TRAP = Object.freeze({ r: 120, v: 90 });
 
 /**
+ * ══ THE AIRFRAME TAKES THE BLOWS, AND IT CAN LOSE ═════════════════════════
+ *
+ * `Player.damage`'s driving branch is one line and its note is the argument:
+ * *"a man inside a tank is not shot at — the tank is"*. It reached for
+ * `this.driving.vehicle`, which is `Driving.Crew`'s field and is the hull it
+ * displaced a crew out of. A Starfury has no `Enemy` behind it — the seat IS
+ * the machine — so that line threw on every blow that reached a seated pilot
+ * and took the frame with it. Measured: one 20-point blast, seated, and
+ * `Player.update` never returned.
+ *
+ * Fixing the throw alone would have made a pilot IMMORTAL, which was the
+ * second half of the same finding: `Player.die` has exactly one production
+ * caller and it is below that branch, so `landPlayer`'s dead-pilot path — the
+ * whole of the recovery a killed pilot gets — was reachable only by a check
+ * calling `die()` by hand. So the airframe is a hull with a number on it: it
+ * takes what the pilot would have taken, and when it is finished the pilot
+ * does not walk away from it, because there is no ground out there to be put
+ * down on.
+ *
+ * `hull` is the airframe's own number and not a share of the player's health,
+ * for `Driving.DRIVE.wreck`'s reason in reverse: a fighter is not a bigger
+ * man. A body is 100 and this is three of them — enough that a hit is a
+ * problem and not a death, few enough that the gauge means something.
+ */
+export const AIRFRAME = Object.freeze({ hull: 300 });
+
+/**
  * A seat in a Starfury.
  *
  * Held on the player as `player.driving`, which is `Driving.Crew`'s contract
@@ -442,6 +614,9 @@ export class PlayerPilot {
     this.killingRotation = false;
     this.killingVelocity = false;
     this.left = false;
+    /** What the airframe has left, and what it started with. See `damage`. */
+    this.maxHull = AIRFRAME.hull;
+    this.hull = AIRFRAME.hull;
 
     /* THE LAUNCH IS THE DRUM'S THROW — `CircuitPilot`'s own arrangement, and
      * the same three lines, because a player and an autopilot leave the same
@@ -463,6 +638,10 @@ export class PlayerPilot {
   get progress() { return this.u; }
 
   get speed() { return this.craft.speed; }
+
+  /** What the pilot is sitting in, for anything that names the machine —
+   *  `HUD._drivePrompt` reads it where a tank's is `vehicle.A.label`. */
+  get label() { return 'Aurora Starfury'; }
 
   get clearance() {
     const [x, y, z] = this.craft.position;
@@ -613,7 +792,7 @@ export class PlayerPilot {
       }
     }
 
-    this.craft.allocate(translate, rotate, this.throttles);
+    command(this.craft, translate, rotate, this.throttles);
     this.craft.step(dt, this.throttles);
 
     /* ── where that put it on the circuit ─────────────────────────────── */
@@ -654,12 +833,8 @@ export class PlayerPilot {
    *  `lastU` is kept because the station names the sights off the STEP — a
    *  sight is a thing you go past, not a thing you are near. */
   _advance() {
-    const next = projectOnto(this.craft.position, this.u);
     this.lastU = this.u;
-    this.travelled += wrapU(next - this.u);
-    this.u = ((next % 1) + 1) % 1;
-    while (this.travelled >= 1) { this.travelled -= 1; this.lap++; }
-    return this.u;
+    return advanceOn(this, this.craft.position);
   }
 
   /**
@@ -741,6 +916,42 @@ export class PlayerPilot {
   }
 
   /**
+   * ══ WHAT HITS THE PILOT HITS THE SHIP ═════════════════════════════════
+   *
+   * `Player.damage`'s driving branch calls this — `Driving.Crew` hands the
+   * blow to `vehicle`, and a seat that is its own machine takes it here. The
+   * signature is `Enemy.damage`'s so the branch does not have to know which
+   * kind of seat it is holding.
+   *
+   * A FINISHED AIRFRAME KILLS THE PILOT rather than putting them out, and that
+   * is the one line where a cockpit differs from a cupola: `Crew.update` sets
+   * a driver down beside a wreck because there is a floor under it. Out here
+   * there is nothing under it, so this goes through `Player.die` — which calls
+   * `leave` on its own way through, restores the body and the rig, and hands
+   * the empty seat to `landPlayer`, whose dead-pilot branch ends the sortie on
+   * the player's own tick with the station's director already stopped.
+   *
+   * `die` is not called twice: it returns immediately on a body already dead,
+   * and `leave` is idempotent.
+   */
+  damage(amount, point, source, kind) {
+    if (this.left) return false;
+    const dmg = Number(amount);
+    /* A non-finite blow poisons the hull the way `Player.damage`'s own guard
+     * says it poisons hp: every later `hull <= 0` is false and the airframe is
+     * immortal with a blank gauge. Refuse it instead. */
+    if (!Number.isFinite(dmg) || dmg <= 0) return false;
+    this.hull = Math.max(0, this.hull - dmg);
+    if (this.hull > 0) return false;
+    this.say?.('COBRA BAY', 'The airframe is gone.');
+    this.player?.die?.(source);
+    /* A player with no `die` — a peer's body, a stub — still gets out of a
+     * fighter that no longer exists. */
+    if (!this.left) this.leave('the airframe came apart');
+    return true;
+  }
+
+  /**
    * ══ OUT, AND IT IS THE ONLY WAY OUT ═══════════════════════════════════
    *
    * Idempotent, and it puts back every field it borrowed. Called by the drive
@@ -758,6 +969,11 @@ export class PlayerPilot {
     const p = this.player;
     if (this.left) return false;
     this.left = true;
+    /* THE BAY IS TOLD WHAT HAPPENED. `Player.die` calls this with no reason —
+     * it is a corpse's exit and knows nothing about airframes — so a hull that
+     * was shot out from under the pilot says so here rather than being reported
+     * as the routine recovery `landPlayer` falls back to. */
+    if (!why && this.hull <= 0) why = 'the airframe came apart — the bay recovered what was left';
     if (p) {
       if (p.driving === this) p.driving = null;
       p.velocity.set(0, 0, 0);

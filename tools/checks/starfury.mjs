@@ -97,6 +97,61 @@ function stick() {
   };
 }
 
+/**
+ * ══ A HAND ON THE STICK, AND IT IS ONLY A HAND ════════════════════════════
+ *
+ * `flyRound` decides what to ASK FOR and then asks for it THROUGH THE SIX
+ * AXES — the move axis, the mouse and the two keys — and nothing else. It
+ * never touches `craft.velocity`, never calls `allocate`, never calls
+ * `guideRound`. Everything between the stick and the ship is the game's.
+ *
+ * The aiming law is deliberately the same one `Pilot.guideRound` flies, and
+ * that is not a second copy of the model: what is under test here is not
+ * whether the law is good, it is that A PLAYER CAN EXPRESS IT — that six axes
+ * and a mouse are enough authority to get round the station, that
+ * `Player.update` really runs the seat, and that the track parameter, the lap
+ * counter and the recovery all answer a craft somebody is flying.
+ *
+ * ── WHY THIS EXISTS ───────────────────────────────────────────────────────
+ *
+ * The suite's only round trip was `flightops.mjs`'s, and it drives
+ * `stepStation` directly — which never runs `Player.update`, so `seat.tick` is
+ * never set and `stepSortie` hands the craft to `autoStep`. THE CERTIFIED
+ * ROUND TRIP WAS THE AUTOPILOT'S. A player at the stick got a quarter of a lap
+ * and a tow, and nothing was red.
+ */
+function flyRound(seat, input, mod) {
+  const { V, sample, CIRCUIT_LENGTH, STICK } = mod;
+  const { sub, scale, dot, cross, norm, unit } = V;
+  const P = (q) => [q.x, q.y, q.z];
+  const craft = seat.craft;
+  const at = seat.u + 80 / CIRCUIT_LENGTH;
+  const aim = P(sample(at));
+  const T = unit(sub(P(sample(at + 0.001)), P(sample(at - 0.001))));
+  const aMax = craft.maxLinearAccel();
+  const cap = (v, m) => (norm(v) > m ? scale(unit(v), m) : v);
+  const clamp1 = (v) => (v < -1 ? -1 : v > 1 ? 1 : v);
+  const off = sub(craft.position, aim);
+  const lateral = sub(off, scale(T, dot(off, T)));
+  const d = norm(lateral);
+  const pull = Math.min(0.5 * d, Math.sqrt(2 * aMax * d * 0.85));
+  const want = sub(scale(T, 45), d > 1e-6 ? scale(lateral, pull / d) : lateral);
+  const accel = cap(scale(sub(want, craft.velocity), 4), aMax);
+  const dir = norm(accel) > 1e-6 ? unit(accel) : unit(craft.velocity);
+  let axisBody = craft.worldToBody(cross(craft.forward, dir));
+  if (norm(axisBody) < 1e-3 && dot(craft.forward, dir) < 0) axisBody = [1, 0, 0];
+  const spin = cap(sub(scale(axisBody, 12), scale(craft.angularVelocity, 3)), 1);
+  /* …and out through the keys, the mouse and the move axis. */
+  input.mouse.dy = spin[0] / STICK.mouse;
+  input.mouse.dx = spin[1] / STICK.mouse;
+  const body = craft.worldToBody(scale(accel, 1 / aMax));
+  input.ax.y = clamp1(body[2]);
+  input.ax.x = clamp1(body[0]);
+  input.held.delete('jump'); input.held.delete('crouch');
+  if (body[1] > 0.05) input.held.add('jump');
+  else if (body[1] < -0.05) input.held.add('crouch');
+}
+
 export async function run({ check, assert }) {
   const { clocked } = await import('./_shared.mjs');
   check = await clocked(check);
@@ -441,6 +496,13 @@ export async function run({ check, assert }) {
       const step = (n, before) => {
         for (let i = 0; i < n; i++) { before?.(i); world.update(dt, input); input.end(); }
       };
+      /* What the bay and the circuit say, kept: the lap is CALLED by name and
+       * the five sights are named as they go past, and a lap flown wide of the
+       * station names none of them. */
+      const said = [];
+      const notify = world.notify?.bind(world);
+      world.notify = (a, b) => { said.push(`${a}: ${b}`); notify?.(a, b); };
+      let lapFlownIn = 0, lapSights = 0;
 
       /* ── PHASE 1: BOARD AND LAUNCH ─────────────────────────────────────
        *
@@ -616,7 +678,130 @@ export async function run({ check, assert }) {
           'the Cobra bay dressed no fighter — `starfury.smesh` is decoded on every visit and drawn by nobody');
       }
 
-      /* ── PHASE 3: KILLED MID-FLIGHT ────────────────────────────────────
+      /* ── PHASE 3: THE ROUND TRIP, AND IT IS THE PLAYER'S ───────────────
+       *
+       * ══ THE DEFECT THIS PHASE EXISTS FOR ═══════════════════════════════
+       *
+       * Nothing in the suite had ever flown a lap through a player. The one
+       * round trip that was certified — `flightops.mjs` — drives `stepStation`
+       * directly, which never runs `Player.update`, so `seat.tick` stays false
+       * and `stepSortie` flies the craft with `autoStep`: the autopilot, on
+       * the player's behalf, with the stick untouched. Measured at the stick
+       * instead, with the throttle held and nothing else, the craft flew
+       * straight off the circuit and `u` went 0.193 → 0.221 in FOUR MINUTES
+       * before the ceiling towed it home.
+       *
+       * So this flies the loop by hand and asserts the two things that
+       * separate a player's lap from a tow: `PlayerPilot.update` ran on every
+       * frame (the `tick` the station reads), and `autoStep` — the station
+       * flying it for you — ran on NONE.
+       */
+      {
+        const mod = {
+          ...(await import('../../src/game/Outside.js')),
+          ...(await import('../../src/game/Pilot.js')),
+          V: (await import('../../src/game/Starfury.js')).V,
+        };
+        /* THE TWO COUNTERS. `stepSortie` clears `tick` five steps after
+         * `Player.update` sets it, so a check reading the field between frames
+         * always sees false — it has to be watched as it is written. */
+        let ticks = 0, autos = 0, held = seat.tick;
+        Object.defineProperty(seat, 'tick', {
+          get: () => held, set: (v) => { if (v) ticks++; held = v; }, configurable: true,
+        });
+        const auto = seat.autoStep.bind(seat);
+        seat.autoStep = (adt) => { autos++; return auto(adt); };
+
+        const lapAt = seat.lap;
+        let flown = 0;
+        while (world._seat === seat && !seat.left && flown < 60 * 150) {
+          flyRound(seat, input, mod);
+          world.update(dt, input); input.end();
+          flown++;
+        }
+        input.ax.x = 0; input.ax.y = 0;
+        input.held.delete('jump'); input.held.delete('crouch');
+        assert(ticks === flown,
+          `the player's own tick drove ${ticks} of ${flown} frames — the rest were flown by the station`);
+        assert(autos === 0,
+          `${autos} frames were flown by \`autoStep\` — that is the autopilot's round trip, not the player's`);
+        assert(seat.lap > lapAt,
+          `${(flown / 60).toFixed(0)} s at the stick and the lap never closed — u is at ${seat.u.toFixed(3)}`);
+        assert(!world._seat, 'the closed lap did not empty the seat');
+        assert(said.some((l) => /a lap of the station/.test(l)),
+          `the bay never called the lap: "${said.slice(-3).join(' / ')}"`);
+        /* AND IT WENT PAST THE HANGAR. §4's loop is "fly past your own hangar
+         * and look in" — the sights are named off the craft's own position, so
+         * a lap flown wide of the station names none of them. */
+        const sights = said.filter((l) => l.startsWith('OUTSIDE:')).length;
+        assert(sights >= 3, `${sights} of the five sights were named on a flown lap`);
+        assert(said.some((l) => /flight deck's mouth|hangar/i.test(l)),
+          'the lap never passed the flight deck — that is the one sight §4 names');
+        lapFlownIn = flown / 60;
+        lapSights = sights;
+
+        /* …and the recovery it started brings the fighter in and files it.
+         * TO THE END OF THE SEQUENCE and not to the swap: `outside(false)`
+         * puts the player back inside a phase and a half BEFORE `Sortie._end`
+         * calls `done`, which is the call that files the flight. A loop that
+         * stopped at `_flying` read the fold one phase early and saw 0. */
+        let home = 0;
+        while ((world._flying || (world._sortie && !world._sortie.done)) && home < 60 * 60) {
+          world.update(dt, input); input.end(); home++;
+        }
+        assert(!world._flying, 'the recovery never finished');
+        assert(world._flight.sorties === 1,
+          `${world._flight.sorties} sorties filed for one flown round trip`);
+        assert(!p.driving && !world._seat, 'the pilot is still in a seat after the recovery');
+      }
+
+      /* ── PHASE 4: SHOT DOWN ────────────────────────────────────────────
+       *
+       * ══ TWO DEFECTS, AND THE FIRST ONE KILLED THE FRAME ════════════════
+       *
+       * `Player.damage`'s driving branch read `this.driving.vehicle.damage?.()`
+       * — `Driving.Crew`'s field, which a Starfury seat does not have — so
+       * ANY blow that reached a seated pilot threw
+       * `Cannot read properties of undefined` out of `Player.update` and took
+       * the rest of the frame with it. One 20-point blast, seated, was enough.
+       *
+       * And the second was hiding behind it: `Player.die` has exactly ONE
+       * production caller and it is BELOW that branch, so a flying player
+       * could not die at all. `landPlayer`'s dead-pilot path — the whole of
+       * the recovery a killed pilot gets — was reachable only by this check
+       * calling `p.die()` by hand, which is a door no player has. THAT IS WHY
+       * THIS PHASE NOW GOES THROUGH `damage`: the airframe is a hull, it takes
+       * what the pilot would have taken, and when it is finished the pilot
+       * goes with it.
+       */
+      const relaunch = async () => {
+        while (world._sortie && !world._sortie.done) { world.update(dt, input); input.end(); }
+        step(6);
+        step(1, () => input.hit.add('focus'));
+        let n = 0;
+        while (!world._seat && n < 60 * 30) { world.update(dt, input); input.end(); n++; }
+        assert(world._seat, 'the bay would not launch a second sortie');
+        return world._seat;
+      };
+      const seat2 = await relaunch();
+      {
+        const { AIRFRAME } = await import('../../src/game/Pilot.js');
+        const hp0 = p.hp;
+        /* THE BLOW THAT USED TO THROW. */
+        const killed = p.damage(100, p.position.clone(), null, 'blast');
+        assert(killed === false, 'a survivable blast reported a kill');
+        assert(p.hp === hp0,
+          `the blast went through the airframe to the pilot — hp ${hp0} → ${p.hp}`);
+        assert(seat2.hull === AIRFRAME.hull - 100,
+          `the airframe took ${AIRFRAME.hull - seat2.hull} of a 100-point blast`);
+        assert(p.alive && world._flying && p.driving === seat2,
+          'a hundred points took the pilot out of a 300-point airframe');
+        /* AND THE FRAME AFTER IT STILL RUNS — the whole of the crash. */
+        step(3);
+        assert(world._flying && p.driving === seat2, 'the frame after a blow while seated did not survive it');
+      }
+
+      /* ── AND KILLED MID-FLIGHT ─────────────────────────────────────────
        *
        * ══ THE DEFECT, MEASURED ════════════════════════════════════════
        *
@@ -631,10 +816,17 @@ export async function run({ check, assert }) {
        * Both halves are asserted, because either one alone is still a stuck
        * station: the SORTIE must end, and the STATION must be released.
        */
-      assert(world._flying, 'the third phase needs a craft that is still outside');
+      assert(world._flying, 'this phase needs a craft that is still outside');
       const sortiesBefore = world._flight.sorties;
       const hourAtDeath = st.hour;
-      p.die?.('the check');
+      /* THROUGH THE DOOR A PLAYER HAS, and that is the whole change: the blow
+       * goes to `Player.damage`, `Player.damage` gives it to the airframe, the
+       * airframe runs out, and the airframe kills the pilot. `p.die()` by hand
+       * reached this recovery for months while nothing in the game could. */
+      const finished = p.damage(seat2.hull, p.position.clone(), null, 'blast');
+      assert(finished === true,
+        'the blow that finished the airframe did not report the kill it made');
+      assert(p.alive === false, 'the airframe was destroyed and the pilot flew on');
       assert(world.over, 'the wipe flag is not set — the phase is not testing what it says');
       assert(!world._flying,
         'the player was killed outside and the sortie did not end on the same frame');
@@ -662,7 +854,8 @@ export async function run({ check, assert }) {
       assert(ran > 0.05,
         `the station clock ran ${(ran * 60).toFixed(1)} minutes in the ten seconds after the death — it used to run 0.0`);
       return `body moved ${moved.toFixed(0)} m at the stick · six axes live · `
-        + `clock +${(ran * 60).toFixed(1)} min after an interrupted sortie`;
+        + `a lap flown by hand in ${lapFlownIn.toFixed(0)} s past ${lapSights} sights, filed · `
+        + `shot down at the stick · clock +${(ran * 60).toFixed(1)} min after an interrupted sortie`;
     } finally { world.dispose?.(); }
   });
 }

@@ -2062,9 +2062,17 @@ export class HUD {
     if (!el) return;
     let text = '', bad = false;
     if (player.driving) {
-      const v = player.driving.vehicle;
-      const hull = Math.max(0, Math.round((v.hp / Math.max(1, v.maxHp)) * 100));
-      text = `<b>${this._chip('drive')}</b> climb down · ${esc(v.A?.label ?? 'machine')} · hull ${hull}%`;
+      /* NOT EVERY SEAT HAS A `vehicle`, AND THIS THREW EVERY FRAME OF A FLIGHT.
+       * `Driving.Crew` carries the hull it displaced a crew out of;
+       * `Pilot.PlayerPilot` IS the machine and has no `vehicle` at all, so
+       * `v.hp` on a seated pilot was `Cannot read properties of undefined` on
+       * every frame the player was outside. Exactly the same line, in the same
+       * shape, as the one in `Player.damage` — see `Pilot.AIRFRAME`. */
+      const d = player.driving, v = d.vehicle;
+      const hp = v ? v.hp : d.hull, max = v ? v.maxHp : d.maxHull;
+      const hull = Math.max(0, Math.round((hp / Math.max(1, max || 1)) * 100));
+      const what = v ? (v.A?.label ?? 'machine') : (d.label ?? 'machine');
+      text = `<b>${this._chip('drive')}</b> climb down · ${esc(what)} · hull ${hull}%`;
     } else {
       const near = drivableNear(world, player);
       if (near) {

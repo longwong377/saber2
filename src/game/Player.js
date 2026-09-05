@@ -49,7 +49,8 @@ import { stationKey, namingStation } from './Station.js';
 /* V15 §3's melee set. A leaf: it reads a Player and writes damage through the
  * doors that already exist (`Enemy.damage` with kind 'melee', `addShove`), and
  * imports nothing from this file. */
-import { strike as meleeStrike, stepMelee, poseMelee, stepCatch, hasPoint, pointRefusal } from './Melee.js';
+import { strike as meleeStrike, stepMelee, poseMelee, strikingPole, stepCatch,
+         hasPoint, pointRefusal } from './Melee.js';
 import { focusKey as deckFocus, wheelEdit as deckWheel,
          naming as deckNaming, beginNaming as deckBeginNaming,
          commitName as deckCommitName, holding as deckHolding } from './DeckEdit.js';
@@ -4635,6 +4636,14 @@ export class Player {
     const camDelta = this.control.applyInput(input, dt, {
       stamina: this.stamina / this.maxStamina,
       attackRate: this.boonMods.attackRate,
+      /**
+       * IS THERE A BLADE TO SWING? The attack key means a stab with one and a
+       * fist without one — the seam sixty lines below, and V15 §3's whole
+       * design — and the controller had no way to know which. One press with
+       * the blade down opened a saber cut AND a punch, and charged for both.
+       * See the note on `armed` in `SaberController.applyInput`.
+       */
+      armed: !!this.saber?.lit,
       onThrust: () => {
         this.stamina = Math.max(0, this.stamina - 6);
         audio.swing(16, this.saber.base);
@@ -6511,14 +6520,23 @@ export class Player {
      * then taken off it and IK'd to the strike. Before it, the gait would
      * overwrite the punch on the frame it was thrown.
      *
-     * `stepMelee` advances the strike and resolves its live moment; `poseMelee`
-     * is what you see. Both early-out on a fighter with no strike running,
-     * which is every frame of every other mode.
+     * `stepMelee` advances the strike and resolves its live moment. It early-
+     * outs on a fighter with no strike running, which is every frame of every
+     * other mode.
+     *
+     * ── AND THE POSE IS NOT DRAWN HERE, BECAUSE IT WAS ERASED HERE ───────
+     *
+     * `poseMelee(this)` used to sit on the next line and `_updateBody` — two
+     * calls further down the same frame — re-solved BOTH ARMS onto the hilt
+     * with no idea the melee set existed. Measured, blade down: handR moved
+     * 0.0032 m over a whole jab against the 0.72 m `poseMelee` writes, and
+     * `armR`'s quaternion ended the frame 176.7 degrees from what it had been
+     * given. The kicks read at 1.18 m because nothing in `_updateBody` owns a
+     * leg. So the pose is drawn where the arms are drawn — see `_updateBody`,
+     * which is also the only place it can be solved AFTER the spine and the
+     * clavicles that carry it.
      */
-    if (this._melee) {
-      stepMelee(this, dt, ctx);
-      poseMelee(this);
-    }
+    if (this._melee) stepMelee(this, dt, ctx);
     this.camera.advanceEye(dt, this.animator.pelvis);
     this._spinBody(dt);
   }
@@ -6827,6 +6845,24 @@ export class Player {
 
   _updateBody(dt, ctx) {
     const rig = this.rig;
+    /**
+     * ══ A LIMB THROWING A STRIKE IS NOT ALSO HOLDING THE HILT (V15 §3) ═══
+     *
+     * Every solve below drives an arm at the saber — the hilt in a fist, or
+     * the hip an empty hand rests on — and it did that on the frame a punch
+     * was thrown as well. `poseMelee` wrote the fist and this wrote over it
+     * two lines later; measured, a jab moved handR 0.0032 m through a real
+     * frame against the 0.72 m the pose asks for, and every kick in the set
+     * animated perfectly because nothing here owns a leg.
+     *
+     * `strikingPole` names the bone `MOVES[…]` gives the running strike, and
+     * it is the ONE fact this method needs: the arm it names is skipped, the
+     * strike draws it at the bottom of this method, and a fighter with no
+     * strike running gets exactly the frame he got before. The table stays in
+     * Melee.js — there is no list of limb names in this file.
+     */
+    const striking = strikingPole(this);
+    const strikeR = striking === 'armR', strikeL = striking === 'armL';
 
     // Spine FIRST. It is an ancestor of chest -> clavicle -> arm, so rewriting
     // it after the arms have been IK'd to world-space grip points drags the
@@ -7177,16 +7213,19 @@ export class Player {
       const tuck = twoHanded ? A : 0;
       const poleR = _v6.copy(chest).addScaledVector(right, 0.75 * A + side - 0.20 * tuck)
         .addScaledVector(UP, -0.75 * A + lift - 0.25 * tuck).addScaledVector(fwd, -0.2 * A);
-      this._wristPole('armR', 'foreR', 'handR', _q2, wristR, poleR, dt);
-      rig.solveIK('armR', 'foreR', wristR, poleR);
-      this._rollForearm('foreR', 'handR', _q2, dt);
-      if (twoHanded) {
+      /* …unless that arm is mid-punch. See `striking` at the top. */
+      if (!strikeR) {
+        this._wristPole('armR', 'foreR', 'handR', _q2, wristR, poleR, dt);
+        rig.solveIK('armR', 'foreR', wristR, poleR);
+        this._rollForearm('foreR', 'handR', _q2, dt);
+      }
+      if (twoHanded && !strikeL) {
         const poleL = _v6.copy(chest).addScaledVector(right, -0.62 * A + side)
           .addScaledVector(UP, -0.8 * A + lift).addScaledVector(fwd, -0.2 * A);
         this._wristPole('armL', 'foreL', 'handL', _q3, wristL, poleL, dt);
         rig.solveIK('armL', 'foreL', wristL, poleL);
         this._rollForearm('foreL', 'handL', _q3, dt);
-      } else {
+      } else if (!strikeL) {
         // handL's local quaternion is force-set while two-handed; nothing put it
         // back, so switching to one hand left it frozen 167 degrees off rest.
         const hl = rig.get('handL');
@@ -7299,6 +7338,9 @@ export class Player {
       // the hilt's turned a quarter about its roll so the bore lies ALONG the
       // blade instead of the fingers pointing down it. See GRIP_BORE.
       for (const [h, want] of twoHanded ? [['handR', _q2], ['handL', _q3]] : [['handR', _q2]]) {
+        /* A FIST DOES NOT TAKE THE HILT'S ORIENTATION. The strike owns the
+         * whole limb while it runs, wrist included. */
+        if (h === 'handR' ? strikeR : strikeL) continue;
         const b = rig.get(h);
         if (!b || !b.obj.parent) continue;
         b.obj.parent.getWorldQuaternion(_q4);
@@ -7317,13 +7359,17 @@ export class Player {
       const reach = this.saberDown
         ? _v6.copy(chest).addScaledVector(right, 0.32).addScaledVector(UP, -0.58).addScaledVector(fwd, 0.04)
         : _v6.copy(chest).addScaledVector(fwd, 0.55).addScaledVector(right, 0.22).addScaledVector(UP, 0.05);
-      rig.solveIK('armR', 'foreR', reach, _v2.copy(chest).addScaledVector(right, 0.8).addScaledVector(UP, -0.6));
-      if (this.saberDown) {
-        // and the wrist goes back to its own rest, or it keeps whatever roll
-        // the grip solve last forced on it — the same defect the one-hand
-        // branch above records for handL.
-        const hr = rig.get('handR');
-        if (hr) hr.obj.quaternion.copy(hr.restQuat);
+      /* …and an empty hand throwing a punch is the one hand that is doing
+       * something. See `striking` at the top of this method. */
+      if (!strikeR) {
+        rig.solveIK('armR', 'foreR', reach, _v2.copy(chest).addScaledVector(right, 0.8).addScaledVector(UP, -0.6));
+        if (this.saberDown) {
+          // and the wrist goes back to its own rest, or it keeps whatever roll
+          // the grip solve last forced on it — the same defect the one-hand
+          // branch above records for handL.
+          const hr = rig.get('handR');
+          if (hr) hr.obj.quaternion.copy(hr.restQuat);
+        }
       }
       const rest = _v6.copy(chest).addScaledVector(right, -0.3).addScaledVector(UP, -0.6);
       const poleL = _v2.copy(chest).addScaledVector(right, -0.8).addScaledVector(UP, -0.7);
@@ -7331,9 +7377,27 @@ export class Player {
       // saber throw's own gesture lives here, since throwState leaves 'held' on
       // the frame it fires and this is the only branch that runs afterwards.
       const palm = this._gesturePose(rest, poleL, chest, fwd, right);
-      rig.solveIK('armL', 'foreL', rest, poleL);
-      if (palm) rig.aimBoneWorld('handL', palm, right);
+      if (!strikeL) {
+        rig.solveIK('armL', 'foreL', rest, poleL);
+        if (palm) rig.aimBoneWorld('handL', palm, right);
+      }
     }
+
+    /**
+     * ══ AND THE STRIKE IS DRAWN HERE (V15 §3) ══════════════════════════════
+     *
+     * Under the spine and the girdle it hangs off — both are ancestors of the
+     * arm and this file's own opening note measures what solving a limb before
+     * its parent costs — and over the two branches above, which have just
+     * skipped whichever limb it owns. It early-outs on a fighter with no
+     * strike running, so an ordinary frame is bit-for-bit the frame it was.
+     *
+     * The KICKS are posed here too, though nothing above competes for a leg:
+     * one caller for the whole set is what keeps the hands and the feet in the
+     * same place in the frame, and a second call site is a second answer to
+     * when a strike is drawn.
+     */
+    if (this._melee) poseMelee(this);
 
     // Both branches above turn the WRIST and nothing else. The fingers are the
     // other half of the gesture and they live here — see _openPalm.
@@ -12042,9 +12106,24 @@ export class Player {
      */
     if (this.driving) {
       if (kind === 'fall') return false;
-      this.driving.vehicle.damage?.(amount, point, source, kind);
+      /**
+       * AND THE MACHINE IS NOT ALWAYS ON A `vehicle` FIELD. `Driving.Crew`
+       * carries the hull it displaced a crew out of; `Pilot.PlayerPilot` IS the
+       * machine — there is no `Enemy` behind a Starfury, so it answers `damage`
+       * itself. This line read `this.driving.vehicle.damage?.()` and threw
+       * `Cannot read properties of undefined` on EVERY blow that reached a
+       * seated pilot, which killed the frame it arrived on. The optional call
+       * was on the wrong side of the dot: the method was allowed to be absent
+       * and the machine was not.
+       */
+      const hull = this.driving.vehicle || this.driving;
+      hull.damage?.(amount, point, source, kind);
       this.hitFlash = 1;
-      return false;
+      /* A hull finished by that blow puts the driver out — `Crew.update` on the
+       * ground, `PlayerPilot.damage` by killing the pilot outright — so this
+       * answers the same question every other exit from this method answers:
+       * did the blow kill the body it was aimed at. */
+      return this.alive === false;
     }
     /**
      * THE FORCE ANSWERS THE FORCE — one call, at the SINK, so a blow is blunted
