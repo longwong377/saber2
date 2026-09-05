@@ -37,15 +37,33 @@
 import { readFile } from 'node:fs/promises';
 import { clocked } from './_shared.mjs';
 
-/** No `fetch` in node — the imported rooms are read off disk and handed to the
- *  same decoder the browser uses, which is what `flightops.mjs` does and for
- *  the same reason: the check then measures the shipped path. */
+/**
+ * No `fetch` in node — the imported rooms are read off disk and handed to the
+ * same decoder the browser uses, which is what `flightops.mjs` does and for
+ * the same reason: the check then measures the shipped path.
+ *
+ * IT CHAINS RATHER THAN REPLACING, and that is the whole of a regression this
+ * file caused. The gate runs every suite in ONE process, so a global `fetch`
+ * swapped for a file-only reader is swapped for every suite that follows.
+ * Three of them — `serve`, `keyart` and `music` — start a real dev server and
+ * ask it for a real URL, and all three failed with "The URL must be of scheme
+ * file", pointing at this line. A shim that answers the question it was
+ * written for and hands everything else back to the previous implementation
+ * cannot do that to a stranger.
+ */
 function diskFetch() {
-  if (globalThis.fetch && globalThis.__stationFetch) return;
+  if (globalThis.__stationFetch) return;
   const root = new URL('../../', import.meta.url);
+  const prev = globalThis.fetch;
   globalThis.__stationFetch = true;
-  globalThis.fetch = async (url) => {
-    const buf = await readFile(new URL(String(url), root));
+  globalThis.fetch = async (url, ...rest) => {
+    const s = String(url);
+    /* Anything with a scheme that is not `file:` belongs to somebody else. */
+    if (/^[a-z][a-z0-9+.-]*:/i.test(s) && !s.startsWith('file:')) {
+      if (prev) return prev(url, ...rest);
+      throw new TypeError(`no fetch for ${s}`);
+    }
+    const buf = await readFile(new URL(s, root));
     return { ok: true, arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) };
   };
 }
