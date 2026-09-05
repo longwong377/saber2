@@ -683,7 +683,7 @@ export function ticketFor(race, { on = null, kind = 'win', stake = 0, at = null 
     return {
       ok: true, why: null,
       ticket: { race: race.id, venue: race.venue, day: race.day, kind, on: board.field.against,
-        price: board.field.price, places: 0, stake: amount, at },
+        price: board.field.price, places: 0, stake: amount, at, hour: race.hour, runs: race.runs },
     };
   }
   const row = board.runners.find((r) => r.id === (on?.id || on));
@@ -692,7 +692,8 @@ export function ticketFor(race, { on = null, kind = 'win', stake = 0, at = null 
   return {
     ok: true, why: null,
     ticket: { race: race.id, venue: race.venue, day: race.day, kind, on: row.id,
-      price: kind === 'place' ? row.place : row.win, places: board.places, stake: amount, at },
+      price: kind === 'place' ? row.place : row.win, places: board.places, stake: amount, at,
+      hour: race.hour, runs: race.runs },
   };
 }
 
@@ -736,6 +737,73 @@ export function settleTickets(tickets = [], result = null) {
     lines.push({ ...t, won, returned: back });
   }
   return { staked, returned, net: returned - staked, lines };
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  A STRUCK TICKET OUTLIVES THE DOOR
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * ── THE DEFECT THESE THREE FUNCTIONS EXIST TO MAKE IMPOSSIBLE ────────────
+ *
+ * The room had exactly one settlement path: the panel, while it was up, on the
+ * race it was watching, in the `called` phase — twenty-three to thirty REAL
+ * SECONDS. Leave the room in that window and the ticket went with the panel,
+ * so the house kept a winner because the player walked out. The Drum had the
+ * identical hole and `Games.drumTicket`/`drumDue`/`drumStop` are the shape
+ * that closed it: a ticket carries WHEN IT SETTLES, anybody may ask whether
+ * the clock has reached it, and the reading that settles it is re-derivable
+ * from the ticket alone.
+ *
+ * This is that trio for a card rather than a wheel, and the reason it is here
+ * rather than in the room is the same reason the price is: a ticket that could
+ * only be settled by the screen that sold it is a ticket the screen owns.
+ *
+ * ── AND `hour`/`runs` ARE ON THE TICKET FOR THIS AND ONLY THIS ───────────
+ *
+ * `ticketFor` writes the race's off and its length onto the ticket, so "has
+ * this been run" is arithmetic on two numbers and needs no card, no clock and
+ * no room — exactly as `drumTicket` writes an ABSOLUTE turn rather than an
+ * hour of the day. The day is on the ticket too, so a ticket struck on the
+ * last race of Tuesday still settles on Thursday.
+ */
+
+/** The absolute hour a ticket's race is over — the day and the clock in one. */
+const offOf = (t) => ((t?.day | 0) * 24) + (Number(t?.hour) || 0) + (Number(t?.runs) || 0);
+
+/** Has the clock reached the far side of the race this ticket rides? */
+export function ticketRun(ticket, day = 0, hour = 0) {
+  return ((day | 0) * 24 + (Number(hour) || 0)) >= offOf(ticket);
+}
+
+/** One race off the card by its id — what a ticket has to be settled against. */
+export function raceById(venueId, day = 0, id = null) {
+  return racesOn(venueId, day).find((r) => r.id === id) || null;
+}
+
+/**
+ * SPLIT A HANDFUL OF TICKETS INTO WHAT THE WINDOW OWES AND WHAT IS STILL LIVE.
+ *
+ * `due` is one row per RACE — the result, run from its own seed, and the
+ * tickets on it — because settlement is per race and a room that paid ticket
+ * by ticket would run the same race once for every stake on it. `held` is
+ * everything whose race has not come round yet, and it is handed straight back
+ * so the caller's list is what this function returned and not something it
+ * edited in place.
+ *
+ * NOTHING HERE PAYS ANYBODY. It says what is settleable; `Station.payAtTote`
+ * is still the only door the credits go through.
+ */
+export function ticketsDue(tickets = [], day = 0, hour = 0) {
+  const due = [], held = [];
+  for (const t of tickets) {
+    const race = ticketRun(t, day, hour) ? raceById(t.venue, t.day, t.race) : null;
+    if (!race) { held.push(t); continue; }
+    let row = due.find((x) => x.race === t.race);
+    if (!row) { row = { race: t.race, venue: t.venue, day: t.day, result: resultOf(race), tickets: [] }; due.push(row); }
+    row.tickets.push(t);
+  }
+  return { due, held };
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1178,6 +1246,27 @@ function readVenue(v, day, hour) {
     venue: v.id, place: v.place, name: v.name, word: v.word, crowd: null,
     day: day | 0, hour, dark: card.dark,
     meet: null, phase: 'dark', race: null, board: null,
+    /**
+     * ── THE WHOLE DAY'S CARD, AND NOT JUST WHATEVER IS UNDER THE CLOCK ────
+     *
+     * THE DEFECT THIS FIELD EXISTS TO CLOSE. A reading handed back ONE race —
+     * whatever was running, or the first of the meet while the field paraded —
+     * and the room could therefore only ever sell that one. Measured over 60
+     * days: the Holo-theatre runs 335 races and the window offered a button on
+     * 60 of them, one per meet, for the 0.4 h the parade lasts. `ticketFor`
+     * was willing to sell all 335 — it refuses only `at >= race.hour` — so the
+     * book was being shut by the SCREEN, and *"a good better will probably
+     * make money over time"* is not reachable at one bet a meet.
+     *
+     * A real board carries the card: every race of the day, its off, its
+     * ground, and whether it has gone. `open` is the ids you may still back,
+     * which is the same rule `ticketFor` enforces, said once so a room does
+     * not have to re-derive it. Both are lines on a board — an id and an hour
+     * — and NOT dressed races: handing back eight fields of runners for a race
+     * three hours off is a page nobody asked for, and the room asks for the
+     * one it is showing by id.
+     */
+    card: [], open: [],
     progress: 0, segment: 0, segments: 0,
     standings: [], calls: [], winner: null, margin: 0,
     /* The next one off, as a LINE ON A BOARD rather than a whole race — a
@@ -1190,6 +1279,14 @@ function readVenue(v, day, hour) {
     free: true,
   };
   if (card.dark) return reading;
+  reading.card = all.map((r) => ({
+    id: r.id, meet: r.meet, index: r.index, hour: r.hour, ground: r.ground.name,
+    /* THE TWO THINGS A LINE ON A BOARD SAYS ABOUT ITSELF. `off` is the book
+     * shut — the same `at >= race.hour` `ticketFor` refuses on — and `run` is
+     * the far side of it, which is when a ticket on it can be collected. */
+    off: hour >= r.hour, run: hour >= r.hour + r.runs,
+  }));
+  reading.open = reading.card.filter((r) => !r.off).map((r) => r.id);
   const meet = meetAt(venueId, day, hour);
   if (!meet) { reading.phase = reading.next ? 'closed' : 'over'; return reading; }
   reading.meet = { index: meet.index, from: meet.from, to: meet.to, races: meet.races.length };

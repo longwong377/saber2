@@ -180,7 +180,8 @@ export function playWindow(venueId, { bets = 20000, yardSeed = 4242, from = 400,
       const race = step.race;
       const board = boardFor(race);
       /* THE CLOCK. A ticket is struck while the field is still parading, which
-       * is the only stretch in which the book is open — and it is `ticketFor`
+       * was once the only stretch in which the book was open — the pane now
+ * sells every race that has not yet run, which is what makes this bettor reachable — and it is `ticketFor`
        * that says so, not this file. */
       const at = race.hour - 0.01;
       const price = new Map(board.runners.map((r) => [r.id, r.win]));

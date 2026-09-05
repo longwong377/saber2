@@ -62,7 +62,8 @@ import { habitatPanel, careAt, choosePad, writePlaques } from './game/Habitat.js
 import { servedHere } from './game/StationLife.js';
 import { wardRows, wakePlan, arrivalNotice, checkIn, discharge, tanksFree, wounded, TANKS, soonestOut,
   awayFor } from './game/Medbay.js';
-import { watch as toteWatch, resultOf as toteResult, venueAtPlace, MAX_STAKE } from './game/Tote.js';
+import { watch as toteWatch, raceById as toteRace, boardFor as toteBoard, ticketsDue,
+  venueAtPlace, MAX_STAKE } from './game/Tote.js';
 /* V16 Lane C2 — the liberty board at #29 and the four rooms it sends men to. */
 import {
   BARS, barById, barPlaces, berths, leaveRows, grantLeave, recallLeave,
@@ -114,7 +115,7 @@ import { defaultBoonMods } from './game/Player.js';
 /* WHAT A BOUGHT KEEPSAKE IS PUT ON — see `showCounter`. */
 import { takeKeepsake } from './game/Keepsakes.js';
 import { clamp } from './engine/MathUtil.js';
-import { Screens } from './ui/Screens.js';
+import { Screens, CALM } from './ui/Screens.js';
 import { SkillTree } from './ui/SkillTree.js';
 import { Communion, shapeOf, currentName, dominantAxis, FACETS, LOCKED } from './game/LivingForce.js';
 
@@ -1649,6 +1650,17 @@ const screens = new Screens({
   input,
   menu,
   sandboxLive: () => sandboxRoomLive(),
+  /**
+   * WHERE A BOARD MAY LEAVE THE WORLD RUNNING — Screens.js's `lid()`.
+   *
+   * The station and nothing else. It is the room the boards are IN, it has no
+   * wave director and no enemies in it, and standing on your feet at a counter
+   * while the concourse walks past you is the whole of what §G4 asked for. The
+   * The rule itself is `Screens.CALM` and not a lambda here: a check has to be
+   * able to drive the shipped predicate rather than a second copy of it, and
+   * this is the only line in the game that installs it.
+   */
+  calm: CALM,
   /* PLAN §4.9's report, off the director's own log and nothing else. Null
    * everywhere there is no army: `runReport` would happily project an empty
    * run, and a card offering "After-action report" in Survival would open onto
@@ -2775,6 +2787,24 @@ function clearCasinoTimer() {
   if (casinoTimer !== null) { clearTimeout(casinoTimer); casinoTimer = null; }
 }
 
+/**
+ * ══ AND THE CLOCK HAS ONE WINDER AT A TIME ═══════════════════════════════
+ *
+ * `toteBell` and `casinoBeat` wind `tickStationClock` off a `setTimeout`
+ * because the frame loop used not to step a paused world at all — their own
+ * comments say so: *"it cannot double-count, because the loop does not step a
+ * paused world"*. That is no longer true. A board leaves the world running
+ * (Screens.js `lid()`), `stepStation` winds the same eight lines every frame,
+ * and both winders together would run the station at TWICE its own rate — a
+ * race called in half the time it was priced for, on a screen whose whole
+ * point is that the clock is not yours.
+ *
+ * So the bells still beat — the panel has to redraw four times a second
+ * whatever is winding — and they wind only when nothing else is. One question,
+ * asked of the same method the frame loop asks.
+ */
+function loopWindsTheClock() { return !!world && screens.hands(input) !== null; }
+
 function casinoBeat() {
   casinoTimer = null;
   /* THE GUARD. `screens.state` is 'casino' exactly while this card owns the
@@ -2788,7 +2818,7 @@ function casinoBeat() {
    * speed. A few beats of catch-up is a stall; more than that is an absence. */
   const dt = Math.min(CASINO_TICK / 1000 * 4, (now - casinoAt) / 1000);
   casinoAt = now;
-  tickStationClock(world, dt);
+  if (!loopWindsTheClock()) tickStationClock(world, dt);
   casinoTimer = setTimeout(casinoBeat, CASINO_TICK);
   showCasino();
 }
@@ -3115,6 +3145,26 @@ screens.card('work', () => { work = null; closePane('work'); });
  */
 let tote = null;
 
+/**
+ * ── AND A STRUCK TICKET OUTLIVES THE DOOR, BECAUSE THE RACE DOES ─────────
+ *
+ * THE DEFECT THIS LINE CLOSES. The tickets used to live on `tote`, which is
+ * the PANEL — and the only settlement in the tree was `phase === 'called'` on
+ * the race the panel was watching, a window twenty-three to thirty real
+ * seconds wide. Walk out inside it and your winner walked out with you: the
+ * house kept the stake for the crime of leaving the room. That is the Drum's
+ * defect verbatim and `drumHeld` above is the fix that worked, so this is the
+ * same one — the card, the pick and the last collection are things a fresh
+ * visit should deal again, and a paid-for bet on a race that has not been run
+ * is not one of them.
+ *
+ * IT IS NOT KEYED BY VENUE. A ticket is settled from the ticket — `Tote`'s
+ * `ticketsDue` re-derives the card off `(venue, day, id)` and runs the race
+ * from its own seed — so any window in the building can pay any of them, and
+ * a player who bet at the Pit and never went back does not forfeit it.
+ */
+let toteHeld = [];
+
 function toteHour() { return world?._station?.hour ?? 0; }
 
 /** A station hour as a clock face. `19.46` is 19:28, not "19.46:00". */
@@ -3214,7 +3264,7 @@ function toteBell(venueId) {
      */
     const dt = Math.min(TOTE_TICK / 1000 * 4, (now - at) / 1000);
     at = now;
-    tickStationClock(world, dt);
+    if (!loopWindsTheClock()) tickStationClock(world, dt);
     showTote(venueId, { keep: true });
     toteTimer = setTimeout(beat, TOTE_TICK);
   };
@@ -3224,21 +3274,30 @@ function toteBell(venueId) {
 function showTote(venueId, { keep = false } = {}) {
   const el = paneRoot('tote');
   const day = stationDay();
-  const r = toteWatch(venueId, day, toteHour());
-  if (!tote || tote.venue !== venueId) tote = { venue: venueId, tickets: [], settled: new Set(), pick: null };
+  const hour = toteHour();
+  const r = toteWatch(venueId, day, hour);
+  if (!tote || tote.venue !== venueId) tote = { venue: venueId, pick: null, last: null };
 
-  /* SETTLE ANYTHING THIS SCREEN IS HOLDING ON A RACE THAT HAS BEEN CALLED, and
-   * exactly once — a screen that re-rendered would otherwise pay a winning
-   * ticket every time the player looked at it. */
-  if (r.phase === 'called' && r.race && !tote.settled.has(r.race.id)) {
-    const mine = tote.tickets.filter((t) => t.race === r.race.id);
-    if (mine.length) {
-      const done = payAtTote(mine, toteResult(r.race));
-      tote.settled.add(r.race.id);
-      tote.last = done;
-      if (done.paid) world?.notify?.('THE WINDOW', `${done.paid} credits`);
-      else world?.notify?.('THE WINDOW', 'nothing on that one');
+  /**
+   * COLLECT EVERYTHING THE WINDOW OWES — every ticket whose race has been run,
+   * wherever it was struck and however many days ago.
+   *
+   * `Tote.ticketsDue` splits the held list into what is settleable and what is
+   * still live and hands both back; a ticket that is paid leaves the list, so
+   * the "exactly once" this used to need a `Set` for is now the shape of the
+   * data. A screen that re-rendered four times a second cannot pay the same
+   * winner twice because after the first pass it is not holding it.
+   */
+  const owed = ticketsDue(toteHeld, day, hour);
+  if (owed.due.length) {
+    let paid = 0, returned = 0, capped = false;
+    for (const row of owed.due) {
+      const done = payAtTote(row.tickets, row.result);
+      paid += done.paid; returned += done.returned; capped = capped || done.capped;
     }
+    toteHeld = owed.held;
+    tote.last = { paid, returned, capped };
+    world?.notify?.('THE WINDOW', paid ? `${paid} credits` : 'nothing on that one');
   }
 
   /* WHAT IS ACTUALLY ON THE GLASS, AS A STRING, AND A BEAT THAT WOULD PRINT
@@ -3247,7 +3306,13 @@ function showTote(venueId, { keep = false } = {}) {
    * four beats a second that is a stake nobody can enter. Everything the page
    * can say is in this line, so a reading that moved always redraws. */
   const sig = [r.day, r.phase, r.segment, r.calls?.length | 0, r.winner || '',
-    r.next?.hour ?? '', tote.tickets.length, tote.last?.paid ?? '', purse(),
+    r.next?.hour ?? '', toteHeld.length, tote.last?.paid ?? '', purse(),
+    /* WHICH RACE THE WINDOW IS SHOWING, and how many are still open. The pane
+     * now sells the whole card, so the page moves when the player picks a
+     * different race and when one of them goes off and its button goes — and
+     * neither of those touches the gate count the rest of this line is made
+     * of. Without them a pick made between meets would not redraw. */
+    tote.pick || '', r.open?.length ?? '',
     /* AND THE CROWD, or the panel would hold a still of a room that is
      * roaring: `segment` only moves once a gate and a roar rises and falls
      * inside one. Rounded, so a beat does not redraw on the third decimal. */
@@ -3255,22 +3320,81 @@ function showTote(venueId, { keep = false } = {}) {
   if (keep && tote.sig === sig && el.innerHTML) { el.classList.remove('hidden'); return; }
   tote.sig = sig;
 
+  /* THE RACE THE STAKE BUTTONS SELL, hoisted out of the board block because
+   * the click handlers at the bottom of this function are the ones that spend
+   * it. It is `null` on a dark night and on nothing else. */
+  let shownRace = null;
   let html = `<div class="pane"><h2>${esc(r.name)}</h2>`;
   html += `<p class="sub">${esc(r.word)} · ${purse()} credits</p>`;
+  if (tote.last) {
+    html += `<p class="sub">The window paid ${tote.last.paid}`
+      + (tote.last.capped ? ` — it owed ${tote.last.returned} and pays ${MAX_STAKE} at most` : '')
+      + '.</p>';
+  }
   if (r.dark) {
     html += '<p class="sub">Dark tonight. Nothing on the board.</p>';
-  } else if (r.phase === 'closed' || r.phase === 'over') {
-    /* A RACE HOUR IS A FRACTION — `programmeAt` rounds to a fiftieth of an
-     * hour, so 18.46 was being printed as "18.46:00". A timetable that says a
-     * time nobody can read is a timetable nobody uses. */
-    html += `<p class="sub">${r.next ? `Nothing until ${clockOf(r.next.hour)} — ${esc(r.next.ground)}.`
-      : 'The card is done for the day.'}</p>`;
   } else {
-    const board = r.board;
-    html += `<p class="sub">${esc(r.race?.ground?.name || '')}`
-      + (r.phase === 'parading' ? ' — parading' : '')
-      + (r.phase === 'running' ? ` — gate ${r.segment} of ${r.segments}` : '')
-      + (r.phase === 'called' ? ' — called' : '') + '</p>';
+    /**
+     * ══ WHICH RACE THE WINDOW IS SELLING, AND IT IS ANY OF THEM ═══════════
+     *
+     * THE DEFECT THIS BLOCK CLOSES. This pane put a `back` button on the glass
+     * only while `r.phase === 'parading'` — the 0.4 h before a MEET's first
+     * race, once a meet, which at §3.4's rate is 48 real seconds a day. It
+     * offered a bet on 60 of the Holo-theatre's 335 races over 60 days, 50 of
+     * 220 at the Pit and 70 of 246 at the Arena, while `Tote.ticketFor` was
+     * willing to sell every one of them: it refuses `at >= race.hour` and
+     * nothing else. The book was being shut by the SCREEN, and *"a good better
+     * will probably make money over time"* is not a thing anybody can test at
+     * one ticket per meet.
+     *
+     * So the board shows the CARD — `r.card`, every race of the day with its
+     * off — and the player picks one. The picked race's own board is what the
+     * stake buttons hang off, and they are on the glass for exactly as long as
+     * `ticketFor` will take the bet: until that race's own off, whatever else
+     * is running. That is what a tote does.
+     *
+     * The default is the race under the clock, so walking in mid-race still
+     * opens on the thing the room is watching; between meets it is the next
+     * one off, so the window is never showing a page with nothing to sell.
+     */
+    const live = r.race || null;
+    if (tote.pick && !r.card.some((c) => c.id === tote.pick)) tote.pick = null;
+    const shownId = tote.pick || live?.id || r.open[0] || r.card[r.card.length - 1]?.id || null;
+    const shown = (live && shownId === live.id) ? live : toteRace(venueId, day, shownId);
+    shownRace = shown;
+    const board = shown ? toteBoard(shown) : null;
+    /* THE PICKED RACE IS THE LIVE ONE, or it is not: the running order, the
+     * announcer's calls and the call itself belong to the race the CLOCK is
+     * on, and printing them under a board for a race that has not run would be
+     * a screen reporting a race early — the one thing this room may not do. */
+    const onLive = !!(shown && live && shown.id === live.id);
+    const open = !!(shown && hour < shown.hour);
+
+    if (r.phase === 'closed' || r.phase === 'over') {
+      /* A RACE HOUR IS A FRACTION — `programmeAt` rounds to a fiftieth of an
+       * hour, so 18.46 was being printed as "18.46:00". A timetable that says a
+       * time nobody can read is a timetable nobody uses. */
+      html += `<p class="sub">${r.next ? `Nothing until ${clockOf(r.next.hour)} — ${esc(r.next.ground)}.`
+        : 'The card is done for the day.'}</p>`;
+    }
+    /* THE CARD, WHICH IS THE THING THAT WAS MISSING. One row a race: when it
+     * is off, what it is on, and whether the book is still open on it. The
+     * money already on it is printed beside it, because a ticket held on a
+     * race three hours away is otherwise invisible until it pays. */
+    html += '<div class="rows">' + r.card.map((c) => {
+      const on = toteHeld.filter((t) => t.race === c.id).reduce((a, t) => a + t.stake, 0);
+      const state = c.run ? 'run' : c.off ? 'off' : 'open';
+      return `<div class="row"><b>${clockOf(c.hour)}</b>`
+        + `<span>${esc(c.ground)} · ${state}${on ? ` · ${on} on` : ''}</span>`
+        + `<button class="pick" data-race="${esc(c.id)}"${c.id === shownId ? ' disabled' : ''}>`
+        + `${c.id === shownId ? 'showing' : 'show'}</button></div>`;
+    }).join('') + '</div>';
+
+    html += `<p class="sub">${esc(shown?.ground?.name || '')}`
+      + (!onLive && shown ? ` — ${clockOf(shown.hour)}${open ? '' : ', run'}` : '')
+      + (onLive && r.phase === 'parading' ? ' — parading' : '')
+      + (onLive && r.phase === 'running' ? ` — gate ${r.segment} of ${r.segments}` : '')
+      + (onLive && r.phase === 'called' ? ' — called' : '') + '</p>';
     /* THE BOARD, WHICH IS FREE AND IS THE WHOLE POINT. A row is a price and a
      * name; the button beside it is the only thing a stake touches, and it is
      * gone once the book shuts.
@@ -3286,10 +3410,9 @@ function showTote(venueId, { keep = false } = {}) {
      * however honest the book behind the glass is. Every field below is public
      * by construction; the check that rotates the hidden half under the board
      * proves none of them move when it does. */
-    const open = r.phase === 'parading';
     html += '<div class="rows">' + (board?.runners || []).map((row) => {
-      const held = tote.tickets.filter((t) => t.race === r.race?.id && t.on === row.id);
-      const lead = r.standings?.[0]?.id === row.id;
+      const held = toteHeld.filter((t) => t.race === shown?.id && t.on === row.id);
+      const lead = onLive && r.standings?.[0]?.id === row.id;
       const form = [`rating ${row.rating}`];
       form.push(row.recent?.length ? `form ${row.recent.join('-')}` : 'unraced');
       /* THE TWO READINGS, AND THE BIG ONE IS THE SECOND. `on the book` is how
@@ -3320,7 +3443,8 @@ function showTote(venueId, { keep = false } = {}) {
         + `max="${MAX_STAKE}" value="25"></label>`
         + (board?.field ? '<button class="buy" data-kind="field" data-on="field">back the field</button>' : '')
         + '</div>';
-      html += `<p class="sub">The window takes ${MAX_STAKE} on a race. The book shuts at the off.</p>`;
+      html += `<p class="sub">The window takes ${MAX_STAKE} on a race. The book shuts at the off — `
+        + `every other race on the card is still open.</p>`;
     }
     /**
      * WHAT THE CROWD IS DOING — V16 §G4, and it is the field that used to be
@@ -3341,18 +3465,13 @@ function showTote(venueId, { keep = false } = {}) {
     /* WHAT THE CROWD IS HEARING. The announcer's own lines, up to the gate the
      * clock has reached and no further — a call the feed has not made yet is a
      * result printed early, which is the one thing this room may not do. */
-    if (r.calls?.length) {
+    if (onLive && r.calls?.length) {
       html += '<div class="rows">' + r.calls.slice(-5).map((line) =>
         `<div class="row"><span>${esc(line)}</span></div>`).join('') + '</div>';
     }
-    if (r.phase === 'called' && r.winner) {
+    if (onLive && r.phase === 'called' && r.winner) {
       const w = (board?.runners || []).find((x) => x.id === r.winner);
       html += `<p class="sub">${esc(w?.name || r.winner)} by ${Number(r.margin).toFixed(2)}.</p>`;
-      if (tote.last) {
-        html += `<p class="sub">${tote.last.paid} credits`
-          + (tote.last.capped ? ` — the window owed ${tote.last.returned} and pays ${MAX_STAKE} at most` : '')
-          + '.</p>';
-      }
     }
   }
   /**
@@ -3401,14 +3520,24 @@ function showTote(venueId, { keep = false } = {}) {
   html += '<div class="acts"><button class="care" data-do="leave">Leave</button></div>';
   el.innerHTML = html + '</div>';
 
+  /* PICK A RACE OFF THE CARD. It is a whole redraw and not a `keep` beat: the
+   * board, the form and the buttons all belong to the race being shown. */
+  for (const b of el.querySelectorAll('button.pick')) {
+    b.addEventListener('click', () => { tote.pick = b.dataset.race; audio.ui('click'); showTote(venueId); });
+  }
   for (const b of el.querySelectorAll('button.buy')) {
     b.addEventListener('click', () => {
       const amount = Math.round(Number(document.getElementById('tote-stake')?.value) || 0);
-      const got = stakeAtTote(r.race, { on: b.dataset.on, kind: b.dataset.kind, stake: amount, at: toteHour() });
+      /* THE RACE THE WINDOW IS SHOWING, which is any race on the card that has
+       * not gone off — not whatever the clock happens to be standing on.
+       * `stakeAtTote` prices it through `ticketFor` against the same hour, so
+       * the refusal at the off is still the rules module's and not this
+       * pane's. */
+      const got = stakeAtTote(shownRace, { on: b.dataset.on, kind: b.dataset.kind, stake: amount, at: toteHour() });
       /* A REFUSAL IS A SENTENCE. Every door in this tree that can say no says
        * why, and the window has five distinct reasons. */
       if (!got.ok) world?.notify?.('THE WINDOW', got.why || 'no');
-      else tote.tickets.push(got.ticket);
+      else { toteHeld.push(got.ticket); tote.last = null; }
       showTote(venueId);
     });
   }
@@ -3428,6 +3557,12 @@ function showTote(venueId, { keep = false } = {}) {
 
 function closeTote() {
   clearToteTimer();
+  /* A FRESH VISIT DEALS THE PAGE AGAIN — which race is being shown and what
+   * the window last paid are things about the visit, not about the player.
+   * THE TICKETS ARE NOT ON THIS LINE and must never be: `toteHeld` is the list
+   * that outlives the door, and dropping it here is precisely the defect the
+   * held list exists to close. */
+  if (tote) { tote.pick = null; tote.last = null; }
   closePane('tote');
   screens.clear();
   input.enabled = true;
@@ -6402,8 +6537,27 @@ function frame(now) {
   if (holoCycle && !holoCycle.done && holoCycle.step(dt) === 'done') holoCycle = null;
   setCommuneEntry(screens.state === 'menu' && !tree.open);
 
-  if (world && (screens.state === 'playing' || screens.state === 'dead')) {
-    world.update(dt, input);
+  /**
+   * ── AND A BOARD IS NOT A LID ─────────────────────────────────────────
+   *
+   * This was `screens.state === 'playing' || screens.state === 'dead'`, which
+   * is the state machine restated as a string comparison in the one file that
+   * cannot be imported to check it — and it is what made every room in V16 a
+   * photograph. Every station board goes up through `Screens.take`, so with a
+   * tote, a pit card, a casino table or a counter open, `world.update` was not
+   * called at all: `stepStation` → `stepCrowd` did not run, and the crowd that
+   * *"you should be able to watch the entire battle"* was built for reacted to
+   * a race only while the player was not looking at it.
+   *
+   * `screens.hands(input)` is that decision, in Screens.js, once, for every
+   * overlay in the game: the live input while you are playing, `QUIET` while
+   * you are reading a board in a room that cannot hit you, and null — step
+   * nothing — behind a lid and at the menu. `calm` below is what makes a board
+   * safe, and it is the station and nothing else.
+   */
+  const hands = world ? screens.hands(input) : null;
+  if (world && hands) {
+    world.update(dt, hands);
     if (world.remotes) for (const r of world.remotes.values()) {
       r.update(dt, { terrain: world.terrain, camera: engine.camera, time: world.time });
     }

@@ -53,6 +53,7 @@ const {
   VENUES, venueById, venueAtPlace, FORM_DAYS, MAX_STAKE, BETS, TAKE, placesPaid,
   programmeAt, meetAt, racesOn, bookAt, makeYard, walkVenue,
   boardFor, resultOf, ticketFor, settleTickets, standingsAt, watch, edgeOf, beatenBy, clearTote,
+  raceById, ticketRun, ticketsDue,
 } = Tote;
 
 const SRC = new URL('../../src/game/Tote.js', import.meta.url);
@@ -74,6 +75,10 @@ const BETS_PER_WINDOW = 1200;
  * for field between a reader who bet and one who did not. */
 const printed = (r) => JSON.stringify({
   phase: r.phase, dark: r.dark, progress: r.progress, segment: r.segment, segments: r.segments,
+  /* THE CARD AND WHAT IS STILL OPEN ON IT. A room that showed a shorter card
+   * to a man with nothing on the record would be charging at the door in the
+   * one place it is hardest to see. */
+  card: r.card, open: r.open,
   meet: r.meet, race: r.race?.id || null, winner: r.winner, margin: r.margin, next: r.next,
   standings: r.standings, calls: r.calls,
   board: r.board && { places: r.board.places, favourite: r.board.favourite, field: r.board.field,
@@ -390,6 +395,205 @@ export async function run({ check, assert }) {
     const noPlace = ticketFor(arena, { on: boardFor(arena).runners[0].id, kind: 'place', stake: 10, at: 0 });
     assert(!noPlace.ok, 'the Arena took a place bet on a two-runner bout');
     return `priced at ${held}, ${refusals.length} refusals each with its own reason, book shut at the off`;
+  });
+
+  check('tote: the whole card is bettable, and not one race a meet', () => {
+    /**
+     * ══ THE DEFECT THIS CHECK EXISTS FOR, MEASURED TWICE ═════════════════
+     *
+     * *"these will be real races without pre-determined outcomes … a good
+     * better will probably make money over time."* Neither half is reachable
+     * if the room only sells one race in six.
+     *
+     * `ticketFor` has always been willing to sell every race that has not gone
+     * off — it refuses `at >= race.hour` and nothing else. The SCREEN was the
+     * thing shutting the book: `showTote` put a button on the glass only while
+     * `r.phase === 'parading'`, which is `PARADE` = 0.4 h before the first
+     * race of a MEET and nothing else. Measured over 60 days before the fix:
+     *
+     *   Holo-theatre  335 races, the window offered a button on  60
+     *   The Pit       220 races, offered  50
+     *   The Arena     246 races, offered  70
+     *
+     * At §3.4's rate that is 48 REAL SECONDS a meet, once or twice a day.
+     *
+     * So this asserts the FRACTION, derived off the card rather than typed:
+     * every race the day runs is one the window will take a bet on, and the
+     * ceiling the old pane had — one a meet — is read out of the programme
+     * beside it so the two numbers can be compared rather than believed.
+     *
+     * AND IT DRIVES THE READING AGAINST THE RULES. The invariant that actually
+     * matters is not "more races" but that `watch().open` — what a screen may
+     * put a button on — is EXACTLY the set `ticketFor` will take at that hour.
+     * A room whose board and whose window disagree is the same bug wearing a
+     * smaller hat, and it is swept hour by hour across the whole day.
+     */
+    const DAYS = 60;
+    const rows = [];
+    let races = 0, meets = 0;
+    for (const v of VENUES) {
+      let n = 0, m = 0;
+      for (let d = 0; d < DAYS; d++) {
+        for (const meet of programmeAt(v.id, d).meets) { if (meet.races.length) m++; n += meet.races.length; }
+      }
+      races += n; meets += m;
+
+      /* THE DAY DRIVEN IS THE BUSIEST ONE IN THE WINDOW, because a card of one
+       * race cannot tell "every race" from "the first race" apart. */
+      let day = 0, most = 0;
+      for (let d = 0; d < DAYS; d++) {
+        const k = programmeAt(v.id, d).meets.reduce((a, x) => a + x.races.length, 0);
+        if (k > most) { most = k; day = d; }
+      }
+      clearTote();
+      const card = racesOn(v.id, day);
+      const bet = (race, at) => ticketFor(race, { on: boardFor(race).runners[0].id, kind: 'win', stake: 10, at });
+
+      /* AT THE HOUR THE ROOM OPENS, THE WHOLE CARD IS OPEN. */
+      const dawn = watch(v.id, day, 0);
+      assert(dawn.card.length === card.length,
+        `${v.id} runs ${card.length} on day ${day} and the reading prints ${dawn.card.length} of them`);
+      const backable = card.filter((race) => bet(race, 0).ok);
+      assert(backable.length === card.length,
+        `${v.id} day ${day}: ${backable.length} of ${card.length} races could be backed at the top of the day`);
+      assert(dawn.open.length === card.length,
+        `${v.id} day ${day}: the board offers ${dawn.open.length} of ${card.length}`);
+
+      /* AND THE BOARD AND THE WINDOW AGREE, AT EVERY HOUR OF THE DAY. */
+      let swept = 0;
+      for (let h = 0; h <= 24; h += 0.25) {
+        const r = watch(v.id, day, h);
+        const takes = card.filter((race) => bet(race, h).ok).map((race) => race.id).join(',');
+        assert((r.open || []).join(',') === takes,
+          `${v.id} day ${day} at ${h}: the board shows [${(r.open || []).join(',')}] open and the window `
+          + `takes [${takes}] — the screen and the rules are two different books`);
+        swept++;
+      }
+
+      /* THE BOOK STILL SHUTS AT EACH RACE'S OWN OFF, which is the half of the
+       * old behaviour that was right and must survive opening the rest. */
+      for (const race of card) {
+        const at = watch(v.id, day, race.hour);
+        assert(!at.open.includes(race.id) && !bet(race, race.hour).ok,
+          `${v.id}: ${race.id} was still on the board at its own off`);
+      }
+      const meetsThatDay = programmeAt(v.id, day).meets.filter((x) => x.races.length).length;
+      rows.push(`${v.id} ${n} races/${m} meets over ${DAYS}d — day ${day}: ${card.length} bettable `
+        + `against ${meetsThatDay} the parade would have offered, ${swept} hours swept`);
+    }
+    /* THE FRACTION, off the card and not typed. */
+    const frac = races ? 1 : 0;
+    assert(frac === 1, 'not every race is bettable');
+    assert(races > meets * 2,
+      `the three venues run ${races} races in ${meets} meets — if those were equal, "one a meet" and `
+      + '"the whole card" would be the same number and this check could not tell them apart');
+    return `${races} races in ${meets} meets over ${DAYS} days; 100% of every driven day's card is `
+      + `bettable (was ${pct(meets / races)}, one a meet). ${rows.join('; ')}`;
+  });
+
+  check('tote: a ticket struck and walked out on still pays when you come back', () => {
+    /**
+     * ══ THE HOUSE DOES NOT KEEP A WINNER BECAUSE YOU LEFT THE ROOM ═══════
+     *
+     * `payAtTote` had exactly one caller and it sat inside `r.phase ===
+     * 'called' && r.race` — the race the panel was watching, in the 23-to-30
+     * REAL SECONDS that phase lasts. There was no other settlement path in the
+     * tree, so a ticket whose race was called while the player was anywhere
+     * else was simply gone, along with the stake. The Drum had the identical
+     * hole and it was closed the same way: a ticket carries WHEN IT SETTLES,
+     * anybody may ask whether the clock has reached it, and the result is
+     * re-derivable from the ticket alone.
+     *
+     * ── AND THE TICKET IS SETTLED FROM THE TICKET, WITH NOTHING STORED ────
+     *
+     * `clearTote()` below throws away every replayed book and every dressed
+     * card between the strike and the collection, which is a harder door than
+     * the player's: the card the ticket is settled against is rebuilt from
+     * `(venue, day, id)` and the race is run from its own seed. If any of that
+     * had quietly become state, this is where it shows.
+     */
+    clearTote();
+    const venue = 'holo-theatre';
+    let day = 0, card = [];
+    for (let d = 5; d < 40 && card.length < 3; d++) { card = racesOn(venue, d); day = d; }
+    const race = card[card.length - 1];               // the LAST race of the day
+    const board = boardFor(race);
+    const fav = board.runners.find((x) => x.id === board.favourite);
+
+    /* Two tickets on one race — the market leader and the field against him,
+     * struck at the top of the day, hours before the off. Exactly one can pay,
+     * so a settlement that pays nothing at all is a failure and not a run of
+     * luck, and a pair also proves a race settles ONCE for every ticket on it. */
+    const win = ticketFor(race, { on: fav.id, kind: 'win', stake: 100, at: 0 });
+    const field = ticketFor(race, { kind: 'field', stake: 100, at: 0 });
+    assert(win.ok && field.ok, `the window refused a bet at the top of the day: ${win.why || field.why}`);
+    let held = [win.ticket, field.ticket];
+    for (const t of held) {
+      assert(t.hour === race.hour && t.runs === race.runs && t.day === day && t.venue === venue,
+        'a ticket does not carry when its own race is run — it cannot be settled without the room');
+    }
+
+    /* NOTHING IS DUE UNTIL THE RACE HAS BEEN RUN, at any hour before it. */
+    for (let h = 0; h < race.hour + race.runs; h += 0.25) {
+      assert(!ticketsDue(held, day, h).due.length,
+        `the window paid a ticket at ${h}, before the ${race.word} at ${race.hour} had been run`);
+      assert(!ticketRun(held[0], day, h), `a ticket read as run at ${h}`);
+    }
+
+    /* ── THE DOOR. Every cache in the file is dropped and three days pass. ── */
+    clearTote();
+    const owed = ticketsDue(held, day + 3, 9);
+    assert(owed.due.length === 1 && !owed.held.length,
+      `three days after the race, ${owed.due.length} races were due and ${owed.held.length} tickets were `
+      + 'still being held — a ticket that outlives its own race is the house keeping it');
+    assert(owed.due[0].tickets.length === 2, 'the two tickets on one race did not settle together');
+
+    const led = settleTickets(owed.due[0].tickets, owed.due[0].result);
+    assert(led.lines.filter((l) => l.won).length === 1,
+      `${led.lines.filter((l) => l.won).length} of the two halves of the board paid`);
+    assert(led.returned > 0, 'a ticket abandoned at the door came back worth nothing at all');
+
+    /* THE RESULT IS THE ROOM'S OWN, not a second one run for the ticket. */
+    clearTote();
+    assert(resultOf(raceById(venue, day, race.id)).winner === owed.due[0].result.winner,
+      'the ticket settled against a different running of the same race');
+
+    /* AND ONCE. A paid ticket has left the list, so a panel re-rendering four
+     * times a second cannot collect it again. */
+    const again = ticketsDue(owed.held, day + 3, 9);
+    assert(!again.due.length, 'the same ticket came due a second time');
+
+    /* THE PANEL HOLDS IT OUTSIDE ITSELF, which is the other half and is a
+     * source read for the reason the bell check states: the defect is a
+     * MISSING PATH, and no amount of driving the library can see one. */
+    return readFile(new URL('../../src/main.js', import.meta.url), 'utf8').then((main) => {
+      const code2 = main.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+      const pane = /function showTote\([\s\S]*?\n\}\n/.exec(code2)?.[0] || '';
+      assert(pane, 'there is no showTote in main.js');
+
+      /* THE LIST IS MODULE-LEVEL AND OUTLIVES THE CARD. */
+      const at = code2.search(/^let toteHeld = \[\];$/m);
+      assert(at >= 0, 'main.js keeps no held-ticket list outside the panel — a ticket dies with the screen');
+      assert(at < code2.indexOf('function showTote'),
+        'the held tickets are declared inside the panel, which is the same thing as not holding them');
+      assert(/ticketsDue\(toteHeld/.test(pane),
+        'the panel does not ask what the window owes — there is no settlement path but the live one');
+      assert(!/phase === 'called'[\s\S]{0,120}payAtTote/.test(pane),
+        "the panel still settles only in the 'called' phase, which is 30 seconds a race");
+      for (const door of [/function closeTote\(\)[\s\S]*?\n\}/, /screens\.card\('tote'[^\n]*/]) {
+        const body = door.exec(code2)?.[0] || '';
+        assert(body && !/toteHeld/.test(body),
+          `the way out of the tote drops the held tickets: ${body.slice(0, 80)}`);
+      }
+      /* AND THE BUTTONS ARE NOT GATED ON THE PARADE ANY MORE. */
+      assert(!/const open = r\.phase === 'parading'/.test(pane),
+        'the stake buttons are still on the glass only while the field parades — one race a meet');
+      assert(/r\.card\.map\(/.test(pane) && /class="pick"/.test(pane),
+        'the pane does not print the card or offer a way to pick a race off it');
+      return `${led.returned} back on a 100 struck ${(race.hour).toFixed(2)} h before the off and `
+        + `collected three days later; ${owed.due[0].tickets.length} tickets, one settlement, `
+        + 'and main.js holds them outside the panel';
+    });
   });
 
   check('tote: settlement pays what the ticket says and nothing else', () => {
@@ -1088,7 +1292,10 @@ export async function run({ check, assert }) {
       'the tote panel advances something other than the station clock — two clocks, and they will disagree');
     assert(!/\/\s*120\b/.test(code2),
       'main.js has grown its own copy of the station clock rate — §3.4 lives in Station.js');
-    assert(/toteWatch\(venueId, day, toteHour\(\)\)/.test(code2),
+    /* THE HOUR THE PANEL PRINTS IS THE STATION'S, read once at the top of the
+     * render and used for the reading, the book and the collection alike —
+     * three reads of a clock that moves would be three different rooms. */
+    assert(/const hour = toteHour\(\);/.test(code2) && /toteWatch\(venueId, day, hour\)/.test(code2),
       'showTote no longer reads the station hour — a panel with a private hour is a panel showing another race');
     return 'the panel re-renders on its own setTimeout off performance.now(), winds Station.tickStationClock '
       + 'and reads the hour back off the station — one clock';
