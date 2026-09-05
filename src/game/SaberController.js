@@ -1844,8 +1844,47 @@ export class SaberController {
      * feint with, and feinting a chambered blade is the whole reason to have
      * one.
      */
-    const lmb = input.actHit('thrust');
-    const lmbHeld = input.act('thrust');
+    /**
+     * ══ …AND WITH NO BLADE LIT, THE ATTACK KEY IS NOT THIS FILE'S ═══════════
+     *
+     * `thrust` means two things — a stab with a blade, a punch without one —
+     * and `Player._readInput` has said so since V15 §3. This file never heard
+     * about the second half: it read the press unconditionally, so ONE press
+     * with the blade down opened a light cut, a lunge and the 0.30 s cooldown
+     * behind both, charged `ctx.onThrust`'s 6 stamina on top of the strike's
+     * own 5, and played `audio.swing` with nothing in the hand. Measured
+     * through one real frame, one press, blade down:
+     *
+     *   before   10.50 stamina for a jab that declares 5, `thrustT` running,
+     *            `slashCool` and `thrustCooldown` both 0.30, one saber whoosh
+     *   after    5.00, no envelope, no cooldown, no whoosh
+     *
+     * The 95 mm of forward hand travel a jab used to show was that lunge and
+     * not the punch. `Melee.js`'s own header records this exact defect being
+     * found and fixed on the `push` key for the One Point; it survived here.
+     *
+     * `ctx.armed` is the fact and `!== false` is the default, so the two
+     * callers that drive a body which cannot punch — the driver's seat and the
+     * flight deck — keep the frame they had.
+     *
+     * READ BEFORE IT IS GATED. `input.actHit` is idempotent within a frame by
+     * design, because `_readInput` reads this same press again sixty lines
+     * further on for the strike; short-circuiting the call would be harmless
+     * today and is exactly the shape that breaks the second reader tomorrow.
+     */
+    const armed = ctx.armed !== false;
+    const thrustHit = input.actHit('thrust');
+    const thrustHeld = input.act('thrust');
+    const lmb = armed && thrustHit;
+    const lmbHeld = armed && thrustHeld;
+    /* A BLADE THAT GOES OUT MID-CHARGE DROPS THE CHAMBER RATHER THAN SWINGING
+     * IT. Left alone, the branch below reads `lmbHeld` false as a RELEASE and
+     * fires the heavy — a full cut, a lunge and a whoosh off an unlit hilt on
+     * the frame the player put it away. */
+    if (!armed && this.heavyArmed) {
+      this.heavyArmed = false; this.heavyHold = 0; this.heavyCharge = 0;
+      this._slX = 0; this._slY = 0;
+    }
 
     if (this.heavyArmed) {
       /* CHAMBERED. The guard is driven to the wind-up pose and held there —

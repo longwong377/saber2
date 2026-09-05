@@ -155,6 +155,15 @@ export const CHAIN_WINDOW = 0.42;
  */
 export const MIN_STAMINA = 4;
 
+/**
+ * How long a struck body stays ballistic, before the strike's own `stagger` is
+ * added to it. See the knockback note in `resolve`: `Enemy._move` damps a
+ * shove away inside 0.2 s on any frame the body is free to steer, so a shove
+ * with no window behind it is a number nobody can see. A fifth of a second is
+ * the least that reads as taking a punch rather than leaning into one.
+ */
+export const KNOCK_MIN = 0.2;
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE HOLOCRON BRANCH                                                       */
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -752,27 +761,79 @@ function resolve(player, M, mods, ctx) {
     /* Nothing came away — see DISASSEMBLE. Then it is the heavy blunt strike it
      * always was, and the player is not charged 30 Force for a poke. */
     if (M.disassemble && machine && !cut) dmg *= DISASSEMBLE;
-    const dealt = e.damage?.(dmg, _tgt, player, 'melee');
+    e.damage?.(dmg, _tgt, player, 'melee');
 
-    /* KNOCKBACK, and it is the thing V15 asks for by name. Along the strike,
-     * with a lift in it so a body goes over rather than sliding — `addShove`
-     * is the same door a blast uses and it bounds its own sum, so three
-     * strikes in a second cannot launch anybody into orbit. */
-    if (e.body) {
+    /**
+     * ══ KNOCKBACK, AND IT IS THE THING V15 ASKS FOR BY NAME ═══════════════
+     *
+     * *"it would look good to have noticeable knockback on enemies."* Along
+     * the strike, with a lift in it so a body goes over rather than sliding —
+     * `addShove` is the same door a blast uses and it bounds its own sum, so
+     * three strikes in a second cannot launch anybody into orbit.
+     *
+     * ── IT WAS APPLIED TO THE WRONG OBJECT AND MOVED NOBODY ──────────────
+     *
+     * This read `addShove(e.body, _imp)`. `e.body` is the enemy's KINEMATIC
+     * collision proxy — `Enemy` builds it with `kinematic: true` and copies
+     * the enemy's own position into it every frame in `_syncBody` — so a
+     * velocity written there is read by nothing and overwritten by the next
+     * frame. EVERY OTHER CALLER PASSES THE BODY THAT MOVES: `Enemy.js`'s
+     * `applyKnockback` passes `this`, and `Player.js`'s knockback passes
+     * `this`. Measured on a real b1 with a roundhouse, driven through
+     * `world.update`:
+     *
+     *   before   the impulse landed on `body.velocity`, `e.velocity` never
+     *            moved, displacement over 90 frames 0.00 m
+     *   after    2.4 m, and a jab moves a trooper half a metre
+     *
+     * ── AND A SHOVE ALONE IS ERASED BY THE BODY'S OWN LEGS ───────────────
+     *
+     * `Enemy._move` damps `velocity` toward its `wish` at rate 8 — or toward
+     * zero at 6 with no wish — on every frame `canMove` is true, and `canMove`
+     * is `stunTimer <= 0 && knockTimer <= 0`. So a shove with no `knockTimer`
+     * behind it is gone inside 0.2 s and the body walks out of it as though
+     * nothing had touched it. `knockTimer` is what `applyKnockback` sets for
+     * exactly this reason, and it is the same window a blast gets.
+     *
+     * `KNOCK_MIN` is that window and it is SHORT — a fifth of a second, which
+     * is the ride and not the recovery. A window as long as the stagger was
+     * tried first and measured: `knockTimer` suppresses the damping entirely,
+     * so a roundhouse at 13.6 m/s held for 1.1 s threw a trooper **15.8 m**.
+     * That is a launch, not a blow. At 0.2 s the same kick moves him 2.4 m
+     * and a jab moves him half a metre, which is what the table's 3.5–13 m/s
+     * was authored to mean.
+     *
+     * ── AND THE STAGGER IS A STUN, WHICH IS WHERE IT STOPPED BEING DEAD ──
+     *
+     * `M.stagger` used to run only through `e.duel.stagger`, which exists on
+     * DUELLISTS — `trooper`, `b1`, `b2`, `clone` and `droideka` all carry
+     * `duel.stagger === undefined` — so `roundhouse`'s 0.9 and the whole of
+     * the Open Hand's `stagger: 1.8` were inert against every ordinary enemy
+     * in the game. `Enemy.stun` is the door that answers for both kinds of
+     * body: it holds `stunTimer`, it breaks whatever the guard was holding
+     * together, and it hands a duellist its own reel on the way past. One
+     * call, so the two cannot come apart, and nothing here has a second idea
+     * of what a stagger is.
+     */
+    if (e.velocity) {
       _imp.copy(_q).multiplyScalar(M.impulse * mods.impulse);
       _imp.y += M.lift * M.impulse * mods.impulse;
-      addShove(e.body, _imp);
+      addShove(e, _imp);
+      e.knockTimer = Math.max(e.knockTimer ?? 0, KNOCK_MIN);
+      e.grounded = false;
+      const stagger = M.stagger * mods.stagger;
+      if (stagger > 0) { try { e.stun?.(stagger, _q, 1.0); } catch {} }
     }
-    /* …and it STAGGERS, which is what separates the heavy end of the chain
-     * from the light. A jab does not; a roundhouse does. */
-    if (M.stagger > 0 && e.duel?.stagger) {
-      try { e.duel.stagger(M.stagger * mods.stagger, _q, 1.0); } catch {}
-    }
-    /* A JOINT COMING OFF IS A HIT even when the damage call answers false,
-     * which is what it answers on a body the severing has already killed —
-     * `set.landed` and the HUD both read this, and a One Point that deleted a
-     * b1 used to report itself as a miss. */
-    if (dealt !== false || cut) hits++;
+    /**
+     * A BODY IN THE CONE IS A HIT, and the damage call cannot say so.
+     * `Enemy.damage` returns TRUE ONLY WHEN THE BLOW KILLS — measured, a jab
+     * that took a b1 from 28 to 19 answered `false` — so `dealt !== false`
+     * counted a hit only on the frame something died. `set.landed`, the HUD's
+     * melee row and `meleePrompt` all read this, and every non-fatal punch in
+     * the game reported itself as a miss. What was hit is what the cone
+     * caught: everything above this line has already been damaged and shoved.
+     */
+    hits++;
     /* The hit's report: a thump rather than a hum, and dust rather than
      * sparks. `Impact` is the door every striker in the game already uses. */
     ctx?.hitSpark?.(_tgt, 'blunt');
@@ -793,8 +854,30 @@ function resolve(player, M, mods, ctx) {
  * home. Three points and a smooth step between them is a punch; a single
  * keyframe is a hand appearing at arm's length.
  *
- * Called AFTER the animator, so the gait has already put the body where it is
- * and this overrides one limb of it — the same order `applySalute` uses.
+ * ── WHERE IT IS CALLED FROM, AND IT WAS THROWN AWAY ON THE SAME FRAME ────
+ *
+ * Called AFTER the animator, which is what `applySalute` does and for the same
+ * reason — the gait puts the body where it is and one limb is then taken off
+ * it. That was true and it was not enough. `Player._updateBody` runs two lines
+ * after the gait and RE-SOLVES BOTH ARMS onto the hilt every frame, and it had
+ * no idea this file existed. Measured, blade down, through a real
+ * `world.update`:
+ *
+ *   poseMelee called alone                  handR travels 0.40 m at once
+ *   through a normal frame                  handR travels 0.0032 m
+ *   through a frame with the hilt IK stubbed handR travels 0.91 m
+ *
+ * i.e. THE KICKS ANIMATED AND NOT ONE PUNCH DID, because `_updateBody` only
+ * owns the arms. What a player saw on a punch was the saber's own stab
+ * envelope with an empty fist in it.
+ *
+ * So this is called from `_updateBody` itself now, AFTER the spine and the
+ * girdle — which are ancestors of the arm, and solving a limb before its own
+ * parent is written drags the result off by up to 18 cm, a defect that file
+ * already has a paragraph about — and INSTEAD of the hilt solve for whichever
+ * limb `strikingPole` names. `stepMelee` stays where it was: advancing the
+ * clock and resolving the live moment are not pose work and must not move
+ * inside the frame.
  */
 export function poseMelee(player, mods = null) {
   const set = player._melee;
@@ -842,6 +925,20 @@ export function poseMelee(player, mods = null) {
 
   rig.solveIK(M.pole, M.joint, _tgt, _pole);
   return true;
+}
+
+/**
+ * WHICH LIMB A RUNNING STRIKE OWNS THIS FRAME, or null when none does.
+ *
+ * The ONE reader is `Player._updateBody`, which must not solve that limb onto
+ * the hilt while `poseMelee` is driving it — see the note above. It answers
+ * with the bone `MOVES[…].pole` names (`armR`, `armL`, `thighR`, `thighL`), so
+ * the table stays the only place that says which limb throws which strike and
+ * Player.js does not get a second copy of it.
+ */
+export function strikingPole(player) {
+  const move = player?._melee?.move;
+  return move ? MOVES[move].pole : null;
 }
 
 /**

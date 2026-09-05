@@ -191,10 +191,15 @@ export async function run({ check, assert, THREE }) {
      * is arithmetic and a cone test, and a headless World would make the check
      * slower without making it truer. */
     const hit = [];
+    /* `velocity` AND `knockTimer` AND `stun`, because those are what a real
+     * `Enemy` carries and what the shove now writes. The old stand-in had a
+     * `body: { velocity }` and nothing else — see the real-world knockback
+     * check below for why that made the guard assert the defect. */
     const struck = {
       dead: false, hp: 100, maxHp: 100, position: new THREE.Vector3(0, 0, -1.2),
-      hipHeight: 0.95, radius: 0.4,
-      body: { velocity: new THREE.Vector3() },
+      hipHeight: 0.95, radius: 0.4, knockTimer: 0, grounded: true,
+      velocity: new THREE.Vector3(), stunned: 0,
+      stun(t) { this.stunned = Math.max(this.stunned, t); },
       damage(n, p, src, kind) { hit.push({ n, kind }); this.hp -= n; return true; },
     };
     const far = { ...struck, position: new THREE.Vector3(0, 0, -9), damage() { hit.push({ far: true }); return true; } };
@@ -218,9 +223,13 @@ export async function run({ check, assert, THREE }) {
     assert(real[0].kind === 'melee', `dealt as '${real[0].kind}'`);
     assert(!hit.some((h) => h.far), 'it reached something 9 m away');
     assert(!hit.some((h) => h.behind), 'it hit something behind the fighter');
-    assert(struck.body.velocity.length() > 1,
-      `the struck body moved ${struck.body.velocity.length().toFixed(2)} m/s — V15 asks for noticeable knockback`);
-    assert(struck.body.velocity.y > 0, 'the shove has no lift in it');
+    assert(struck.velocity.length() > 1,
+      `the struck body moved ${struck.velocity.length().toFixed(2)} m/s — V15 asks for noticeable knockback`);
+    assert(struck.velocity.y > 0, 'the shove has no lift in it');
+    /* AND IT IS BALLISTIC FOR A MOMENT. Without this the body's own legs damp
+     * the shove away inside 0.2 s — see the note in `resolve`. */
+    assert(struck.knockTimer >= M.KNOCK_MIN,
+      `the shove left ${struck.knockTimer}s of ride on the body, so its own legs erase it`);
 
     /* THE CHAIN IS OPEN, and the next press is the next move. */
     assert(player._melee.chain === 'cross', `the chain offers '${player._melee.chain}'`);
@@ -412,11 +421,190 @@ export async function run({ check, assert, THREE }) {
     const acts = Object.keys(B.DEFAULTS || B.BINDINGS || {});
     assert(!acts.includes('melee') && !acts.includes('punch') && !acts.includes('kick'),
       'a melee binding was added — one key with two meanings is the pattern here');
-    /* The strike is posed AFTER the animator, or the gait overwrites it. */
+    /* The strike is posed AFTER the animator, or the gait overwrites it. What
+     * actually erased the punch was two lines further on and no reading of
+     * this file could have seen it — see the measured check below. */
     const iAnim = code.indexOf('this.animator.update(');
     const iPose = code.indexOf('poseMelee(this)');
     assert(iAnim > 0 && iPose > iAnim,
       'poseMelee runs before the animator, so the gait overwrites the punch on the frame it is thrown');
+  });
+
+  check('melee: every strike moves the limb it names, through a real frame', async () => {
+    /**
+     * ══ THE PUNCH POSE WAS THROWN AWAY IN THE SAME FRAME IT WAS WRITTEN ════
+     *
+     * The clause above this one asserted the ORDER OF TWO STRINGS in
+     * Player.js: `poseMelee(this)` after `this.animator.update(`. That was
+     * true, it had been true since the set shipped, and the thing erasing the
+     * punch was two lines past the end of what it read — `_updateBody`, which
+     * re-solved BOTH ARMS onto the hilt every frame and contained no reference
+     * to the melee set at all. Measured, blade down, per move, cumulative
+     * travel of the limb the move names over its whole envelope:
+     *
+     *              before    after
+     *   jab        0.0032    2.45
+     *   cross      0.0039    2.53
+     *   hook       0.0028    2.79
+     *   roundhouse 3.6153    3.62      (kicks always worked — nothing in
+     *   front      3.3662    3.37       `_updateBody` owns a leg)
+     *
+     * THE KICKS ANIMATED AND NOT ONE PUNCH DID. What a player saw on a punch
+     * was the saber's own stab envelope with an empty fist in it, which is why
+     * no clause in this file caught it: every number melee OWNS was right.
+     *
+     * So this drives real frames and watches the bone. A grep cannot see one
+     * subsystem writing over another and this is the shape that can.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const M = await import('../../src/game/Melee.js');
+    const { world } = await bootWorld({});
+    try {
+      const idle = idleInput();
+      const p = world.player;
+      p.saber.lit = false;
+      p.camera.yaw = 0; p.camera.pitch = 0;
+      const said = [];
+      for (const name of M.MOVE_KEYS) {
+        const mv = M.MOVES[name];
+        /* The One Point is reached by asking for it and costs Force on top. */
+        if (mv.needs) { p.boonMods.meleePoint = 1; p.force = p.maxForce ?? 100; }
+        p.stamina = p.maxStamina;
+        p._melee = null;
+        assert(M.strike(p, null, name) === name, `'${name}' would not come out`);
+        const v = new THREE.Vector3();
+        let prev = null, travel = 0;
+        const frames = Math.ceil((mv.wind + mv.hit + mv.rec) * 60) + 4;
+        for (let i = 0; i < frames; i++) {
+          world.update(1 / 60, idle);
+          /* Relative to the fighter, so walking is not mistaken for punching.
+           * He is standing still here; this is belt and braces. */
+          const rel = p.rig.worldPos(mv.limb, v).clone().sub(p.position);
+          if (prev) travel += rel.distanceTo(prev);
+          prev = rel;
+        }
+        /* HALF A METRE. A strike whose reach is 1.55 m at its shortest throws
+         * the limb out and brings it home, so the path is metres; the bar is
+         * set where a pose that is merely PRESENT clears it and the 3 mm of
+         * breathing an overwritten arm showed cannot. */
+        assert(travel > 0.5,
+          `${mv.label} moved ${mv.limb} ${travel.toFixed(4)} m through a real frame — `
+          + 'something downstream is solving that limb on top of the strike');
+        said.push(`${name} ${travel.toFixed(2)}`);
+      }
+      return `limb travel through world.update, m: ${said.join(', ')}`;
+    } finally { world.dispose?.(); }
+  });
+
+  check('melee: a strike moves the enemy, and one punch costs one punch', async () => {
+    /**
+     * ══ TWO DEFECTS THAT ONLY A REAL WORLD COULD SEE ═══════════════════════
+     *
+     * ── THE SHOVE WENT TO THE WRONG OBJECT ────────────────────────────────
+     *
+     * `resolve` called `addShove(e.body, …)`. `e.body` is the enemy's
+     * KINEMATIC collision proxy and its velocity is read by nothing; every
+     * other caller in the tree passes the body that moves. Worse, THE GUARD
+     * ASSERTED THE BUG: the clause above this one stood a hand-made target
+     * `{ body: { velocity } }` in the cone and asserted on the exact field the
+     * defect wrote, so it was green about a kick that moved nobody. Measured
+     * on a real b1, a roundhouse, 90 frames, displacement along the strike:
+     *
+     *   before   0.00 m        after   4.66 m
+     *
+     * ── AND ONE PUNCH COST 2.2x ITS DECLARED STAMINA ──────────────────────
+     *
+     * `SaberController.applyInput` read `actHit('thrust')` with no test for
+     * the blade being lit, so one press with the blade down ALSO opened a
+     * light cut and a lunge, put the blade on a 0.30 s cooldown and played a
+     * saber whoosh with nothing in the hand. Measured, one frame, one press:
+     *
+     *   before   10.50 stamina charged, `thrustT` running, cooldowns 0.30
+     *   after     5.00, no envelope, no cooldown
+     *
+     * `melee.mjs` could not see it: the clause above uses a hand-made player
+     * with no SaberController on it and reads the honest 5.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const M = await import('../../src/game/Melee.js');
+    const idle = idleInput();
+
+    const shove = async (thrown) => {
+      const { world } = await bootWorld({});
+      try {
+        const p = world.player;
+        p.saber.lit = false;
+        p.camera.yaw = 0; p.camera.pitch = 0;
+        p.stamina = p.maxStamina;
+        p._melee = null;
+        const at = p.position.clone(); at.z -= 1.4;
+        const e = world.spawnEnemy('b1', at);
+        assert(e, 'no b1 to kick');
+        e.noReact = true;
+        /* A TARGET THAT IS NOT WALKING ANYWHERE, so what moves it is the kick
+         * and not its own legs. Without this the control run wanders metres
+         * and the measurement means nothing. */
+        e._think = () => { e.wish = null; };
+        const from = e.position.clone();
+        if (thrown) assert(M.strike(p, null, 'roundhouse') === 'roundhouse', 'the kick would not come out');
+        /* The stagger is a countdown, so it is watched rather than read at the
+         * end — 0.9 s has expired long before the body has finished moving. */
+        let stunned = 0;
+        for (let i = 0; i < 90; i++) {
+          world.update(1 / 60, idle);
+          stunned = Math.max(stunned, e.stunTimer ?? 0);
+        }
+        return { d: -(e.position.z - from.z), stunned, hits: p._melee?.landed ?? 0 };
+      } finally { world.dispose?.(); }
+    };
+    const kicked = await shove(true);
+    const still = await shove(false);
+    assert(Math.abs(still.d) < 0.05, `the control target drifted ${still.d.toFixed(2)} m on its own`);
+    assert(kicked.d > 1.5,
+      `a roundhouse moved a trooper ${kicked.d.toFixed(2)} m — V15 asks for noticeable knockback`);
+    /* AND THE STRIKE KNOWS IT LANDED. `Enemy.damage` returns true only when
+     * the blow KILLS, so `dealt !== false` counted a hit on the frame
+     * something died and on no other: every non-fatal punch in the game
+     * reported itself as a miss to `set.landed`, to the HUD's melee row and to
+     * `meleePrompt`. */
+    assert(kicked.hits === 1, `the kick landed and the set recorded ${kicked.hits} hits`);
+    /* …AND IT STAGGERS A BODY THAT IS NOT A DUELLIST. `M.stagger` used to run
+     * only through `e.duel.stagger`, which `trooper`, `b1`, `b2`, `clone` and
+     * `droideka` do not have — so `roundhouse`'s 0.9 and the whole of the Open
+     * Hand's `stagger: 1.8` were dead against every ordinary enemy. */
+    assert(kicked.stunned > 0.3,
+      `a trooper took a roundhouse and kept ${kicked.stunned.toFixed(2)}s of stagger`);
+
+    /* ── and the press, which is the other half. ── */
+    const { world } = await bootWorld({});
+    try {
+      const p = world.player;
+      p.saber.lit = false;
+      p.camera.yaw = 0; p.camera.pitch = 0;
+      p.stamina = p.maxStamina;
+      p._melee = null;
+      const c = p.control;
+      c.thrustT = -1; c.slashCool = 0; c.thrustCooldown = 0;
+      const press = (() => { const i = idleInput(); i.act = (a) => a === 'thrust'; i.actHit = (a) => a === 'thrust'; return i; })();
+      const s0 = p.stamina;
+      world.update(1 / 60, press);
+      const spent = s0 - p.stamina;
+      assert(p._melee?.move === 'jab', `the press threw '${p._melee?.move}', not the opener`);
+      /* One frame of regen is in this number and it is under half a point. */
+      assert(spent < M.MOVES.jab.stamina + 0.6,
+        `one jab charged ${spent.toFixed(2)} stamina and the move declares ${M.MOVES.jab.stamina}`);
+      assert(c.thrustT < 0, 'the punch also opened the blade\'s lunge envelope');
+      assert(c.slashCool <= 0 && c.thrustCooldown <= 0,
+        `the punch put the blade on a ${c.slashCool.toFixed(2)}s cooldown`);
+      /* AND THE BLADE STILL CUTS. Half of this fix is that nothing changed for
+       * a fighter holding a lit weapon. */
+      p.saber.lit = true;
+      p.stamina = p.maxStamina;
+      world.update(1 / 60, press);
+      assert(c.thrustT >= 0, 'the attack key stopped cutting with the blade lit');
+      return `roundhouse ${kicked.d.toFixed(2)} m against a control of ${still.d.toFixed(2)}, `
+        + `${kicked.stunned.toFixed(2)}s of stagger; one jab ${spent.toFixed(2)} stamina and no saber cut`;
+    } finally { world.dispose?.(); }
   });
 
   check('melee: one press is one move — the One Point does not also throw a Force push', async () => {
