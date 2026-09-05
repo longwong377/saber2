@@ -166,4 +166,48 @@ export async function run({ check, assert }) {
     assert(one.hurtByPlayer === true, 'a blow the player meant did not mark the resident');
     return `${res.length} residents all marked; the player's 12 took ${before.toFixed(0)} -> ${one.hp.toFixed(0)} hp`;
   });
+
+  check('consequence: nobody on the concourse is hunting you', async () => {
+    const { idleInput } = await import('./_coop.mjs');
+    const world = await station(40);
+    const input = idleInput();
+    for (let f = 0; f < 60 * 5; f++) world.update(1 / 60, input);
+    const res = world.enemies.filter((e) => e.stationName);
+    assert(res.length > 4, `only ${res.length} residents — this proves nothing`);
+    /**
+     * THE ASYMMETRY, AND WHY A TEAM CANNOT HOLD IT.
+     *
+     * `world.rules` on a station is `{pvp:false, friendlyFire:true}`, and the
+     * friendly fire is load-bearing: §11's "cut or throw one" REQUIRES the
+     * player to be able to harm a resident. But `canHarm` is symmetric, so the
+     * same rule that lets you cut a shopkeeper let the shopkeeper come for
+     * you — `hostileTo` handed `pickTarget` the player and all 28 bodies on
+     * deck 40 walked at them at 2.7 m/s, on 292 of 300 frames.
+     *
+     * Both halves are asserted because either alone is satisfiable by a
+     * broken game: turning friendly fire off would pass the first and silently
+     * delete §11, and the guard clause above would pass on a station where
+     * nothing can be harmed at all.
+     */
+    assert(world.rules?.friendlyFire === true,
+      'friendly fire is off on the station — §11\'s "cut or throw one" cannot happen');
+    const hunting = res.filter((e) => e.target === world.player);
+    assert(hunting.length === 0,
+      `${hunting.length} of ${res.length} residents have the player as their target`);
+    /* And they are not merely target-less — they are not MOVING. A body that
+     * picked nobody but still walks would pass the clause above. */
+    const at = res.map((e) => e.position.clone());
+    for (let f = 0; f < 60 * 3; f++) world.update(1 / 60, input);
+    let worst = 0;
+    res.forEach((e, i) => {
+      if (!world.enemies.includes(e)) return;
+      worst = Math.max(worst, e.position.distanceTo(at[i]));
+    });
+    /* A walkway walker is propelled by `stepWalkers`, not by a brain, and its
+     * own suite bounds that. This is only asking that nobody CHARGES: three
+     * seconds of a chase covered eight metres. */
+    assert(worst < 3, `a resident covered ${worst.toFixed(2)} m in 3 s with nobody to chase`);
+    return `${res.length} residents, 0 hunting, worst travel ${worst.toFixed(2)} m in 3 s, `
+      + 'friendly fire still on so §11 can happen';
+  });
 }

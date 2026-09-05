@@ -375,7 +375,9 @@ export async function run({ check, assert }) {
       const widestPad = H.PADS.map((q) => q.id).sort((a, b) => b.length - a.length)[0];
       const widestKind = Object.keys(CK.COMPANION_KINDS).filter((k) => H.padSuit(k))
         .sort((a, b) => b.length - a.length)[0];
-      const ceiling = JSON.stringify({ p: widestPad, c: [widestKind, CK.GROWTH_STAGES.length - 1] }).length - 2;
+      /* The two braces stand in for the two commas the fields are appended
+       * with, so the JSON of the pair on its own IS the ceiling exactly. */
+      const ceiling = JSON.stringify({ p: widestPad, c: [widestKind, CK.GROWTH_STAGES.length - 1] }).length;
       assert(full - bare <= ceiling,
         `the fixture and the animal cost ${full - bare} B on top of ${bare} B, and the widest they `
         + `can be is ${ceiling} B`);
