@@ -296,27 +296,67 @@ const _warpC = new THREE.Color(), _warpA = new THREE.Color();
  * how a hole is cut in a merged floor without a boolean: the plate is still
  * one mesh per material, so a well costs a few boxes and NO extra draw call.
  * See `standingWell` for the one thing that asks for it and why.
+ *
+ * ── AND IT RETURNS THE HOLE IT ACTUALLY MADE, WHICH IS NOT THE ONE ASKED ──
+ *
+ * A segment is either laid or it is not, so the bearings are quantised OUT to
+ * whole segments; and `lay` refuses a remainder thinner than 0.25 m, so a cut
+ * that comes within that of either edge takes the edge with it. Asked for
+ * 8.13°..18.70° at n=72, this cuts 10.0°..20.0° — 180.4 m² against #56's
+ * 132 m² footprint. `railWell` used to fence the FOOTPRINT, which is how
+ * 149.8 m² of the deck-48 well came to have no rail on it. So the hole is
+ * returned and the rail is laid on the RETURN VALUE: there is one region,
+ * this function decides it, and nothing else repeats the arithmetic.
  */
 function annulus(kit, mat, y, h, r0, r1, n, opts = {}) {
   const from = opts.from ?? 0, to = opts.to ?? TAU;
   const span = to - from;
   const seg = Math.max(3, Math.round(n * (span / TAU)));
   const collide = opts.collide !== false;
-  /* Each segment is a chord, so it is made slightly long: a box whose ends
+  /**
+   * Each segment is a chord, so it is made slightly long: a box whose ends
    * meet its neighbours' on the OUTER radius leaves a wedge of gap on the
-   * inner one, and a floor with gaps in it is a floor a capsule falls through. */
+   * inner one, and a floor with gaps in it is a floor a capsule falls through.
+   *
+   * ── AND IT IS SIZED AT `rB`, NOT AT THE MIDDLE ──────────────────────────
+   *
+   * It was sized at the chord's own MIDDLE radius, which is the same sentence
+   * with the wrong number in it: a sector is wider the further out you go, so
+   * a box that spans it at the middle falls short of it at the outer end, and
+   * every pair of neighbours left a wedge between them. Measured at the well's
+   * lip on deck 44, where two cut segments put their inner remainders side by
+   * side: 35.4 m² of plate missing over a 12.5 m drop, in a wedge 1.85 m wide
+   * at the inner rail — reachable, unfenced, and nothing to do with the well.
+   * Sized at `rB` the ends meet where the sector is widest and OVERLAP inward,
+   * which is free: the segments merge into one mesh per material either way.
+   */
   const lay = (rA, rB, a) => {
     if (rB - rA < 0.25) return;
     const rMid = (rA + rB) / 2;
-    kit.slab(mat, 2 * rMid * Math.tan(span / seg / 2) * 1.06, h, rB - rA,
+    kit.slab(mat, 2 * rB * Math.tan(span / seg / 2) * 1.06, h, rB - rA,
       rMid * Math.sin(a), y, rMid * Math.cos(a), { ry: a, collide, bevel: 0 });
   };
   const cut = opts.omit || null;
+  /* The hole as MADE: the bearings of the segments actually skipped, and the
+   * radii the remainders actually left. */
+  let c0 = Infinity, c1 = -Infinity, hr0 = cut ? cut.r0 : 0, hr1 = cut ? cut.r1 : 0;
   for (let i = 0; i < seg; i++) {
     const a = from + span * ((i + 0.5) / seg);
-    if (cut && a > cut.a0 && a < cut.a1) { lay(r0, cut.r0, a); lay(cut.r1, r1, a); continue; }
+    if (cut && a > cut.a0 && a < cut.a1) {
+      if (a < c0) c0 = a;
+      if (a > c1) c1 = a;
+      /* `lay`'s own 0.25 m floor, read back: a remainder it refused is plate
+       * that is not there, so the hole runs out to the ring's edge. */
+      if (cut.r0 - r0 < 0.25) hr0 = r0;
+      if (r1 - cut.r1 < 0.25) hr1 = r1;
+      lay(r0, cut.r0, a); lay(cut.r1, r1, a); continue;
+    }
     lay(r0, r1, a);
   }
+  if (!cut || c1 < c0) return null;
+  /* A skipped segment's centre is half a segment from each of its own edges. */
+  const half = span / seg / 2;
+  return { a0: c0 - half, a1: c1 + half, r0: hr0, r1: hr1 };
 }
 
 /**
@@ -347,21 +387,53 @@ function annulus(kit, mat, y, h, r0, r1, n, opts = {}) {
  * therefore not a nicety: it is the collider that keeps anything from being
  * over the void in the first place, drawn rather than invisible, which is the
  * balcony rail's own rule six lines down ("you can see what stops you").
+ *
+ * ── AND THAT SENTENCE WAS FALSE FOR A THIRD OF THE HOLE ───────────────────
+ *
+ * It was, from the day it was written. This function handed back the polar
+ * bounding box of a YAWED rectangle, `annulus` quantised that out to whole
+ * 5° segments, and `railWell` then laid its rail on the ORIGINAL rectangle —
+ * two derivations of one region, so the hole was bigger than the fence by
+ * construction. Measured with a raycast grid over the whole cut, flooding in
+ * at knee height from the plate outside it: 93.8 m² of deck 44 and 149.8 m² of
+ * deck 48 were walkable with nothing under them, reaching 2.61 m and 3.13 m
+ * clear of the last solid floor over drops of 12.5 m and 25.0 m. Standing on
+ * air over the void, which is worse than falling, because falling ends.
+ *
+ * So this returns the REQUEST — the region the cut is asked for — and
+ * `annulus` returns the region it actually cut, and the rail is laid on that.
+ * The two cannot disagree because there is only one of them.
  */
 function standingWell() {
   const p = PLACE.get(56);
   if (!p) return null;
   const c = Math.cos(p.yaw), s = Math.sin(p.yaw);
-  let r0 = Infinity, r1 = -Infinity, a0 = Infinity, a1 = -Infinity;
   /* The four corners, in the drum's polar frame. #56 stands at bearing 13°,
    * nowhere near the ±π seam, so a min/max over four bearings is the whole
    * arithmetic and there is no wrap to handle — `station.mjs` pins that. */
-  for (const [lx, lz] of [[-p.w / 2, -p.d / 2], [p.w / 2, -p.d / 2], [p.w / 2, p.d / 2], [-p.w / 2, p.d / 2]]) {
-    const x = p.x + lx * c + lz * s, z = p.z - lx * s + lz * c;
+  const C = [[-p.w / 2, -p.d / 2], [p.w / 2, -p.d / 2], [p.w / 2, p.d / 2], [-p.w / 2, p.d / 2]]
+    .map(([lx, lz]) => [p.x + lx * c + lz * s, p.z - lx * s + lz * c]);
+  let r1 = -Infinity, a0 = Infinity, a1 = -Infinity;
+  for (const [x, z] of C) {
     const r = Math.hypot(x, z), a = Math.atan2(x, z);
-    r0 = Math.min(r0, r); r1 = Math.max(r1, r); a0 = Math.min(a0, a); a1 = Math.max(a1, a);
+    if (r > r1) r1 = r;
+    if (a < a0) a0 = a;
+    if (a > a1) a1 = a;
   }
-  return { r0, r1, a0, a1, x: p.x, z: p.z, w: p.w, d: p.d, yaw: p.yaw };
+  /* THE INNER RADIUS IS THE NEAREST POINT OF THE RECTANGLE, NOT OF ITS
+   * CORNERS. The near face is a chord, so its midpoint is 0.55 m closer to
+   * the axis here than either end of it, and a cut that starts at the corners
+   * leaves a crescent of plate inside the hall — a lip the column stands
+   * behind, at the one place the player walks up to it. Four point-to-segment
+   * distances, which is the same arithmetic the corner loop is. */
+  let r0 = Infinity;
+  for (let i = 0; i < 4; i++) {
+    const [x0, z0] = C[i], [x1, z1] = C[(i + 1) % 4];
+    const dx = x1 - x0, dz = z1 - z0;
+    const t = Math.max(0, Math.min(1, -(x0 * dx + z0 * dz) / (dx * dx + dz * dz)));
+    r0 = Math.min(r0, Math.hypot(x0 + t * dx, z0 + t * dz));
+  }
+  return { r0, r1, a0, a1 };
 }
 
 /**
@@ -369,7 +441,16 @@ function standingWell() {
  * balcony rail's own height, and it COLLIDES — see the note over
  * `standingWell` about why the rail is the safety and not the floor.
  *
- * ── AND IT STOPS AT ANOTHER ROOM'S WALL ───────────────────────────────────
+ * ── IT IS LAID ON THE HOLE, IN THE HOLE'S OWN FRAME ───────────────────────
+ *
+ * `cut` is `annulus`'s return: the polar region the plate is actually missing,
+ * quantised bearings and all. So the fence is two ARCS and two RADIAL runs
+ * rather than the four sides of a rectangle — the hole is a polar shape and a
+ * rectangle laid over it is the defect this replaces. The runs are inset
+ * `PAD` onto the SOLID side of every edge, so the post's own footprint stands
+ * on plate and the walkable floor stops before the drop does.
+ *
+ * ── AND IT DOES NOT STOP AT ANOTHER ROOM'S WALL ANY MORE ─────────────────
  *
  * #56's hall is 12 x 11 m and three decks tall, and the two rooms its shaft
  * passes are not clear of it: measured with `station.mjs`'s own separating-axis
@@ -378,37 +459,59 @@ function standingWell() {
  * gazetteer's overlap check compares places on the SAME deck, and a 26 m hall
  * on 40 is nobody's neighbour by that test.
  *
- * The plate cut is harmless inside those two: both build their own floor at
- * this deck's height, so a cut under a room is a hole with a floor over it.
- * The RAIL is not harmless — a balustrade standing inside the reactor hall is
- * a thing the player walks into for no reason — so each side is laid in short
- * runs and a run whose middle is inside another place on this deck is skipped.
- * What is left is exactly the rail you can reach.
+ * This used to skip any run whose middle stood inside one of those, on the
+ * argument that both build their own floor at this deck's height, so a cut
+ * under a room is a hole with a floor over it and a balustrade in the reactor
+ * hall is a thing you walk into for no reason. HALF OF THAT IS TRUE. The
+ * reactor hall's floor covers 29 m² of the cut and no more — the cut runs out
+ * past its east wall — so skipping the runs left 149.8 m² of the deck-48 well
+ * with no rail on it at all, measured by raycast, worse than the rectangle it
+ * replaced. A room's wall is not evidence of a floor.
+ *
+ * So the fence is the WHOLE cut, every run, and where it crosses a room it is
+ * the rail round a shaft that passes through that room, which is what it is.
+ * The patch of reactor-hall floor left on the far side of it is 29 m² a player
+ * can no longer reach, and that is the trade: unreachable is safe, and the
+ * alternative is standing on air over 25 m. `station.mjs` raycasts a grid over
+ * the whole cut and holds the unfenced leftover to zero square metres.
  */
-function railWell(kit, M, deck, y, well) {
-  const c = Math.cos(well.yaw), s = Math.sin(well.yaw);
-  const rooms = placesOn(deck).filter((p) => p.band !== 'ring' && p.id !== 56);
-  const covered = (x, z) => rooms.some((p) => {
-    const dx = x - p.x, dz = z - p.z;
-    const pc = Math.cos(-p.yaw), ps = Math.sin(-p.yaw);
-    return Math.abs(dx * pc + dz * ps) <= p.w / 2 && Math.abs(-dx * ps + dz * pc) <= p.d / 2;
-  });
-  const hw = well.w / 2 + 0.2, hd = well.d / 2 + 0.2;
-  const RUN = 6;
-  const side = (fx, fz, w, d) => {
-    for (let i = 0; i < RUN; i++) {
-      const t = (i + 0.5) / RUN - 0.5;
-      const lx = fx(t), lz = fz(t);
-      const x = well.x + lx * c + lz * s, z = well.z - lx * s + lz * c;
-      if (covered(x, z)) continue;
-      kit.slab(M.dark, w, 1.05, d, x, y + 0.52, z, { ry: well.yaw, collide: true, bevel: 0 });
-      kit.slab(M.strip, w, 0.1, d, x, y + 1.08, z, { ry: well.yaw, collide: false, bevel: 0 });
-    }
+function railWell(kit, M, deck, y, cut) {
+  /* 0.12 m out from every edge, which is two thirds of the rail's own 0.18 m
+   * thickness: the post then overhangs the hole by 0.03 and stands on 0.15 of
+   * plate, so the fence reads as being ON the lip rather than floating over
+   * it, and a capsule stopped by it is stopped on solid floor. */
+  const PAD = 0.12;
+  const r0 = cut.r0 - PAD, r1 = cut.r1 + PAD;
+  const a0 = cut.a0 - PAD / r1, a1 = cut.a1 + PAD / r1;
+  /* And each run is overlapped into its neighbours at the four corners by the
+   * same PAD, because a 0.12 m slot at knee height is a slot a body fits. */
+  const post = (x, z, w, d, ry) => {
+    kit.slab(M.dark, w, 1.05, d, x, y + 0.52, z, { ry, collide: true, bevel: 0 });
+    kit.slab(M.strip, w, 0.1, d, x, y + 1.08, z, { ry, collide: false, bevel: 0 });
   };
-  side((t) => t * hw * 2, () => -hd, (hw * 2) / RUN + 0.02, 0.18);
-  side((t) => t * hw * 2, () => hd, (hw * 2) / RUN + 0.02, 0.18);
-  side(() => -hw, (t) => t * hd * 2, 0.18, (hd * 2) / RUN + 0.02);
-  side(() => hw, (t) => t * hd * 2, 0.18, (hd * 2) / RUN + 0.02);
+  /* RUNS OF ABOUT TWO METRES. A run is one box, so the arcs are chords and
+   * the number is how far a chord may sag inside the circle it fences: 2 m at
+   * r = 66 is 8 mm, which is nothing, and a single 15 m box would be 0.4 m
+   * and would fence the wrong line. */
+  const RUN = 2;
+  for (const r of [r0, r1]) {
+    const A0 = a0 - PAD / r, A1 = a1 + PAD / r;
+    const n = Math.max(2, Math.ceil((r * (A1 - A0)) / RUN));
+    const step = (A1 - A0) / n;
+    for (let i = 0; i < n; i++) {
+      const a = A0 + step * (i + 0.5);
+      post(r * Math.sin(a), r * Math.cos(a), 2 * r * Math.tan(step / 2) * 1.06, 0.18, a);
+    }
+  }
+  for (const a of [a0, a1]) {
+    const R0 = r0 - PAD, R1 = r1 + PAD;
+    const n = Math.max(2, Math.ceil((R1 - R0) / RUN));
+    const step = (R1 - R0) / n;
+    for (let i = 0; i < n; i++) {
+      const r = R0 + step * (i + 0.5);
+      post(r * Math.sin(a), r * Math.cos(a), 0.18, step + 0.02, a);
+    }
+  }
 }
 
 /**
@@ -433,12 +536,16 @@ function buildDeckPlate(kit, M, deck) {
   const well = standingWell();
   const cutPlate = well && (deck === 44 || deck === 48) ? well : null;
   const cutSoffit = well && (deck === 40 || deck === 44) ? well : null;
-  /* The floor: balcony lip out to the skin, in one merged annulus. */
-  annulus(kit, M.deep, y - 0.3, 0.6, DRUM.atrium, DRUM.R, 72, { omit: cutPlate });
+  /* The floor: balcony lip out to the skin, in one merged annulus. THE HOLE
+   * IT REPORTS is what gets railed — not `well`, which is only the request.
+   * See `standingWell`: a second derivation of this region is precisely the
+   * defect, so there is not one. */
+  const hole = annulus(kit, M.deep, y - 0.3, 0.6, DRUM.atrium, DRUM.R, 72, { omit: cutPlate });
   /* The soffit over it — the next deck's underside, so a player on 40 looking
-   * up sees a ceiling and not the sky. The top deck gets one too. */
+   * up sees a ceiling and not the sky. The top deck gets one too. It quantises
+   * on its own 48 segments and is NOT railed: nothing stands on a ceiling. */
   annulus(kit, M.dark, y + DRUM.storey + 0.4, 0.8, DRUM.atrium, DRUM.R, 48, { collide: false, omit: cutSoffit });
-  if (cutPlate) railWell(kit, M, deck, y, cutPlate);
+  if (hole) railWell(kit, M, deck, y, hole);
   /* The balcony rail round the void, and the light under its lip: §3.1 rule 1
    * wants the void READ as the station's landmark, and an unlit edge at
    * twelve metres reads as a wall. */
@@ -971,6 +1078,10 @@ export function dressStation(world) {
     st.shaft = shaft;
     dressDeckLift(world, {
       arrive: true,
+      /* WHICH FLOOR THE CAR IS STANDING ON. The button column starts on it,
+       * so a player stepping out on 48 reads `48 <NAME> · WORKING DECK` and
+       * not `07 BRIDGE` — see the note over `DeckLift`'s `pick`. */
+      floor: deck,
       at: { x: shaft.x * k, y: DECK_Y[deck], z: shaft.z * k, yaw: Math.atan2(shaft.x, shaft.z) + Math.PI },
     });
   }

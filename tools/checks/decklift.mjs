@@ -202,6 +202,51 @@ export async function run({ check, assert, THREE }) {
     } finally { world.unload(); }
   });
 
+  /**
+   * ══ THE CAPTION FITS THE BEZEL AT THE LONGEST NAME THE GAME LETS YOU TYPE ═
+   *
+   * `makeReadout`'s own comment said the type steps down "and stops at 13 px …
+   * a name longer than that is cut by `NAME_MAX`". It was not: `NAME_MAX` is
+   * 18, the longest floor label is `<NAME> · WORKING DECK` at 33 characters,
+   * Courier New bold advances 0.6 em, and 33 × 13 × 0.6 = 257 px against a
+   * 236 px budget. The caption clipped off the right of the plate at the
+   * longest name the rename screen accepts, which is the one case the comment
+   * claimed was covered.
+   *
+   * Held in CHARACTERS rather than pixels because the font is monospace: the
+   * advance is exact, so this is the same arithmetic the canvas does and it
+   * needs no canvas — which matters, because under the DOM shim there is not
+   * one and a pixel assertion here would measure a stub.
+   */
+  check('lift: the readout caption fits the plate at NAME_MAX, on every floor', async () => {
+    const { liftFloors, readoutLines, READOUT, READOUT_COLS } = await import('../../src/game/DeckLift.js');
+    const S = await import('../../src/game/StationSave.js');
+    const was = S.stationName();
+    try {
+      /* The worst name there is: `NAME_MAX` characters, all of them wide. */
+      const worst = 'W'.repeat(S.NAME_MAX);
+      S.setStationName(worst);
+      const rows = liftFloors();
+      assert(rows.length >= 2, `the lift has ${rows.length} floor, so nothing here is being measured`);
+      const over = [];
+      let longest = 0;
+      for (const f of rows) {
+        for (const line of readoutLines(String(f.label).toUpperCase())) {
+          longest = Math.max(longest, line.length);
+          if (line.length > READOUT_COLS) over.push(`${line} (${line.length} chars)`);
+        }
+      }
+      /* THE CONTROL: the name really is in there, so a build that dropped it
+       * from the labels would not pass this by having nothing to measure. */
+      assert(rows.some((f) => String(f.label).includes(worst)),
+        'no floor label carries the station name — there is nothing long to fit');
+      assert(over.length === 0,
+        `${over.length} caption lines run off the plate: ${over.slice(0, 3).join(', ')} — the bezel `
+        + `holds ${READOUT_COLS} characters at ${READOUT.minPx} px`);
+      return `longest caption line ${longest} of ${READOUT_COLS} characters at a ${S.NAME_MAX}-character name`;
+    } finally { S.setStationName(was); }
+  });
+
   check('lift: no wall of the car is bare — every wall is several things at several depths', async () => {
     /**
      * "two of the walls are just a bare slab of nothing". A grid of rays from

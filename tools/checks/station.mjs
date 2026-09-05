@@ -1467,8 +1467,249 @@ export async function run({ check, assert, THREE }) {
           assert(through === 0,
             `deck ${deck}: ${through} shell hits straight down the shaft — the plate is not cut`);
         }
+        /**
+         * ── AND IT STANDS OUT OF THE FLOOR IT ARRIVES AT ─────────────────
+         *
+         * V15 §1.2 wants the TOP of it seen from the decks above. Measured on
+         * the shipped build: the cap's tip was at y = 25.00 against a deck-48
+         * floor at y = 25.00 — the needle arrived exactly flush with the
+         * plate, so the Working deck's landmark was a hole in the floor with a
+         * point in it. The bar is two metres, which is a thing you see from
+         * across a deck; #56's `h` is what sets it and this is measured off
+         * the meshes rather than off `h`, because the cap is a cone on top of
+         * a column on top of a plinth and only the geometry knows the sum.
+         */
+        const bb = new THREE.Box3();
+        let tip = -Infinity;
+        /* Headless, nothing renders, so nothing has updated `matrixWorld` —
+         * and the column's group carries the plinth's 0.6 m in its own
+         * position. Without this the box is 0.6 m short of the cap. */
+        world.scene.updateMatrixWorld(true);
+        g.traverse((o) => { if (o.isMesh) { bb.setFromObject(o); tip = Math.max(tip, bb.max.y); } });
+        const proud = tip - DECK_Y[deck];
+        if (deck !== 40) {
+          assert(proud >= 2,
+            `deck ${deck}: the column's tip is at y=${tip.toFixed(2)} against a floor at `
+            + `y=${DECK_Y[deck].toFixed(2)} — ${proud.toFixed(2)} m of landmark on this deck`);
+        }
         rows.push(`deck ${deck}: ${g.children.length} column meshes, `
-          + `${st.obelisk.faces.length} faces, shell ${st.shellDraws} draws`);
+          + `${st.obelisk.faces.length} faces, tip ${proud.toFixed(2)} m proud, shell ${st.shellDraws} draws`);
+      } finally { world.dispose?.(); }
+    }
+    return rows.join('; ');
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ══ NOTHING STANDS ON AIR OVER THE WELL ═════════════════════════════════
+   *
+   * `Station.standingWell`'s own header says the rail "is the collider that
+   * keeps anything from being over the void in the first place". It was false
+   * for a third of the hole, and the fix that made the column visible on three
+   * decks is what made it false: the CUT came from a polar bounding box that
+   * `annulus` then quantised out to whole 5° segments (180.4 m² for a 132 m²
+   * footprint), and the RAIL was laid on the original rectangle. Two
+   * derivations of one region, so the hole was bigger than the fence by
+   * construction, and `activeFloorAt` is a flat plane per deck — a body over
+   * the hole does not fall, it STANDS ON AIR over a 25 m drop, which reads as
+   * a bug in the world rather than as a mistake you made.
+   *
+   * ── AND IT IS A RAYCAST, BECAUSE THE FIX IS ARITHMETIC ───────────────────
+   *
+   * A clause that recomputed the cut and the rail from the same numbers the
+   * builder uses would agree with itself on a build with no rail in it at all.
+   * So this asks the SCENE: grid the cut and its margin, ray straight down at
+   * every cell to find what is under the foot, then flood from the plate
+   * OUTSIDE the region at knee height — which is the only thing a rail does —
+   * and report every cell the flood reaches that has nothing under it.
+   *
+   * Measured before: deck 44 93.8 m² unfenced reaching 2.61 m out over a 12.5
+   * m drop, deck 48 149.8 m² reaching 3.13 m over 25.0 m. After: 0.00 m² and
+   * 0.00 m on both. `tools/_wellprobe.mjs floor` is the same measurement at a
+   * finer grid and prints where the leftovers are.
+   */
+  check('station: no standable point over the well is unfenced', async () => {
+    const { DECK_Y: DY, DRUM: D, PLACE: PL } = await import('../../src/game/StationPlan.js');
+    const p56 = PL.get(56);
+    const TAU2 = Math.PI * 2;
+    /* The region asked for and the region a 72-segment ring can actually cut,
+     * derived here ONLY to know where to point the rays. Nothing is asserted
+     * off it — the assertion is what the rays found. */
+    const c = Math.cos(p56.yaw), sn = Math.sin(p56.yaw);
+    const C = [[-p56.w / 2, -p56.d / 2], [p56.w / 2, -p56.d / 2], [p56.w / 2, p56.d / 2], [-p56.w / 2, p56.d / 2]]
+      .map(([lx, lz]) => [p56.x + lx * c + lz * sn, p56.z - lx * sn + lz * c]);
+    let r1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+    for (const [x, z] of C) {
+      r1 = Math.max(r1, Math.hypot(x, z));
+      const a = Math.atan2(x, z); b0 = Math.min(b0, a); b1 = Math.max(b1, a);
+    }
+    let r0 = Infinity;
+    for (let i = 0; i < 4; i++) {
+      const [x0, z0] = C[i], [x1, z1] = C[(i + 1) % 4];
+      const dx = x1 - x0, dz = z1 - z0;
+      const t = Math.max(0, Math.min(1, -(x0 * dx + z0 * dz) / (dx * dx + dz * dz)));
+      r0 = Math.min(r0, Math.hypot(x0 + t * dx, z0 + t * dz));
+    }
+    const step = TAU2 / 72;
+    const a0 = (Math.floor(b0 / step - 0.5) + 1) * step, a1 = (Math.ceil(b1 / step - 0.5)) * step;
+
+    /**
+     * A TRIANGLE INDEX. The deck is nine MERGED meshes — one per material for
+     * the whole drum — so `Raycaster.intersectObjects` would test every one of
+     * ~20 000 triangles against every one of ~20 000 rays. Same triangles,
+     * same rays, binned by XZ so the search is not the measurement.
+     */
+    const index = (world, lo, hi) => {
+      const CELL = 1.0, bins = new Map(), tris = [];
+      const v = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()];
+      const m = new THREE.Matrix4();
+      const push = (o, mat) => {
+        const g = o.geometry, pos = g?.attributes?.position;
+        if (!pos) return;
+        const idx = g.index, n = idx ? idx.count : pos.count;
+        for (let i = 0; i + 2 < n; i += 3) {
+          for (let k = 0; k < 3; k++) v[k].fromBufferAttribute(pos, idx ? idx.getX(i + k) : i + k).applyMatrix4(mat);
+          const x0 = Math.min(v[0].x, v[1].x, v[2].x), x1 = Math.max(v[0].x, v[1].x, v[2].x);
+          const z0 = Math.min(v[0].z, v[1].z, v[2].z), z1 = Math.max(v[0].z, v[1].z, v[2].z);
+          if (x1 < lo.x || x0 > hi.x || z1 < lo.z || z0 > hi.z) continue;
+          const id = tris.push([v[0].clone(), v[1].clone(), v[2].clone()]) - 1;
+          for (let ix = Math.floor(x0 / CELL); ix <= Math.floor(x1 / CELL); ix++) {
+            for (let iz = Math.floor(z0 / CELL); iz <= Math.floor(z1 / CELL); iz++) {
+              const k2 = ix * 100000 + iz;
+              let b = bins.get(k2); if (!b) bins.set(k2, b = []);
+              b.push(id);
+            }
+          }
+        }
+      };
+      world.scene.updateMatrixWorld(true);
+      world.scene.traverse((o) => {
+        if (o.isInstancedMesh) { for (let i = 0; i < o.count; i++) { o.getMatrixAt(i, m); push(o, m.premultiply(o.matrixWorld)); } }
+        else if (o.isMesh) push(o, o.matrixWorld);
+      });
+      const cellAt = (x, z) => bins.get(Math.floor(x / CELL) * 100000 + Math.floor(z / CELL)) || [];
+      const floorY = (x, z, yTop) => {
+        let best = -Infinity;
+        for (const id of cellAt(x, z)) {
+          const [a, b, cc] = tris[id];
+          const den = (b.z - cc.z) * (a.x - cc.x) + (cc.x - b.x) * (a.z - cc.z);
+          if (Math.abs(den) < 1e-9) continue;
+          const w0 = ((b.z - cc.z) * (x - cc.x) + (cc.x - b.x) * (z - cc.z)) / den;
+          const w1 = ((cc.z - a.z) * (x - cc.x) + (a.x - cc.x) * (z - cc.z)) / den;
+          const w2 = 1 - w0 - w1;
+          if (w0 < -1e-6 || w1 < -1e-6 || w2 < -1e-6) continue;
+          const yy = w0 * a.y + w1 * b.y + w2 * cc.y;
+          if (yy <= yTop && yy > best) best = yy;
+        }
+        return best;
+      };
+      const E1 = new THREE.Vector3(), E2 = new THREE.Vector3(), P = new THREE.Vector3(),
+        T = new THREE.Vector3(), Q = new THREE.Vector3(), DD = new THREE.Vector3();
+      const hitSeg = (x0, z0, x1, z1, y) => {
+        DD.set(x1 - x0, 0, z1 - z0);
+        const len = DD.length(); if (len < 1e-9) return false;
+        DD.multiplyScalar(1 / len);
+        const cells = new Set();
+        for (let t = 0; t <= 1.0001; t += 0.25) cells.add(Math.floor((x0 + (x1 - x0) * t) / CELL) * 100000 + Math.floor((z0 + (z1 - z0) * t) / CELL));
+        for (const k2 of cells) {
+          for (const id of bins.get(k2) || []) {
+            const [a, b, cc] = tris[id];
+            E1.subVectors(b, a); E2.subVectors(cc, a);
+            P.crossVectors(DD, E2);
+            const det = E1.dot(P);
+            if (Math.abs(det) < 1e-9) continue;
+            const inv = 1 / det;
+            T.set(x0 - a.x, y - a.y, z0 - a.z);
+            const u = T.dot(P) * inv; if (u < 0 || u > 1) continue;
+            Q.crossVectors(T, E1);
+            const vv = DD.dot(Q) * inv; if (vv < 0 || u + vv > 1) continue;
+            const dd = E2.dot(Q) * inv;
+            if (dd > 1e-4 && dd < len) return true;
+          }
+        }
+        return false;
+      };
+      return { floorY, hitSeg, tris: tris.length };
+    };
+
+    const CELL = 0.4, MARGIN = 4;
+    const rows = [];
+    for (const deck of [44, 48]) {
+      const { world } = await station(deck);
+      try {
+        const y = DY[deck];
+        const A0 = a0 - MARGIN / r1, A1 = a1 + MARGIN / r1;
+        const R0 = Math.max(D.atrium + 0.2, r0 - MARGIN), R1 = Math.min(D.R - 0.2, r1 + MARGIN);
+        let lox = Infinity, hix = -Infinity, loz = Infinity, hiz = -Infinity;
+        for (const a of [A0, A1]) {
+          for (const r of [R0, R1]) {
+            const x = r * Math.sin(a), z = r * Math.cos(a);
+            lox = Math.min(lox, x); hix = Math.max(hix, x); loz = Math.min(loz, z); hiz = Math.max(hiz, z);
+          }
+        }
+        const ix = index(world, { x: lox - 2, z: loz - 2 }, { x: hix + 2, z: hiz + 2 });
+        const nA = Math.ceil(((A1 - A0) * ((R0 + R1) / 2)) / CELL), nR = Math.ceil((R1 - R0) / CELL);
+        const grid = [];
+        for (let i = 0; i <= nA; i++) {
+          const a = A0 + (A1 - A0) * (i / nA), row = [];
+          for (let j = 0; j <= nR; j++) {
+            const r = R0 + (R1 - R0) * (j / nR);
+            const x = r * Math.sin(a), z = r * Math.cos(a);
+            row.push({ x, z, drop: y - ix.floorY(x, z, y + 1.2) });
+          }
+          grid.push(row);
+        }
+        const area = ((A1 - A0) / nA) * ((R0 + R1) / 2) * ((R1 - R0) / nR);
+        const floors = [];
+        for (const row of grid) for (const p of row) if (p.drop < 0.6) floors.push(p);
+        /* THE CONTROL. A grid that found no plate at all would report nothing
+         * unfenced and pass, which is the shape of every check that measures
+         * absence. */
+        assert(floors.length > grid.length,
+          `deck ${deck}: the grid found only ${floors.length} floored cells — it is not on the deck`);
+
+        const key = (i, j) => i * 100000 + j;
+        const seen = new Set(), q = [];
+        for (let i = 0; i < grid.length; i++) {
+          for (let j = 0; j < grid[i].length; j++) {
+            const edge = i === 0 || i === grid.length - 1 || j === 0 || j === grid[i].length - 1;
+            if (edge && grid[i][j].drop < 0.6) { seen.add(key(i, j)); q.push([i, j]); }
+          }
+        }
+        assert(q.length > 0, `deck ${deck}: no floored cell on the border of the region to walk in from`);
+        for (let head = 0; head < q.length; head++) {
+          const [i, j] = q[head];
+          for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const ni = i + di, nj = j + dj;
+            if (ni < 0 || nj < 0 || ni >= grid.length || nj >= grid[0].length) continue;
+            if (seen.has(key(ni, nj))) continue;
+            const p = grid[i][j], t = grid[ni][nj];
+            /* BOTH WAYS. A ray that starts inside a rail post leaves it through
+             * a back face, and back faces are culled — so the reverse ray is
+             * what catches a cell centre that landed in the balustrade. */
+            if (ix.hitSeg(p.x, p.z, t.x, t.z, y + 0.5) || ix.hitSeg(t.x, t.z, p.x, p.z, y + 0.5)) continue;
+            seen.add(key(ni, nj)); q.push([ni, nj]);
+          }
+        }
+        const loose = [];
+        for (let i = 0; i < grid.length; i++) {
+          for (let j = 0; j < grid[i].length; j++) if (seen.has(key(i, j)) && grid[i][j].drop >= 0.6) loose.push(grid[i][j]);
+        }
+        let worst = 0, at = null;
+        for (const v of loose) {
+          let best = Infinity;
+          for (const f of floors) { const d = Math.hypot(v.x - f.x, v.z - f.z); if (d < best) best = d; }
+          if (best > worst) { worst = best; at = v; }
+        }
+        /* The message is built only when there is one, because `assert` takes
+         * a string and a template literal is evaluated before the call. */
+        assert(loose.length === 0, loose.length === 0 ? '' :
+          `deck ${deck}: ${(loose.length * area).toFixed(1)} m² of the well is walkable and has nothing `
+          + `under it — worst ${worst.toFixed(2)} m out at (${at.x.toFixed(1)}, ${at.z.toFixed(1)}) `
+          + `over ${at.drop.toFixed(2)} m of drop. The cut and the rail disagree.`);
+        rows.push(`deck ${deck}: ${(grid.length * (nR + 1))} cells @ ${CELL} m over ${ix.tris} triangles, `
+          + `0.0 m² unfenced`);
       } finally { world.dispose?.(); }
     }
     return rows.join('; ');
@@ -1551,6 +1792,22 @@ export async function run({ check, assert, THREE }) {
           assert(liftKey(world), `deck ${deck}: the call key at the doors was not taken`);
           step(world, RIDE.arrive + RIDE.doors + 0.4, idle);
           assert(lift.state === STATE.WAIT, `deck ${deck}: the called car is ${lift.state}`);
+          /**
+           * ── AND IT ALREADY SAYS THIS DECK, WITHOUT BEING ASKED ─────────
+           *
+           * `st.pick` initialised to 0, which is `MENU_FLOOR` — so a car
+           * standing open on deck 48 read `07 BRIDGE`, the hangar's word for
+           * the main menu, on the one thing on that deck that carries the
+           * station's name. Confirmed in the browser: `{"pick":0}`. The clause
+           * below then SET the pick before reading the caption, which is how a
+           * check that is about the name on every deck sat over this for a
+           * whole lane. Read it first, then set it.
+           */
+          assert(lift.readout.number === deck,
+            `deck ${deck}: the car you arrived in reads ${String(lift.readout.number).padStart(2, '0')} `
+            + `"${lift.readout.caption}" — it is standing on ${deck}`);
+          assert(lift.readout.caption.includes('TESTPORT'),
+            `deck ${deck}: the arrived car reads "${lift.readout.caption}" and names no station`);
           /* The button column, on this deck's own floor. */
           const idx = liftFloors().findIndex((f) => f.deck === deck);
           lift.pick = idx;
@@ -1569,9 +1826,107 @@ export async function run({ check, assert, THREE }) {
            * the clause deck 48 failed with a zero. */
           const boards = (st.boards || []).filter((b) => (b.panel._rows || []).some(
             (r) => String(r && typeof r === 'object' ? r.t : r).includes('Testport'))).length;
+          /* THE ZERO THIS CLAUSE PRINTED AND DID NOT ASSERT. Counted per deck:
+           * 40 → 1, 44 → 4, 48 → 0. §1.1's rule is a board at the door of
+           * every place you can leave from, and every door it had named was on
+           * the two decks a passenger arrives through, so the Working deck got
+           * nothing at all — see `StationBoards.dressBoards`. */
+          assert(boards >= 1,
+            `deck ${deck} carries ${boards} boards with the station's name on them — `
+            + 'the deck never says where you are');
           const register = st.register ? 1 : 0;
           rows.push(`deck ${deck}: ${boards} board(s) + ${register} register + 1 lift caption `
             + `("${lift.readout.caption}")`);
+        } finally { world.dispose?.(); }
+      }
+      return rows.join('; ');
+    } finally { S.setStationName(was); }
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ══ THE CAR SAYS WHERE IT IS, AND STILL RIDES OUT TO THE MENU ═══════════
+   *
+   * Two facts that pull against each other, which is why they are asserted
+   * together. The button column now starts on the deck the car is standing on,
+   * so the readout names the station the moment the doors open instead of
+   * saying `07 BRIDGE` — but the column is also what the ride out reads, and a
+   * lift that takes you to the floor you are standing on would reload the room
+   * you are in. `DeckLift.floorTarget` is the seam: the pick is what the
+   * column shows, the menu is where an untouched car goes.
+   *
+   * A fix for either half alone breaks the other, and this is the clause that
+   * says so.
+   */
+  check('station: the car you arrive in names the deck, and an untouched ride still ends on the menu', async () => {
+    const { LIFT } = await import('../../src/game/Hangar.js');
+    const { RIDE, STATE, liftPick, liftKey, atTheDoors } = await import('../../src/game/DeckLift.js');
+    const { run: step, idleInput } = await import('./_coop.mjs');
+    const S = await import('../../src/game/StationSave.js');
+    const was = S.stationName();
+    S.setStationName('Testport');
+    const rows = [];
+    try {
+      for (const deck of [44, 48]) {
+        const { world } = await station(deck);
+        const idle = idleInput();
+        try {
+          const st = world._deckLift, sh = world._station.shaft;
+          assert(st, `deck ${deck} dressed no lift`);
+          /* THE FIRST THING THE PLAYER SEES: the doors part on the deck he
+           * has arrived at. This read `32 FLIGHT DECK` — the deck he left. */
+          step(world, RIDE.doors + 0.2, idle);
+          assert(st.state === STATE.OUT || st.state === STATE.OPENING,
+            `deck ${deck}: the arrived car is ${st.state}`);
+          assert(st.readout.number === deck,
+            `deck ${deck}: the car you stepped out of reads `
+            + `${String(st.readout.number).padStart(2, '0')} "${st.readout.caption}"`);
+          const arrival = `${String(st.readout.number).padStart(2, '0')} ${st.readout.caption}`;
+          assert(st.readout.caption.includes('TESTPORT'),
+            `deck ${deck}: the arrived car reads "${st.readout.caption}" and names no station`);
+
+          /* OUT, AND LET IT GO. Then call it back, which is the state whose
+           * caption `decklift.mjs` pins to the button column. */
+          world.player.position.set(sh.x * 0.6, world._station.deckY + 1.0, sh.z * 0.6);
+          world.player.body?.setTransform?.(world.player.position, null);
+          step(world, 8.0, idle);
+          assert(st.state === STATE.AWAY, `deck ${deck}: the car is ${st.state} rather than away`);
+          let found = null;
+          for (let dr = 0; dr <= 8 && !found; dr += 0.5) {
+            for (let a = 0; a < 32 && !found; a++) {
+              const th = (Math.PI * 2 * a) / 32;
+              const x = sh.x + Math.cos(th) * dr, z = sh.z + Math.sin(th) * dr;
+              world.player.position.set(x, world._station.deckY + 1.0, z);
+              if (atTheDoors(world)) found = [x, z];
+            }
+          }
+          assert(found && liftKey(world), `deck ${deck}: the call key at the doors was not taken`);
+          step(world, RIDE.arrive + RIDE.doors + 0.4, idle);
+          assert(st.state === STATE.WAIT, `deck ${deck}: the called car is ${st.state}`);
+          assert(st.readout.caption === String(liftPick(world).label).toUpperCase(),
+            `deck ${deck}: the readout says "${st.readout.caption}" and the column is on `
+            + `"${liftPick(world).label}"`);
+          assert(st.readout.number === deck,
+            `deck ${deck}: the waiting car reads ${String(st.readout.number).padStart(2, '0')} `
+            + `"${st.readout.caption}" — the button column has never been pressed and it is here`);
+
+          /* AND NOW STEP IN AND TOUCH NOTHING. `place` is the lift's own
+           * lift-space-to-world map, so this does not repeat the shaft's
+           * transform; `assert` above has already proved the car is here. */
+          let left = 0, lifted = null;
+          world.onDeckLeave = () => { left++; };
+          world.onDeckLift = (row) => { lifted = row; };
+          const at = st.place(LIFT.x, 0, LIFT.z);
+          world.player.position.set(at.x, at.y + 1.0, at.z);
+          world.player.body?.setTransform?.(world.player.position, null);
+          step(world, 1.4 + RIDE.doors + RIDE.settle + RIDE.ride, idle);
+          assert(st.state === STATE.GONE, `deck ${deck}: after the ride the car is ${st.state}`);
+          assert(left === 1 && !lifted,
+            `deck ${deck}: an untouched car rode to ${lifted ? `"${lifted.label}"` : 'nowhere'} and `
+            + `raised onDeckLeave ${left} times — stepping in with nothing pressed is the way out, `
+            + 'and the column showing this deck must not make it a reload of this deck');
+          rows.push(`deck ${deck}: arrived on "${arrival}", rode out to the menu unasked`);
         } finally { world.dispose?.(); }
       }
       return rows.join('; ');

@@ -659,10 +659,43 @@ export function dressDeckLift(world, opts = {}) {
     /** The light's dip, 1 at a jolt, decaying. */
     dip: 0,
     state: opts.arrive ? STATE.OPENING : STATE.RIDE,
-    /* Which floor the button column is showing. Zero is the menu's, which
-     * is what the ride out has always done; §9.2's switch off leaves it the
-     * only row and this field permanently 0. */
-    pick: 0,
+    /**
+     * WHICH FLOOR THE BUTTON COLUMN IS SHOWING, AND IT STARTS ON THIS ONE.
+     *
+     * It started on 0, which is `MENU_FLOOR` — so a car standing open on deck
+     * 48 read `07 BRIDGE`. Measured in the browser: `{"pick":0}`. The lift is
+     * the one carrier of the station's NAME on that deck (V15 §1.1, and the
+     * reason the label is a getter over `stationName()`), and it was showing
+     * the hangar's word for the main menu until the player pressed the button
+     * column. A readout that has to be poked before it tells the truth is a
+     * readout nobody reads.
+     *
+     * `opts.floor` is the deck the car is standing on — `Station.dressStation`
+     * passes the deck it is building. The list is matched on `deck` rather
+     * than on the caption, because the caption is a getter and the deck is the
+     * identity. With §9.2's switch off nobody passes it, the list is one row
+     * and this is 0, which is exactly the ride out the hangar has always had.
+     */
+    pick: Math.max(0, FLOORS.findIndex((f) => f.deck != null && f.deck === opts.floor)),
+    /**
+     * AND WHETHER ANYBODY HAS PRESSED THE COLUMN, which is a SEPARATE fact
+     * from what it is showing and has to be, now that it starts on this deck.
+     * Stepping back into an untouched car has always ridden out to the menu;
+     * if `pick` alone decided, the same step would now ride to the floor you
+     * are standing on, which is a lift that reloads the room you are in.
+     * `floorTarget` is the one reader — see it for the whole of the rule.
+     */
+    chose: false,
+    /**
+     * AND THE FLOOR IT IS STANDING AT, for the readout to print while the
+     * doors are open and you are getting OUT. That is a different question
+     * from where it will take you next and it was answered by neither branch:
+     * a car that had just put the player down on deck 48 printed `32 FLIGHT
+     * DECK`, the deck it came from. Null in the hangar, where the car lives on
+     * the flight deck and the flight deck has no row in the floor list — the
+     * default below is already that number and that caption.
+     */
+    here: FLOORS.find((f) => f.deck != null && f.deck === opts.floor) || null,
     t: 0,
     /** Set once the player has been told how to call the car. */
     told: false,
@@ -689,6 +722,33 @@ export function dressDeckLift(world, opts = {}) {
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE READOUT — a small lit plate that counts decks                          */
 /* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ WHAT THE READOUT'S BEZEL HOLDS ════════════════════════════════════════
+ *
+ * The plate is a 256 x 128 canvas on a 0.42 x 0.21 m plane. `budget` is the
+ * caption's usable width in canvas pixels, `minPx` the smallest type still
+ * legible on it at arm's length, and `advance` is Courier New bold's — every
+ * glyph is 0.6 em, which is why a character count is an exact width here and
+ * a check can hold the fit without a canvas. 236 / (13 x 0.6) = 30 characters
+ * a line, and `Levels.js`'s longest floor label is 33.
+ */
+export const READOUT = { budget: 236, minPx: 13, onePx: 24, twoPx: 20, advance: 0.6 };
+/** How many characters of one line the bezel holds at the legible floor. */
+export const READOUT_COLS = Math.floor(READOUT.budget / (READOUT.minPx * READOUT.advance));
+
+/**
+ * The caption, as the lines it is drawn on. ` · ` is the join `Levels.js`
+ * puts between the station's name and the deck's, and it is the only split:
+ * a caption without one ('FLIGHT DECK', 'DECK  \u25b2') is one line, exactly as
+ * it was. Exported so `decklift.mjs` can hold the fit against `NAME_MAX`
+ * without a canvas to measure with.
+ */
+export function readoutLines(caption) {
+  const t = String(caption ?? '');
+  const i = t.indexOf(' \u00b7 ');
+  return i < 0 ? [t] : [t.slice(0, i), t.slice(i + 3)];
+}
 
 /**
  * A canvas texture on a plane: big digits and a caption. Redrawn only when
@@ -721,25 +781,40 @@ function makeReadout(M) {
       ctx.font = 'bold 74px "Courier New", monospace';
       ctx.fillText(String(number).padStart(2, '0'), 128, 50);
       /**
-       * THE CAPTION IS FITTED, NOT TRUNCATED.
+       * THE CAPTION IS FITTED, NOT TRUNCATED — AND IT IS TWO LINES.
        *
        * It was a fixed 24 px, which holds about seventeen Courier characters
        * on a 256-wide canvas — enough for `CONCOURSE` and nothing else. V15
        * §1.1 puts the STATION'S NAME in this caption (`Levels.js`'s floor
-       * rows), and a name is up to 18 characters on its own, so a fixed size
-       * would print `CROSSROADS · CONCOU` off the edge of the screen. The
-       * type steps down until the string fits inside the bezel and stops at
-       * 13 px, which is the smallest that is still legible on the plane's 0.42
-       * m at arm's length; a name longer than that is cut by `NAME_MAX` at
-       * the one place it is set rather than silently here.
+       * rows), so the type was made to step down to `READOUT.minPx`, 13 px,
+       * which is the smallest still legible on the plane's 0.42 m at arm's
+       * length. The comment then claimed `NAME_MAX` kept it inside the bezel.
+       * IT DID NOT: an 18-character name gives `<NAME> · WORKING DECK`, 33
+       * characters, and Courier bold advances 0.6 em, so 33 × 13 × 0.6 = 257
+       * px against a 236 px budget. It clipped, at the longest name the rename
+       * screen lets you type.
+       *
+       * A smaller floor would fix the arithmetic and lose the reading. So the
+       * caption is laid on the two lines it always was — WHICH STATION and
+       * WHICH DECK, joined by ` · ` in one string because the button column
+       * and `decklift.mjs` both read that one string. `readoutLines` splits it
+       * and nothing else knows: at 18 characters the worst line now needs
+       * 18 × 13 × 0.6 = 141 px, and both lines set at 18 px instead of 13.
        */
-      let px = 24;
-      for (; px > 13; px--) {
-        ctx.font = `bold ${px}px "Courier New", monospace`;
-        if (ctx.measureText(caption).width <= 236) break;
+      const lines = readoutLines(caption);
+      const fit = (t) => {
+        let px = lines.length > 1 ? READOUT.twoPx : READOUT.onePx;
+        for (; px > READOUT.minPx; px--) {
+          ctx.font = `bold ${px}px "Courier New", monospace`;
+          if (ctx.measureText(t).width <= READOUT.budget) break;
+        }
+        return px;
+      };
+      const at = lines.length > 1 ? [97, 119] : [106];
+      for (let i = 0; i < lines.length; i++) {
+        ctx.font = `bold ${fit(lines[i])}px "Courier New", monospace`;
+        ctx.fillText(lines[i], 128, at[i]);
       }
-      ctx.font = `bold ${px}px "Courier New", monospace`;
-      ctx.fillText(caption, 128, 106);
       if (tex) tex.needsUpdate = true;
     },
   };
@@ -759,6 +834,21 @@ function lightButtons(st) {
   if (b.instanceColor) b.instanceColor.needsUpdate = true;
 }
 
+/**
+ * WHERE THE CAR WILL ACTUALLY GO, which is not always what it is showing.
+ *
+ * The button column starts on the deck the car is standing on, so the readout
+ * tells the truth the moment the doors open (V15 §1.1: this is the only thing
+ * on deck 48 that carries the station's name). But a lift does not take you to
+ * the floor you are on, and stepping back into a car nobody has touched has
+ * always ended on the menu — `SEAL` even says so out loud, "TO THE BRIDGE".
+ * So the destination is the menu's row until somebody presses the column, and
+ * the pick is what the column and the readout show. Two facts, two fields.
+ */
+function floorTarget(st) {
+  return st.chose ? FLOORS[st.pick % FLOORS.length] : MENU_FLOOR;
+}
+
 /** What the readout says in this state. */
 function setReadout(st) {
   const s = st.state;
@@ -770,15 +860,29 @@ function setReadout(st) {
   } else if (s === STATE.LEAVE || s === STATE.GONE) {
     /* Counting toward the floor that was CHOSEN, and stopping there. It used
      * to count up for ever from 32 because there was nowhere to arrive. */
-    const target = FLOORS[st.pick % FLOORS.length];
+    const target = floorTarget(st);
     const gone = Math.round(Math.abs(st.scroll - st.stopScroll) / LEVEL);
     const up = (target?.n ?? FLIGHT_DECK) >= FLIGHT_DECK;
     n = up ? Math.min(target?.n ?? FLIGHT_DECK + gone, FLIGHT_DECK + gone)
       : Math.max(target.n, FLIGHT_DECK - gone);
     cap = up ? 'DECK  ▲' : 'DECK  ▼';
+  } else if (st.here && !st.chose && (s === STATE.OPENING || s === STATE.OUT || s === STATE.CLOSING)) {
+    /* STOPPED, DOORS OPEN, AND YOU ARE GETTING OUT. The readout is the floor
+     * under your feet — the one moment a lift's display is about position and
+     * not about destination, and on this station the only thing on deck 48
+     * that says which station it is. `!st.chose` because the column may be
+     * pressed from inside the car in this state too (`liftKey`), and from the
+     * press onward the plate is answering a question you asked. */
+    n = st.here.n; cap = String(st.here.label).toUpperCase();
   } else if (FLOORS.length > 1 && s === STATE.WAIT) {
-    /* Waiting with the doors open, the readout is the button column's answer:
-     * where this car will take you if you step back and let it seal. */
+    /**
+     * Waiting with the doors open, the readout is the BUTTON COLUMN'S ANSWER
+     * — the same row the lit button is on, so the two cannot disagree, which
+     * is what `decklift.mjs` holds. On arrival that row is the deck the car is
+     * standing on: `07 BRIDGE` on deck 48 was this branch reading a `pick`
+     * that had never been set. Where an untouched car RIDES to is a different
+     * question and `floorTarget` answers it.
+     */
     const f = FLOORS[st.pick % FLOORS.length];
     n = f.n; cap = String(f.label).toUpperCase();
   }
@@ -1888,6 +1992,8 @@ export function liftKey(world) {
   if (FLOORS.length > 1 && inCar(world)
       && (st.state === STATE.WAIT || st.state === STATE.OUT || st.state === STATE.OPENING)) {
     st.pick = (st.pick + 1) % FLOORS.length;
+    /* From here the column decides where the car goes — see `floorTarget`. */
+    st.chose = true;
     const f = FLOORS[st.pick];
     lightButtons(st);
     world.notify?.(String(f.label).toUpperCase(), `deck ${f.n} — step back to ride`);
@@ -2086,7 +2192,7 @@ export function stepDeckLift(world, dt) {
          * was chosen, and `onDeckLeave` otherwise. `main.js` answers both;
          * with the switch off there is only one floor and only the second can
          * ever fire, which is today's behaviour exactly. */
-        const f = FLOORS[st.pick % FLOORS.length];
+        const f = floorTarget(st);
         if (f && f.level) world.onDeckLift?.(f);
         else world.onDeckLeave?.();
       }

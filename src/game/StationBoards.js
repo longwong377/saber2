@@ -475,6 +475,26 @@ export function dressBoards(world, st, M) {
   /* The four platforms (#40 and its three), each naming its own stop. */
   const stops = [[40, 'ARRIVALS'], [40.2, 'CONCOURSE EAST'], [40.3, 'QUARTERS'], [40.4, 'COMMAND']];
   for (const [id, label] of stops) put(at(id), [name, label], { w: 4.4, h: 1.3, y: 3.2 });
+  /**
+   * ── AND THE WORKING DECK, WHICH HAD NONE AT ALL ──────────────────────
+   *
+   * Counted per deck: 40 had one board, 44 had four, 48 had ZERO. The rule
+   * six lines up is *"a station tells you where you are at the door of every
+   * place you can leave from"*, and every door it had named was on the two
+   * decks a passenger arrives through — an arrivals hall and four tram
+   * platforms. Deck 48 has no shuttle and no tram, so the rule as written
+   * gave it nothing, and the one deck whose whole character is that people
+   * WORK there never said what they were working on.
+   *
+   * The same rule answers it, applied to deck 48's own doors: `#58 The
+   * Underlift` is the hole a fighter goes down to the flight deck, `#52 Cargo
+   * hold` is the freight door, and `#41 Command / CIC` is the deck's head and
+   * the room the station is run from. Three boards, three draws, and the
+   * Working deck now carries the name in three places you actually stand.
+   */
+  put(at(58), [name, 'THE UNDERLIFT', 'FLIGHT DECK BELOW'], { w: 5.2, h: 1.6, y: 3.0 });
+  put(at(52), [name, 'CARGO', 'MANIFEST AT THE DOOR'], { w: 6.4, h: 2.0, y: 4.0 });
+  put(at(41), [name, 'COMMAND'], { w: 4.4, h: 1.3, y: 3.4 });
   st.boards = made;
   /* ── AND THE REGISTER IN #13, WHICH IS WHERE THE NAME IS SET ────────── */
   dressRegister(world, st, at(13));

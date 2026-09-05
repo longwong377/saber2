@@ -371,12 +371,61 @@ export const PLACES = [
      * a menu with a wall behind it, and a thing you walk round that is taller
      * than the room it is in and visible from two other decks is a landmark —
      * which is what §3.1 rule 1 says this station needs more of.
+     *
+     * ── IT DOES NOT MOVE TO THE ATRIUM, AND THAT IS MEASURED ─────────────
+     *
+     * V15 §1.2 asks for two sightlines: *"you see the top of it from the
+     * Living deck's balcony and the whole of it from the Concourse floor."*
+     * Neither is delivered from here — raycast from eye height, the column is
+     * 0/10 visible from deck 40's open floor and 0/6 from deck 44's balcony,
+     * because the drum lays a SOFFIT over every square metre of a deck's plate
+     * — `DRUM.storey`, so its underside is 8.2 m up — and two points both under
+     * it and both outside the atrium cannot see each other above it, whatever
+     * is or is not between them. Everything of a 27 m column above 8.2 m is
+     * therefore invisible from anywhere else on its own deck; the Zocalo
+     * blocking this particular line is the second reason, not the first.
+     *
+     * The only shaft open through all three decks is the ATRIUM, so the only
+     * siting that delivers those two sentences is the atrium's rim — the
+     * `inner` band. `tools/_wellprobe.mjs site` sweeps it: 5040 sitings, two
+     * bands, seven sizes, every whole bearing, against `station.mjs`'s own
+     * separating-axis test at 0.5 m slack, the door-arc test, deck 40's rim
+     * fixtures, and the shaft having to clear every room on 44 and 48 it
+     * passes through. THE INNER BAND RETURNS NOTHING — 0 of 2520. Deck 40's
+     * rim is full: #9's mouth holds 326°..36°, #15 The Fresh Air 82°..142°,
+     * #16 Galley 124°..172°, #21 Gym 226°..284°, #10 and #11 take 314°..332°
+     * and 12°..44°, and the seven rim fixtures take most of what is between.
+     * One deck up, #29 Company barracks stands across 10°..80° and #28 The
+     * Kennel across 292°..344°; on 48, #51 Droid pool and #57 The Repeating
+     * Room hold 334°..26° and 26°..64°. What survives all of that is
+     * 174°..182°, nine degrees — and the ARRIVALS SPINE runs down the middle
+     * of it, so the well cut there would put a corridor over the void, which
+     * is the defect this lane exists to remove. The `outer` band has windows
+     * (15°..24°, 120°..126°, 151°..153°) and every one of them is under the
+     * same soffit this one is.
+     *
+     * So the sightlines the player named are not deliverable and this says so
+     * rather than pretending. WHAT IS DELIVERED instead, all three measured by
+     * ray in the same probe:
+     *
+     *   the column STANDS PROUD of the decks above it. `h: 26` put the cap's
+     *   tip at y=25.00 against a deck-48 floor at y=25.00 — 0.00 m of landmark
+     *   on the Working deck, a needle flush with the plate. `h: 30` puts it at
+     *   29.00: four metres out of the floor on 48, sixteen and a half on 44.
+     *
+     *   from the WELL RAIL, which is the balcony onto it that the two upper
+     *   decks actually have: 10/10 on deck 48 and 9/10 on 44, against 0/6 from
+     *   the atrium lip.
+     *
+     *   from deck 40, 10/10 inside the hall and 4/10 from the balcony across
+     *   the void, where the atrium is the one line of sight in the drum that
+     *   is not under a ceiling.
      */
     id: 56, deck: 40, name: 'The Standing', shape: 'obelisk',
     look: 'a tall narrow hall off the Concourse’s east gallery with a black obelisk three decks high running up through a cut in the soffit; four cut faces, turning slowly; your own row lit and everyone else’s engraved',
     who: 'a few reading it at any hour, a crowd after a run files',
     idle: 'rows change as runs file', verb: 'read the rolls — find your own row',
-    band: 'concourse', side: 1, along: 52, w: 12, d: 11, h: 26, peak: 15, heads: 6,
+    band: 'concourse', side: 1, along: 52, w: 12, d: 11, h: 30, peak: 15, heads: 6,
   },
   /* ══ DECK 44 — THE LIVING DECK. Cool: white, timber, blue-white. ═════ */
   {
