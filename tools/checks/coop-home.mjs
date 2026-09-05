@@ -336,7 +336,18 @@ export async function run({ check, assert }) {
       /* WHAT THE WIRE COST BEFORE ANY OF THIS, measured rather than typed —
        * every bound below is derived from these two numbers. */
       const bare = JSON.stringify(C.packHome(host.world._home.state, 1)).length;
-      const snapBefore = JSON.stringify({ ...packSnapshot(host.world), e: [] }).length;
+      /**
+       * THE SNAPSHOT, MEASURED STRUCTURALLY: every number written as 0 and the
+       * enemy rows emptied. Its raw size wanders by a byte as the station
+       * clock gains a digit and the horde walks past and shoots, so raw bytes cannot say
+       * whether a FIELD was added — which is the only question here. Zeroed,
+       * the length is the field names and the shape, and one more of either
+       * shows up immediately.
+       */
+      const snapShape = (w) => JSON.stringify(packSnapshot(w),
+        (k, v) => ((k === 'e' || k === 'bf') ? [] : (typeof v === 'number' ? 0 : v))).length;
+      const snapBefore = snapShape(host.world);
+      const snapRaw0 = JSON.stringify(packSnapshot(host.world)).length;
 
       /* THE HOST'S ANIMAL. Eight runs and six acts of care is SEASONED — the
        * third of four rungs — so "the right growth stage" has three wrong
@@ -387,9 +398,10 @@ export async function run({ check, assert }) {
        * likely to undo: an animal that rode the 18 Hz record would be a body
        * on the wire pretending to be a home. Enemy rows are emptied on both
        * readings because they are whoever happens to be walking past. */
-      const snapAfter = JSON.stringify({ ...packSnapshot(host.world), e: [] }).length;
+      const snapAfter = snapShape(host.world);
       assert(snapAfter <= snapBefore,
-        `the snapshot grew from ${snapBefore} B to ${snapAfter} B when a companion appeared in a room`);
+        `the snapshot's shape grew from ${snapBefore} B to ${snapAfter} B when a companion appeared `
+        + 'in a room — a field was added to the 18 Hz record');
       assert(!/tooka|basket/.test(JSON.stringify(packSnapshot(host.world))),
         'the animal or the fixture is in the 18 Hz snapshot');
 
@@ -489,7 +501,8 @@ export async function run({ check, assert }) {
         'a fixture that is not on the table was taken');
 
       return `the host chose a basket and a SEASONED tooka; ${full} B on the wire against ${bare} B `
-        + `without it (+${full - bare}, ceiling ${ceiling}) and the snapshot unmoved at ${snapAfter} B; `
+        + `without it (+${full - bare}, ceiling ${ceiling}) and the 18 Hz snapshot unmoved — `
+        + `${snapBefore} B of shape before and ${snapAfter} B after, ${snapRaw0} B raw; `
         + `with this process's only Kennel emptied the guest still dresses ${theirs.address} with a `
         + `${theirs.pad.id} and a ${theirs.pad.body.rec.kind} at stage ${theirs.pad.body.rec.stage} `
         + `standing on it — ${meshes} meshes, feet ${(lift * 1000).toFixed(2)} mm off the fixture and `
