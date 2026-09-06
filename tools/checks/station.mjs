@@ -1583,6 +1583,71 @@ export async function run({ check, assert, THREE }) {
     return report.join(', ');
   });
 
+  check('station: a body dropped at every door and every lift lobby lands on the floor the plan names', async () => {
+    /**
+     * ══ THE WALK-THE-WORLD GATE — V18 ═════════════════════════════════════
+     *
+     * The doors were on the wrong side, the wells were roofed and the
+     * ground sheet was twelve metres under two of the three decks, and every
+     * one of those was green for months because nothing in this file ever
+     * put a BODY somewhere and asked what it was standing on. This does, at
+     * the two places a player is certain to stand: a step inside every door,
+     * and the floor of every lift lobby, on every drum deck. What a body
+     * finds under it must be the floor `floorAt` names (a step or a kerb is
+     * allowed, a deck plate over a well or a void is not), and nothing solid
+     * may stand through its chest.
+     */
+    const { placesOn, SHAFTS, DECK_Y: DY } = await import('../../src/game/StationPlan.js');
+    const v = new THREE.Vector3();
+    const bad = [];
+    let dropped = 0;
+    for (const deck of [40, 44, 48]) {
+      const { world, idle } = await station(deck);
+      try {
+        const { run: step } = await import('./_coop.mjs');
+        step(world, 1, idle);
+        const boxes = world.physics.staticBoxes;
+        const Y0 = DY[deck];
+        const probe = (x, z) => {
+          let top = -Infinity, chest = null;
+          for (const b of boxes) {
+            if (b.disabled) continue;
+            v.set(x - b.center.x, 0, z - b.center.z);
+            if (b.invQuat) v.applyQuaternion(b.invQuat);
+            if (Math.abs(v.x) > b.halfExtents.x || Math.abs(v.z) > b.halfExtents.z) continue;
+            const t = b.center.y + b.halfExtents.y, bo = b.center.y - b.halfExtents.y;
+            if (t <= Y0 + 1.0 && t > top) top = t;
+            /* a solid across the chest, 0.9–1.5 m up, and thicker than a rail */
+            if (bo < Y0 + 0.9 && t > Y0 + 1.5 && b.halfExtents.x > 0.12 && b.halfExtents.z > 0.12) chest = b;
+          }
+          return { top, chest };
+        };
+        const drop = (label, x, z) => {
+          dropped++;
+          const want = world.floorAt(x, z);
+          const { top, chest } = probe(x, z);
+          if (top === -Infinity) { bad.push(`${label}: nothing under a body at (${x.toFixed(1)}, ${z.toFixed(1)}) on deck ${deck}`); return; }
+          if (Math.abs(top - want) > 0.45) bad.push(`${label}: stands on ${top.toFixed(2)} where the plan's floor is ${want.toFixed(2)} (deck ${deck})`);
+          if (chest) bad.push(`${label}: a ${(chest.halfExtents.x * 2).toFixed(1)}x${(chest.halfExtents.z * 2).toFixed(1)} solid through the chest at (${x.toFixed(1)}, ${z.toFixed(1)}) on deck ${deck}`);
+        };
+        for (const p of placesOn(deck)) {
+          if (p.external || !p.door || !p.w) continue;
+          /* a step inside the door, toward the room's centre */
+          const dx = p.x - p.door[0], dz = p.z - p.door[1], d = Math.hypot(dx, dz) || 1;
+          drop(`#${p.id} ${p.name} door`, p.door[0] + dx / d * 1.2, p.door[1] + dz / d * 1.2);
+        }
+        for (const sh of SHAFTS) {
+          if (!sh.decks.includes(deck)) continue;
+          const r = Math.hypot(sh.x, sh.z) || 1, k = (r - 2.5) / r;
+          drop(`${sh.label} lobby`, sh.x * k, sh.z * k);
+        }
+      } finally { world.dispose?.(); }
+    }
+    assert(dropped > 60, `only ${dropped} drops`);
+    assert(bad.length === 0, `${bad.length} of ${dropped} drops land wrong:\n      ${bad.slice(0, 12).join('\n      ')}`);
+    return `${dropped} bodies dropped on three decks, every one on the plan's floor with its chest clear`;
+  });
+
   check('station: no room stands where the arrivals lift lobby is', async () => {
     /**
      * `buildLobbies` puts a 16 m recess wall and two jambs at every shaft on

@@ -39,6 +39,37 @@ Playable two ways:
 
 ---
 
+## 0. V19 — TWENTY MORE, ACROSS THE WHOLE GAME
+
+The player asked for more holes and additions "anything in the game, not
+just the additions", was given ten of each, and said: *"Great ideas; do all
+20 things now as well get to work on it all."* Logged verbatim in intent;
+built in lanes, marked as they land.
+
+**Ten holes:**
+1. Drawn versus solid keeps diverging (doors, wells, the ground sheet were all green for months). → a walk-the-world gate: a body dropped at every door and lobby on every deck (`station.mjs`). **BUILT**, and it found four more things on its first run.
+2. No frame ever measured on a real GPU. → a frame-time overlay and a quality auto-tune.
+3. Sound is text plus tones: no music tied to place.
+4. The station never feels the war outside.
+5. Company men have names and fates but no arc.
+6. Co-op guests get the station but nothing on it is a two-player thing.
+7. Saving is a bag of folds; no readable "what changed".
+8. The battlefields have had none of the station's "living" standard.
+9. The menus and settings read as a different product.
+10. Difficulty is a slider; the station ignores it.
+
+**Ten additions:**
+1. The war reaches the station: casualties off the front's real state, a klaxon and a Command order closing a deck, the briefing from the real map.
+2. A journal in the cabin: one line per system per day, read back as pages.
+3. Promotions at the muster in front of the company; a man with a bad fate refuses the next sortie.
+4. Two-player things: sabacc against your guest, a race bet against each other, a two-carrier cargo job.
+5. Music as place: a band that plays seeded tunes, a busker on the ring, a Drum theme.
+6. The frame-time overlay and the auto-tune (hole 2).
+7. The walk-the-world gate (hole 1). **BUILT**
+8. The battlefields get patrols, wildlife, weather, a camp with people in it.
+9. The station's cel look on the menus, settings and deck cards.
+10. Difficulty that changes the station: prices, the brig, the guards' patience, the pickpocket's odds.
+
 ## 0. V18 — THE PLAYER'S THIRTY, AND TWO NEW SCREENS
 
 The player, mid-session: *"in addition to the pod racing there should be
