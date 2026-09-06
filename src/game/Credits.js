@@ -35,6 +35,7 @@
  */
 
 import { makeStore } from './Store.js';
+import { note } from './Journal.js';
 
 const KEY = 'saber.credits.v1';
 const store = makeStore(KEY);
@@ -183,6 +184,7 @@ export function pay(n, why = 'purse') {
   s.purse += amount;
   s.earned += amount;
   write(s);
+  if (typeof why === 'string' && !/^(purse|tote|drum)$/.test(why)) note('paid', `paid ${amount} credits — ${why}`); // V19: the journal (a bet writes its own line)
   return amount;
 }
 
@@ -201,6 +203,7 @@ export function spend(n, on = null) {
   s.purse -= cost;
   s.spent += cost;
   write(s);
+  if (typeof on === 'string' && !/^(tote|drum|pickpocket)$/.test(on)) note('buy', `spent ${cost} credits — ${on}; ${s.purse} left`); // V19: the journal (a bet and the thief write their own)
   return { ok: true, why: null, short: 0, left: s.purse, on };
 }
 

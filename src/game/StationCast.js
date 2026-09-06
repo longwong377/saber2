@@ -1422,6 +1422,13 @@ export const BARK_TOPICS = [
     },
   },
   {
+    /* V19 addition 3: A MAN WHO REFUSED THE DROP says why, and says nothing
+     * else — `only` makes his the one line. `Station.talkTo` hands it in off
+     * `body.stationRefusal`; `Promotion.standRefusers` writes it. */
+    id: 'refusal', only: true,
+    say(who, ctx) { return ctx.refusal ? String(ctx.refusal) : null; },
+  },
+  {
     id: 'standing',
     say(who, ctx) {
       if (!Number.isFinite(ctx.standing) || Math.abs(ctx.standing) < 4) return null;
@@ -1446,6 +1453,7 @@ export function barkFor(who, day = 0, ctx = {}) {
   for (const t of BARK_TOPICS) {
     let s = null;
     try { s = t.say(who, ctx); } catch { s = null; }
+    if (s && t.only) return [residentLine(who).toUpperCase(), s];
     if (s) said.push(s);
   }
   if (!said.length) return null;

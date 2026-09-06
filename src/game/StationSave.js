@@ -196,7 +196,13 @@ function blank() {
     pick: null,
     /** The Forge's remote test (V18 cool 19): `{ best, last, day, n }` or null. `RemoteTest.js` owns the shape. */
     forgeTest: null,
-
+    /**
+     * V19 addition 2: THE JOURNAL — `{ v, days: { [day]: [{ h, k, t }] } }`,
+     * one line per thing that happened, stamped with the station hour.
+     * `Journal.js` owns the shape, the cap (40 lines a day, 30 days kept)
+     * and the desk it is read at. Null until the first line is written.
+     */
+    journal: null,
   };
 }
 
@@ -408,6 +414,10 @@ export function markFuneral(designation, bunk, day = 0) {
   }
   return s.funerals;
 }
+
+/** The journal fold — see `Journal.js`. Null until a line is written. */
+export function journalState() { const j = read().journal; return j && typeof j === 'object' ? j : null; }
+export function setJournalState(v) { const s = read(); s.journal = v; return write(s).journal; }
 
 /** Today's pickpocket record, or null — see `Pickpocket.js` for its shape. */
 export function pickpocketState() { const p = read().pick; return p && typeof p === 'object' ? p : null; }

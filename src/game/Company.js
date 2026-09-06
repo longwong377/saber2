@@ -60,6 +60,7 @@ import {
 import { ARCHETYPES } from './Enemy.js';
 import { KIT_FIELDS, PAINT_FIELDS, PAINTS, paintById } from './Bodies.js';
 import { makeStore } from './Store.js';
+import { note } from './Journal.js';
 
 /**
  * An attribute block off disk, clamped and complete.
@@ -251,6 +252,10 @@ const MAN_FIELDS = [
    * would have to be decided in the one frame it crossed the line, and the
    * roster screen could never show a pair three grounds short of one. */
   'bonds',
+  /* V19 addition 3: the rank his stripe was READ AT (`Promotion.js`) and the
+   * sortie he refused — `{ day, sign }`. Both are ceremony marks, not rank:
+   * rank still derives from `xp` alone. */
+  'promoted', 'refused',
   /* AND WHAT THE RUN DID TO HIM AND HAS NOT FINISHED DOING. `hp` is the
    * fraction of his health he came off the ramp with, and it is the ONLY
    * thing this file stores about an injury: `Medbay.js` derives how long he
@@ -451,6 +456,9 @@ function saneFallen(f) {
     callsign: cleanCallsign(f.callsign),
     type: typeof f.type === 'string' ? f.type : null,
     rank: Math.max(0, num(f.rank, 0) | 0),
+    /* WHICH SQUAD HE DIED IN (V19 addition 3): the living settle their bonds
+     * among the living, so this is the one record of who lost him. */
+    squad: Number.isInteger(f.squad) ? f.squad : null,
     kills: Math.max(0, num(f.kills, 0) | 0),
     runs: Math.max(0, num(f.runs, 0) | 0),
     where: typeof f.where === 'string' ? f.where : null,
@@ -558,6 +566,13 @@ function readMan(m, army) {
      * prove issuing a look wrote no number. A healthy man must not carry an
      * empty wound around; absent is the answer, not present-and-empty. */
     ...(hurtOf(m.hp) === undefined ? {} : { hp: hurtOf(m.hp) }),
+    /* THE STRIPE READ AT THE MUSTER (V19 addition 3): the highest rank whose
+     * promotion has been read to the company. Absent is 0 — every rank a
+     * man holds above it is read at the next 08:00. */
+    promoted: Math.max(0, Math.min(RANKS.length - 1, num(m.promoted, 0) | 0)),
+    /* THE DROP HE REFUSED: `{ day, sign }` or nothing. See `Promotion.refusalsOf`. */
+    ...(m.refused && typeof m.refused === 'object' && Number.isFinite(m.refused.day)
+      ? { refused: { day: m.refused.day | 0, sign: String(m.refused.sign ?? '') } } : {}),
   };
 }
 
@@ -1130,6 +1145,7 @@ export function keep(manifest, opts = {}) {
         designation: m.designation, nickname: m.nickname ?? null, type: m.type,
         callsign: cleanCallsign(m.look?.callsign),
         rank: rankFor(m.xp | 0), kills: m.kills | 0, runs: m.runs | 0,
+        squad: Number.isInteger(m.squad) ? m.squad : null,
         where: opts.ground ?? null,
         /* A MAN LEFT BEHIND HAS NO KILLER AND NO MINUTE, whatever the run's
          * account happens to hold under his name — nothing killed him, which
@@ -1143,6 +1159,7 @@ export function keep(manifest, opts = {}) {
     }),
     ...(c.fallen || []),
   ].slice(0, FALLEN_KEEP);
+  for (const f of c.fallen.slice(0, gone.length)) note('fate', `${f.designation}${f.callsign ? ` "${f.callsign}"` : ''} — ${f.fate === 'left' ? 'left behind' : 'killed in action'}${f.where ? ` on ${f.where}` : ''}`); // V19: the journal
   /**
    * THE ORDERS OF THE DAY, from the diff this fold just made. Only men who
    * actually came home are celebrated — a wipe or a quit writes an empty list,
@@ -1399,6 +1416,28 @@ export function appoint(army, key, on = true, licensed = true) {
  * came first in an array. He arrives WITHOUT the seat, and the player gives it
  * to him again if that was the point.
  */
+/**
+ * THE STRIPE IS WRITTEN (V19 addition 3). `rank` is a rank index; the mark
+ * only ever goes up, and it is the ceremony's record, not the rank — a man's
+ * rank is `rankFor(xp)` everywhere. `Promotion.stepMuster` is the one caller.
+ */
+export function promote(army, key, rank) {
+  const c = load(army);
+  const m = c.men.find((x) => x.designation === key);
+  if (!m) return c;
+  m.promoted = Math.max(m.promoted | 0, Math.min(RANKS.length - 1, rank | 0));
+  return save(c);
+}
+
+/** THE REFUSAL IS WRITTEN: `{ day, sign }` — see `Promotion.refusalsOf`. */
+export function markRefusal(army, key, rec) {
+  const c = load(army);
+  const m = c.men.find((x) => x.designation === key);
+  if (!m || !rec) return c;
+  m.refused = { day: rec.day | 0, sign: String(rec.sign ?? '') };
+  return save(c);
+}
+
 export function assign(army, key, squad) {
   const c = load(army);
   const m = c.men.find((x) => x.designation === key);

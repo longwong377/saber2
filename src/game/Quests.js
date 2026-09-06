@@ -73,6 +73,7 @@
 
 import { makeRng } from '../engine/MathUtil.js';
 import { makeStore } from './Store.js';
+import { note } from './Journal.js';
 
 const KEY = 'saber.work.v1';
 const store = makeStore(KEY);
@@ -288,6 +289,7 @@ export function takeJob(job) {
   if (s.open.some((j) => j.id === job.id)) return { ok: false, why: 'you already took that one' };
   s.open.push({ ...job, taken: true, paid: false });
   write(s);
+  note('job', `took a job — ${job.line || job.shape}`); // V19: the journal
   return { ok: true, why: null, carrying: s.open.length };
 }
 
@@ -369,6 +371,7 @@ export function collect(jobId) {
   if (!j) return { ok: false, why: 'nobody here owes you anything', pay: 0 };
   j.paid = true;
   write(s);
+  note('job', `a job paid — ${j.line || j.shape}, ${Math.max(1, Math.round(j.pay || 100))} credits`); // V19: the journal
   return { ok: true, why: null, pay: Math.max(1, Math.round(j.pay || 100)), job: j };
 }
 

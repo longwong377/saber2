@@ -7290,6 +7290,13 @@ export class Menu {
       const picked = !!(plan?.armyMode) && !versus && !sessionClient && !!(slate?.picks?.length);
       const goingSet = new Set(line.map((x) => x.designation));
       const taking = men.filter((m) => goingSet.has(m.designation)).length;
+      /* V19 addition 3: THE REFUSALS, on the slate above the line. */
+      for (const r of (line.refused || [])) {
+        const ref = document.createElement('p');
+        ref.className = 'hint company-cut company-refused';
+        ref.textContent = r.line;
+        list.appendChild(ref);
+      }
       if (taking > 0) {
         const head2 = document.createElement('p');
         head2.className = 'hint company-cut';

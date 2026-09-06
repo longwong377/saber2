@@ -81,6 +81,7 @@ import { disarmKinetic } from './Impact.js';
  * weather below. See the EVENTS section and `StationEvents.js`'s header. */
 import { beginStationEvents, calmStationEvents, stepStationEvents, blackoutDip } from './StationEvents.js';
 import { stepVigil } from './Vigil.js';
+import { stepMuster } from './Promotion.js';
 import { stepPickpocket } from './Pickpocket.js';
 /* THE ONE EXEMPTION FROM THE DAILY REROLL — see `occupant`. `Quests.js` holds
  * the ledger and answers in SEEDS, so this file still decides who stands where
@@ -4419,6 +4420,7 @@ export function stepStationLife(world, dt) {
   stepEvents(world, st, life, dt);
   stepVigil(world, st, life, dt, eventTools());
   stepPickpocket(world, st, life, dt, eventTools());
+  stepMuster(world, st, life, dt, eventTools()); // V19 addition 3: the 08:00 muster in #29, and the refusers by the bunks
   /* The reactor's dip, decaying once the surge is over — one number, and
    * `stepDip` below is the reader it did not have. */
   if (!life.event && life.dip > 0) life.dip = Math.max(0, life.dip - dt * 0.9);

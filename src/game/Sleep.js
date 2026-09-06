@@ -42,6 +42,7 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import { tickStationClock } from './Station.js';
 import { TV_W, TV_H } from './Holonet.js';
+import { note } from './Journal.js';
 
 /** Where you wake. */
 export const WAKE_HOUR = 7;
@@ -208,6 +209,7 @@ export function endSleep(world, woke = true) {
   const pl = world.player;
   if (pl && S.bunk) { pl.position.set(S.bunk.side.x, S.bunk.side.y, S.bunk.side.z); pl.velocity?.set(0, 0, 0); }
   if (woke && st) world.notify?.('THE CABIN', `${fmt(st.hour)}, day ${st.day | 0} — you slept ${Math.round(S.wound)} hours`);
+  if (woke && st) note('sleep', `slept ${Math.round(S.wound)} hours in the cabin, up at ${fmt(st.hour)}`, world); // V19: the journal
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */

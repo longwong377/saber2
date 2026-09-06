@@ -51,17 +51,17 @@ built in lanes, marked as they land.
 2. No frame ever measured on a real GPU. → a frame-time overlay and a quality auto-tune.
 3. Sound is text plus tones: no music tied to place.
 4. The station never feels the war outside.
-5. Company men have names and fates but no arc.
+5. Company men have names and fates but no arc. → promotions read at the 08:00 muster in #29, and a man with a bad fate refuses the drop (`Promotion.js`). **BUILT**
 6. Co-op guests get the station but nothing on it is a two-player thing.
-7. Saving is a bag of folds; no readable "what changed".
+7. Saving is a bag of folds; no readable "what changed". → the journal in the cabin (`Journal.js`, a `journal` fold in `StationSave`). **BUILT**
 8. The battlefields have had none of the station's "living" standard.
 9. The menus and settings read as a different product.
 10. Difficulty is a slider; the station ignores it.
 
 **Ten additions:**
 1. The war reaches the station: casualties off the front's real state, a klaxon and a Command order closing a deck, the briefing from the real map.
-2. A journal in the cabin: one line per system per day, read back as pages.
-3. Promotions at the muster in front of the company; a man with a bad fate refuses the next sortie.
+2. A journal in the cabin: one line per system per day, read back as pages. **BUILT** — `src/game/Journal.js`: `note(kind, line, when?)` stamps the station day and hour into `StationSave.journal` (40 lines a day, 30 days). Twelve one-line hooks: `Regulars.talkHook`, `Tote.settleTickets`, `Station.payAtDrum`, `Credits.spend`/`pay`, `Company.keep` (the fate), `Quests.takeJob`/`collect`, `Vigil` (the funeral), `Pickpocket.lift`, `Sleep.endSleep`, `RemoteTest.endTest`, `DeckLift` (the ride), `Promotion.stepMuster`. The desk with the open book is `StationKit.twinroom`'s; `Home.homeKey` at it opens a canvas page on a slab 0.62 m before the eye (`world.onJournal?.()` first), the key turns back a day, the wheel either way, walking 2.2 m off closes it; the first open says so (`hasSeen('journal')`). `tools/checks/journal.mjs`.
+3. Promotions at the muster in front of the company; a man with a bad fate refuses the next sortie. **BUILT** — `src/game/Promotion.js`. Rank still derives from xp; `promoted` on the man's record is the rank last READ, so the ceremony runs once per rank: at 08:00 on deck 44 the pool's men in #29 form a line (`standTx/standTz`, `standStill`), the promotee is spawned into it if absent, the sergeant reads each promotion 4 s apart (`world.notify` + his plate), `Company.promote` writes the mark, `addStripe` puts a slab on the rig's `armL`. `unfit(man, company)` reads wounds ≥ 2, a squad-mate on the casualty list (fallen records now carry `squad`), morale < 0.35, hp < `Medbay.FIT`; `refusalsOf` is called by `Muster.lineup`, which skips him and hands the lines back on `.refused` for the Company tab's slate; `Company.markRefusal` holds it for the day (`{ day, sign }`) — the next day, for that fate, he is fit; a new wound is a new refusal. On deck 44 he stands by the far bunks and `StationCast`'s `refusal` topic (an `only` topic) gives his reason. `tools/checks/journal.mjs`.
 4. Two-player things: sabacc against your guest, a race bet against each other, a two-carrier cargo job.
 5. Music as place: a band that plays seeded tunes, a busker on the ring, a Drum theme.
 6. The frame-time overlay and the auto-tune (hole 2).

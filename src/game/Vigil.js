@@ -36,6 +36,7 @@ import { PLACE, floorOf } from './StationPlan.js';
 import { companyOf } from './StationBoards.js';
 import { funeralsDone, markFuneral } from './StationSave.js';
 import { lookFor } from './StationCast.js';
+import { note } from './Journal.js';
 
 export const VIGIL = Object.freeze({
   /** Station hour the vigil begins, and how long the window stays open. */
@@ -340,6 +341,7 @@ export function stepVigil(world, st, life, dt, T) {
       if (V.funeral) {
         const F = V.funeral;
         markFuneral(F.designation, bunkOf(F.designation), st.day | 0);
+        note('funeral', `${deadName(F)} buried at the chapel — his bunk in #29 stripped`, world); // V19: the journal
         world.notify?.('THE CHAPEL', `${deadName(F)} is at rest — his bunk in #29 is stripped tonight`);
         V.funeral = null;
       }

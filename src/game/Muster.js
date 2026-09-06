@@ -46,6 +46,8 @@ import {
   commandConfig, composeContingent, shelfFor,
 } from './Command.js';
 import * as Company from './Company.js';
+import { refusalsOf } from './Promotion.js';
+import { stationDay } from './StationSave.js';
 import { makeStore } from './Store.js';
 
 /** Where it lives. Versioned like every other store in the tree. */
@@ -447,7 +449,12 @@ export function lineup(plan, company, opts = {}) {
    * him too, or the tab's "field him next run" writes a name this resolver
    * silently drops — a button that lies. The whole roll goes in the map; the
    * CAP below is what keeps a pick from ever growing the line. */
-  const all = Company.fieldable(c);
+  /* V19 addition 3: A MAN WITH A BAD FATE REFUSES THE DROP. He is skipped
+   * here — the one resolver of who deploys — and handed back on `.refused`
+   * so the slate can print his line. See `Promotion.refusalsOf`. */
+  const refused = refusalsOf(c, opts.day ?? stationDay());
+  const out = new Set(refused.map((r) => r.designation));
+  const all = Company.fieldable(c).filter((m) => !out.has(m.designation));
   const vets = all.slice(0, want);
   const slate = opts.versus ? null : ensure(plan, c);
   const recruits = slate ? slate.recruits.map((r) => materialize(r, plan.army)) : [];
@@ -486,7 +493,9 @@ export function lineup(plan, company, opts = {}) {
     if (picked.length >= cap) break;
     if (!used.has(m.designation)) { picked.push(m); used.add(m.designation); }
   }
-  return picked.slice(0, cap);
+  const line = picked.slice(0, cap);
+  line.refused = refused;
+  return line;
 }
 
 /* ── what the player may change ──────────────────────────────────────── */
