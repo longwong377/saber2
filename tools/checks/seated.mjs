@@ -189,6 +189,10 @@ export async function run({ check, assert, THREE }) {
       for (const b of were) assert(life.seats.get(b.__wasOn) !== b, `chair ${b.__wasOn?.id} is still ${b.stationName}'s after he stood`);
       const held = new Set();
       for (const b of life.live.values()) if (b?.seat?.cupObj) held.add(b.seat.cupObj);
+      /* …and the STANDING drinkers' cups (V20 lane 3, `Gestures.js`): a body
+       * at a bar with a drink in its hand is a held cup, not a floating one,
+       * and it is parented to the scene for the same reason a sitter's is. */
+      for (const [, cup] of world._gestures?.cups || []) held.add(cup);
       let floating = 0, onTables = 0;
       world.scene.traverse((o) => {
         if (o.name !== 'cup') return;

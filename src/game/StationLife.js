@@ -83,6 +83,7 @@ import { beginStationEvents, calmStationEvents, stepStationEvents, blackoutDip }
 import { stepVigil } from './Vigil.js';
 import { stepMuster } from './Promotion.js';
 import { stepPickpocket } from './Pickpocket.js';
+import { stepGestures, undressGestures } from './Gestures.js'; // V20 lane 3: hands
 import { stepStationWar, undressStationWar } from './StationWar.js';
 import { stationDiff } from './StationDifficulty.js';
 /* THE ONE EXEMPTION FROM THE DAILY REROLL — see `occupant`. `Quests.js` holds
@@ -4039,6 +4040,10 @@ function stepStanding(world, life, dt) {
     const want = (mx * mx + mz * mz) > 1e-9 ? Math.atan2(mx, mz) : body.standFace;
     body.facing += wrapPi(want - body.facing) * Math.min(1, dt * (seated ? SEAT.turn : STAND.turn));
   }
+  /* V20 lane 3: and what those hands are doing while the feet stand there —
+   * `Gestures.js`, after this loop because it reads the facing and the feet it
+   * has just written. */
+  stepGestures(world, life, dt);
 }
 
 function stepWalkers(world, life, dt) {
@@ -4458,6 +4463,7 @@ export function stepStationLife(world, dt) {
 /** Everything the life made, put down. */
 export function undressStationLife(world) {
   undressTramCabin(world);
+  undressGestures(world); // V20 lane 3: the standing drinkers' cups
   undressStationWar(world); // V19 add 1: the strips' colour and the CIC wall
   const life = world?._stationLife;
   if (!life) return;
