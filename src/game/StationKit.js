@@ -2988,7 +2988,7 @@ export const SHAPES = {
     box(-w / 2 + 4.0, 0, zBack, M.hull);
     box(-w / 2 + 4.0, CH, zBack, M.deep);
     box(w / 2 - 4.4, 0, zBack, M.deep);
-    box(w / 2 - 1.5, 0, -d / 2 + 4.2, M.hull, true, Math.PI / 2);
+    box(roomHalfW(kit, w, -d / 2 + 1.2, -d / 2 + 7.2) - 1.6, 0, -d / 2 + 4.2, M.hull, true, Math.PI / 2); // inside the sector's side wall
 
     /* THE ONE THAT IS OPEN, and it faces the door. Its far wall is set back so
      * the mouth reads as depth rather than as a painted rectangle, and the
