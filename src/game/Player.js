@@ -46,6 +46,7 @@ import { shakeNerve } from './Nerve.js';
  * nothing from this file, so the edge is one-way, the same shape the DeckEdit
  * import below has. */
 import { stationKey, namingStation } from './Station.js';
+import { refuseBlade, BLADE_REFUSAL } from './StationDuel.js'; // V20 lane 7: the drum's peace, asked at the one key that breaks it
 /* V15 §3's melee set. A leaf: it reads a Player and writes damage through the
  * doors that already exist (`Enemy.damage` with kind 'melee', `addShove`), and
  * imports nothing from this file. */
@@ -4771,6 +4772,13 @@ export class Player {
        * thing with the only saber they are touching. */
       if (this.igniteHeldHilt(ctx)) { /* lit or doused at range */ }
       else if (this.saberDown) this._refuse('ignite', 'your hands are empty');
+      /* THE DRUM'S PEACE — V20 lane 7. The station is the one level in the
+       * game where a lit blade is not yours to light: `StationDuel.refuseBlade`
+       * answers false everywhere else, and true here except in #20's well
+       * during a bout and on the ring while the acolyte is on you. Refusing
+       * rather than silently doing nothing, because a key that does nothing is
+       * a key the player thinks is broken. */
+      else if (refuseBlade(this.world)) this._refuse('ignite', BLADE_REFUSAL);
       else {
         this.saber.toggle();
         if (this.saber.lit) { this.hum.ignite(); audio.tone({ freq: 180, freqEnd: 900, dur: 0.4, gain: 0.22, type: 'sawtooth', pos: this.saber.base }); }

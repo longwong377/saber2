@@ -125,6 +125,7 @@ import { seatedOnTram } from './TramCabin.js';
 import { stepGreetings, undressGreetings } from './Greetings.js';
 import { dressRemoteTest, stepRemoteTest, remoteTestKey, undressRemoteTest } from './RemoteTest.js';
 import { stepCoopGames, coopGamesKey, coopGuest } from './CoopGames.js'; // V19 addition 4: the two-player things
+import { dressDuel, stepDuel, undressDuel, duelKey, sithTalk } from './StationDuel.js'; // V20 lane 7: the bout in the well and the Sith who follows you out
 
 import * as Food from './Food.js';
 import { shelfFor } from './Counter.js';
@@ -1742,6 +1743,7 @@ export function dressStation(world) {
   for (const [x, z] of [[3, 24], [-4, 26], [5, 30], [-6, 33], [2, 38], [-2, 42]]) {
     makeCrate(world, new THREE.Vector3(x, y + 0.5, z), 0.85);
   }
+  dressDuel(world); // V20 lane 7: the saber gate, the arena's plaque, and the two occasions it lifts
   return st;
 }
 
@@ -1838,6 +1840,7 @@ export function undressStation(world) {
   leaveHome(world);
   undressHome(world);
   undressHealing(world); undressMusic(world); undressStationSound(world); undressFormBoards(world); // V18 holes 5, 7, 10; V19 add 5
+  undressDuel(world); // V20 lane 7: the plaque, the duellist and the acolyte go with the deck
   for (const rec of st.places.values()) {
     rec.group.parent?.remove(rec.group);
     rec.group.traverse((o) => { if (o.isMesh) o.geometry?.dispose?.(); });
@@ -2641,6 +2644,7 @@ export function talkTo(world, body) {
   /* The pickpocket caught first (V18 cool 5), then the regulars' ledger and
    * the follower's dismissal (cool 10, 13). */
   if (catchPickpocket(world, body)) return true;
+  if (sithTalk(world, body)) return true; // V20 lane 7: the acolyte at #14's booth counts your days, not your presses
   if (talkHook(world, body)) return true;
   const day = stationDay();
   const who = whoOfBody(body);
@@ -3095,6 +3099,12 @@ export function stationKey(world) {
    * seat or a panel.
    */
   if (musicKey(world)) return true; // V19 add 5: a credit in the busker's hat, ahead of the talk
+  /* V20 lane 7: THE KERB AND THE PLAQUE. Both are fixtures rather than rooms —
+   * the lip of #20's well during a bout hour, and the plate on the arena
+   * kiosk out on the ring where `placeUnder` finds nothing at all — so this
+   * sits with the busker, above the place test twenty lines down. It claims
+   * a press nowhere else, so #20's pit door and its card are untouched. */
+  if (duelKey(world)) return true;
   const facing = residentFacing(world);
   if (facing && talkTo(world, facing)) return true;
   /**
@@ -5125,6 +5135,7 @@ export function stepStation(world, dt) {
 
   stepShuttle(world, dt); stepGreetings(world, world._stationLife, dt); stepRemoteTest(world, dt);
   stepCoopGames(world, dt); // V19 addition 4: the shared hand, the side bet, the crate
+  stepDuel(world, st, dt); // V20 lane 7: the saber gate, the bout in the well, the man behind you
 
 
   const cam = world.player?.camera?.obj || world.player;
