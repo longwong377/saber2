@@ -2301,6 +2301,25 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
    column down while it is shown, takes no space while it is hidden, and cannot
    overlap by construction rather than by arithmetic. `text-align:left` because
    the column is right-aligned and a monospace table must not be. */
+/* The F3 frame-time box (src/game/Perf.js): #hud-perf's type, pinned top-left,
+   outside #hud so a hidden HUD does not hide the measurement. */
+#perf-overlay {
+  position: fixed;
+  left: 10px;
+  top: 10px;
+  z-index: 60;
+  margin: 0;
+  padding: 6px 9px;
+  font: 11px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  color: #f4dcc0;
+  background: var(--panel);
+  border: 2px solid var(--stroke);
+  white-space: pre;
+  max-width: min(96vw, 900px);
+  overflow: hidden;
+  pointer-events: none;
+}
 #hud-perf {
   position: static;
   display: inline-block;

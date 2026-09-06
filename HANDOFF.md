@@ -48,7 +48,7 @@ built in lanes, marked as they land.
 
 **Ten holes:**
 1. Drawn versus solid keeps diverging (doors, wells, the ground sheet were all green for months). → a walk-the-world gate: a body dropped at every door and lobby on every deck (`station.mjs`). **BUILT**, and it found four more things on its first run.
-2. No frame ever measured on a real GPU. → a frame-time overlay and a quality auto-tune.
+2. No frame ever measured on a real GPU. → a frame-time overlay and a quality auto-tune. **BUILT** — `src/game/Perf.js`: F3 (action `perf`) shows frame mean/p95 over 2 s, draw calls, triangles, the station's step, bodies, deck and room, tier and GPU, and logs a paste-able copy line to `saber.perf.v1`; quality 'auto' walks the four tiers off the measured p95 (down after two 4 s windows over 24 ms, up after 20 s under 11 ms, one step per 10 s, re-entry costs doubling). `tools/checks/perf.mjs`.
 3. Sound is text plus tones: no music tied to place.
 4. The station never feels the war outside.
 5. Company men have names and fates but no arc.
@@ -64,7 +64,7 @@ built in lanes, marked as they land.
 3. Promotions at the muster in front of the company; a man with a bad fate refuses the next sortie.
 4. Two-player things: sabacc against your guest, a race bet against each other, a two-carrier cargo job.
 5. Music as place: a band that plays seeded tunes, a busker on the ring, a Drum theme.
-6. The frame-time overlay and the auto-tune (hole 2).
+6. The frame-time overlay and the auto-tune (hole 2). **BUILT**
 7. The walk-the-world gate (hole 1). **BUILT**
 8. The battlefields get patrols, wildlife, weather, a camp with people in it.
 9. The station's cel look on the menus, settings and deck cards.
