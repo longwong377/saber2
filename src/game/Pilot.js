@@ -59,7 +59,8 @@
  */
 
 import { Starfury, V } from './Starfury.js';
-import { CIRCUIT_LENGTH, sample, clearanceAt } from './Outside.js';
+import { CIRCUIT_LENGTH, sample, clearanceAt, hullRadiusAt, mouthBearing } from './Outside.js';
+import { DECK_Y } from './StationPlan.js';
 
 const { sub, scale, dot, cross, norm, unit } = V;
 
@@ -72,6 +73,12 @@ const P = (p) => [p.x, p.y, p.z];
  * only bounds it where the track is straight enough to allow more.
  */
 export const TOP_SPEED = 60;
+/** Past this the thrusters bleed the run back — see `PlayerPilot._holdOff`. */
+export const SOFT_CEILING = 220;
+/** Inside this of the bay's mouth the hull is not a wall: the tractor's own path. */
+export const MOUTH_CLEAR = 70;
+/** Where control calls you back, from the station's axis. */
+export const PATTERN_R = 2000;
 
 /**
  * How far ahead the pilot aims, in metres. One second of flight at the top
@@ -800,6 +807,7 @@ export class PlayerPilot {
 
     command(this.craft, translate, rotate, this.throttles);
     this.craft.step(dt, this.throttles);
+    this._holdOff(dt);
 
     /* ── where that put it on the circuit ─────────────────────────────── */
     this._advance();
@@ -826,6 +834,66 @@ export class PlayerPilot {
    * uses — one copy, so a sortie nobody is flying does not fly differently
    * from one nobody was ever going to fly.
    */
+  /**
+   * ══ THE STATION IS SOLID, AND SPACE HAS AN EDGE — V17 ══════════════════
+   *
+   * The hostile drive: nose at the axis, hold throttle, and the Starfury
+   * flew THROUGH the drum — 106 frames inside the hull, hull hp untouched,
+   * out the far side at 368 m/s. And sixty seconds of throttle reached
+   * 1 132 m/s and 36 km with nothing said. So, every frame:
+   *
+   *   HULL. `clearanceAt` is the one number the whole track is measured
+   *   against; negative is inside the plating. The craft is put back on the
+   *   surface along the radial, the radial half of its velocity is turned
+   *   round at 0.6 (a hull is not a trampoline), and the speed it arrived at
+   *   is taken off the airframe. The bay's mouth is the exception — the
+   *   tractor path runs through the hull there by design — so nothing
+   *   within `MOUTH_CLEAR` of it is a strike.
+   *
+   *   REACTION MASS. Past `SOFT_CEILING` the thrusters are fighting their own
+   *   exhaust: velocity is bled back toward the ceiling rather than clamped,
+   *   so a dive still feels like one and a run for the horizon does not.
+   *
+   *   THE PATTERN. At `PATTERN_R` from the axis, once, control calls it.
+   */
+  _holdOff(dt) {
+    const pos = this.craft.position, v = this.craft.velocity;
+    const c = clearanceAt({ x: pos[0], y: pos[1], z: pos[2] });
+    if (c < 0) {
+      if (!this._mouth) {
+        const mb = mouthBearing();
+        const mr = hullRadiusAt(DECK_Y[32]);
+        this._mouth = [mr * Math.sin(mb), DECK_Y[32], mr * Math.cos(mb)];
+      }
+      const m = this._mouth;
+      const nearMouth = Math.hypot(pos[0] - m[0], pos[1] - m[1], pos[2] - m[2]) < MOUTH_CLEAR;
+      if (!nearMouth) {
+        const r = Math.hypot(pos[0], pos[2]) || 1;
+        const nx = pos[0] / r, nz = pos[2] / r;
+        pos[0] -= nx * c; pos[2] -= nz * c;
+        const vn = v[0] * nx + v[2] * nz;
+        if (vn < 0) {
+          v[0] -= 1.6 * vn * nx; v[2] -= 1.6 * vn * nz;
+          const hit = -vn;
+          if (hit > 6) {
+            this.say?.('COBRA BAY', `Hull strike — ${Math.round(hit)} metres a second into the plating.`);
+            this.damage(hit * 1.4, null, 'the station', 'hull');
+          }
+        }
+      }
+    }
+    const spd = Math.hypot(v[0], v[1], v[2]);
+    if (spd > SOFT_CEILING) {
+      const k = Math.max(0, 1 - dt * 0.9 * ((spd - SOFT_CEILING) / SOFT_CEILING));
+      v[0] *= k; v[1] *= k; v[2] *= k;
+    }
+    const range = Math.hypot(pos[0], pos[2]);
+    if (range > PATTERN_R && !this._saidFar) {
+      this._saidFar = true;
+      this.say?.('CROSSROADS CONTROL', 'You are leaving the pattern. The bay is behind you.');
+    } else if (range < PATTERN_R * 0.6) this._saidFar = false;
+  }
+
   autoStep(dt) {
     if (this.left || !(dt > 0)) return this.u;
     this.t += dt;

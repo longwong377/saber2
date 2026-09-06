@@ -283,7 +283,12 @@ export function solve(want, got) {
  */
 export function tuningFrom(score) {
   const k = Math.max(0, Math.min(1, Number(score) || 0));
-  return { cooldown: 1 - 0.10 * k, cost: 1 - 0.05 * k };
+  /* Fifteen off the cooldown and ten off the cost at a perfect solution
+   * (V17, up from ten and five): an untouched bench scored 0.59 against a
+   * perfect 0.99 and the difference was four points of nothing. The ceiling
+   * is `bench.mjs`'s — past 0.85 / 0.90 it is a second progression, and the
+   * doctrine forbids one; the drift at 0.30 is what makes the hand matter. */
+  return { cooldown: 1 - 0.15 * k, cost: 1 - 0.10 * k };
 }
 
 /**
@@ -414,7 +419,9 @@ export function wantFor(id, clock = 0) {
  * (0.45..1.20 rad/s), so the three come back into the same relationship only
  * every few minutes rather than every second.
  */
-export const DRIFT = 0.18;
+/* 0.30, not 0.18 (V17): under `MISS` at 0.35 the dials at their defaults
+ * were never a miss, so the game was leaving them alone. */
+export const DRIFT = 0.30;
 
 export function markAt(id, clock = 0, t = 0) {
   const c = wantFor(id, clock);

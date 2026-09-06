@@ -22,7 +22,9 @@ import { Menu, loadSettings, saveSettings, applyFeelSettings, bladeCeiling, BLAD
 import { Net, RemoteAvatar, packCompanionCard, packLook, sessionPart } from './net/Net.js';
 import { boonById, drawBoons, BOSS_EVERY, MODES, sandboxUnits, sandboxConfig,
   SANDBOX_MAX_ENEMIES } from './game/Waves.js';
-import { theatreFor, theatresFor, LEVELS } from './game/Levels.js';
+import { theatreFor, theatresFor, LEVELS, STATION_ENABLED } from './game/Levels.js';
+import { TERRAIN_PRESETS } from './world/Terrain.js';
+import { PLACE, DECK_Y } from './game/StationPlan.js';
 /* THE SHAPE OF ONE SITTING — FLAGSHIP §5. A leaf that imports nothing of the
  * game's, so the deploy card can be assembled here without this file reaching
  * into the director for anything but the record it already publishes. */
@@ -117,7 +119,7 @@ import { benchFor } from './game/Bench.js';
  */
 import { STRATAGEMS as CALL_ROWS } from './game/Stratagems.js';
 import { loadStation, standing, stationDay as stationDayOf, stationHour,
-  HOURS_PER_SECOND } from './game/StationSave.js';
+  HOURS_PER_SECOND, casinoState, setCasinoState } from './game/StationSave.js';
 /* THE IDENTITIES a provision is merged against — see `runProvisions`. One
  * table, and it is the one every boon in the game is already written against. */
 import { defaultBoonMods } from './game/Player.js';
@@ -406,6 +408,21 @@ const menu = new Menu(settings, {
   }),
   onRetry: () => {
     cancelDeathCard(); menu.hideDeath();
+    /* ══ YOU WAKE IN THE MEDBAY (V16 §C1, built in V17) ═══════════════════
+     * A death on a run that left from the deck used to hand you a retry
+     * button and the same ground. `Medbay.wakePlan` had been computing the
+     * bed, the roll beside it and the next man due out for nobody. Now the
+     * card's first button puts you on that bed in #43 with the numbers said
+     * over you, and the run is over the way a run that killed you is. */
+    if (launchedFromDeck && STATION_ENABLED && world && world.settings?.mode !== 'hangar' && world.settings?.mode !== 'station') {
+      launchedFromDeck = false;
+      const still = captureStill();
+      try { world.dispose(); } catch {}
+      world = null;
+      enterStation({ n: 48, label: 'MEDBAY', level: 'station', deck: 48, shaft: 'atrium' }, { still, wake: true })
+        .catch((e) => console.error('waking in the medbay failed', e));
+      return;
+    }
     /* ON THE FLIGHT DECK THE CARD'S FIRST BUTTON IS "BACK TO THE DECK": the
      * run is over and the man is standing on the ship's deck with the report
      * in his hand; the ship for the next run is twenty metres away. */
@@ -1316,6 +1333,7 @@ async function enterStation(floorRow = null, opts = {}) {
   input.enabled = true;
   input.requestLock();
   screens.set('playing');
+  if (opts.wake && world) wakeInMedbay(world);
   /**
    * ── WHO CAME HOME HURT — V16 Lane B3 ──────────────────────────────────
    *
@@ -1431,7 +1449,34 @@ function captureStill() {
   } catch { return null; }
 }
 
+/**
+ * On the bed in #43. The bay is `wakePlan`'s, the roll beside you is read
+ * over you, and the room's own prompt takes it from there.
+ */
+function wakeInMedbay(w) {
+  const bay = PLACE.get(43);
+  const p = w.player;
+  if (!bay || !p?.position) return;
+  const plan = wakePlan(companyOf(), stationDay());
+  /* Six curtained bays down the triage hall's long side, in the room's own
+   * frame; the bed is a metre off the wall. */
+  const lx = -bay.w / 2 + (bay.w / 6) * (plan.bay + 0.5), lz = bay.d / 2 - 2.2;
+  const c = Math.cos(bay.yaw), sn = Math.sin(bay.yaw);
+  p.position.set(bay.x + lx * c + lz * sn, DECK_Y[48] + 0.1, bay.z - lx * sn + lz * c);
+  p.actor?.setPosition?.(p.position);
+  if (p.velocity) p.velocity.set(0, 0, 0);
+  p.fallSpeed = 0;
+  if (p.camera) p.camera.yaw = bay.yaw + Math.PI;
+  const soon = plan.soonest ? ` ${plan.soonest.designation} is next out, ${Math.ceil(plan.soonest.hours)} h.` : '';
+  w.notify?.('MEDBAY', `You come round in bay ${plan.bay + 1}. ${plan.inTanks} in the tanks, ${plan.waiting} waiting, ${plan.lost} lost.${soon}`);
+}
+
+/** Was the run on the field launched from the deck (V17)? Then a death on it
+ * ends in the medbay, not on a retry button. */
+let launchedFromDeck = false;
+
 async function deploy(opts = {}) {
+  launchedFromDeck = !!opts.fromDeck;
   if (!opts.fromDeck && hangarFirst()) {
     await enterHangar(null, { launch: true });
     return;
@@ -3053,6 +3098,11 @@ let drumHeld = null;
  */
 let sabaccHeld = null;
 
+/** One letter per dejarik piece, and no two the same — ghhhk and grimtaash
+ * both printed as `g`, so "five pieces" read as three on the ring. */
+const GLYPH = { monnok: 'm', ghhhk: 'g', strider: 's', grimtaash: 'r', houjix: 'h' };
+function glyphOf(id) { return GLYPH[id] || String(id)[0]; }
+
 /** The pips on a sabacc card, signed. `−13` reads as a card, `-13` does not. */
 function cardOf(v) { return `${v < 0 ? '−' : ''}${Math.abs(v)}`; }
 
@@ -3061,11 +3111,18 @@ function showCasino() {
   const day = stationDay();
   const hour = casinoHour();
   if (!casino) {
+    /* …AND THEY SURVIVE A RELOAD, off the station's own fold (V17): a ticket
+     * held in a module variable was 25 credits gone on F5, and an index that
+     * restarted at 0 made the day's first deal a replayable pot. */
+    const kept = casinoState();
+    if (!drumHeld && kept.drum) drumHeld = kept.drum;
+    if (!sabaccHeld && kept.sabacc) sabaccHeld = kept.sabacc;
     casino = {
       tab: 'sabacc', board: null, ticket: drumHeld, settled: null, said: null,
       /* THE TWO THAT SURVIVED THE DOOR, and the two that did not: a hand and a
        * ticket are money on the table, a tab and a board are not. */
-      stake: sabaccHeld, shown: null, index: sabaccHeld ? sabaccHeld.index : 0,
+      stake: sabaccHeld, shown: null,
+      index: sabaccHeld ? sabaccHeld.index : Math.max(kept.index | 0, 0),
     };
   }
 
@@ -3173,12 +3230,12 @@ function showCasino() {
       + g.board.ring.map((p, i) => {
         if (g.board.gone[i]) return '<i>·</i>';
         if (!p) return `<i>${i}</i>`;
-        return `<b>${p.side === 0 ? p.id[0].toUpperCase() : p.id[0]}</b>`;
+        return `<b>${p.side === 0 ? glyphOf(p.id).toUpperCase() : glyphOf(p.id)}</b>`;
       }).join(' ') + '</span></div></div>';
     if (g.winner === null && g.moves.length) {
       html += `<p class="sub">${g.last?.theirs ? `They played ${g.last.theirs.from}→${g.last.theirs.to}. ` : ''}`
         + 'Your move — capitals are yours.</p><div class="rows">'
-        + g.moves.slice(0, 14).map((m) => `<div class="row">`
+        + g.moves.map((m) => `<div class="row">`
           + `<button class="mv" data-from="${m.from}" data-to="${m.to}">${m.from}→${m.to}</button>`
           + `<span>${esc(g.board.ring[m.from].id)}${m.takes ? ' <i>takes</i>' : ''}</span></div>`).join('')
         + '</div>';
@@ -3324,6 +3381,7 @@ function showCasino() {
    * these two outlive it. */
   drumHeld = casino.ticket;
   sabaccHeld = casino.stake;
+  setCasinoState({ index: casino.shown ? nextHand(casino.shown).index : casino.index, sabacc: sabaccHeld, drum: drumHeld });
   casinoBell();
 }
 
@@ -4748,6 +4806,7 @@ function holoHold() { return { ...blankHold(), cleared: lessonsCleared() }; }
  * The name and the blurb come off `LEVELS` here rather than in `Holodeck.js`,
  * which may not import it — see that file's header.
  */
+const _holoTint = new THREE.Color();
 function holoGrounds() {
   return theatresFor('sandbox')
     .filter((k) => LEVELS[k])
@@ -4950,8 +5009,16 @@ function runProgram(id) {
     /* The room's own emitters. The sink exists so the lattice can light with
      * the program rather than after it; nothing drives it yet and it says so
      * here rather than pretending. */
-    lattice: () => {},
-    paint: () => {},
+    /* THE ROOM CHANGES (V17). `#57`'s floor and lattice are its own materials
+     * (`StationKit.latticecell`): the lattice is the studs' glow, the paint
+     * is the floor going from black plate to the chosen ground's colour. */
+    lattice: (k) => { const H = world?._station?.holo; if (H) H.lattice.emissiveIntensity = H.glow * Math.max(0, Math.min(1, k)); },
+    paint: (ground, k) => {
+      const H = world?._station?.holo; if (!H) return;
+      const L = LEVELS[ground]; const T = TERRAIN_PRESETS[L?.terrain] || null;
+      const hex = T?.sandColor ?? T?.grassColor ?? T?.rockColor ?? T?.snowColor ?? 0x6b5d4c;
+      H.floor.color.copy(H.base).lerp(_holoTint.set(hex), Math.max(0, Math.min(1, k)));
+    },
     live: () => { screens.clear(); deploy().catch((e) => console.error('program failed', e)); },
   });
   showHolodeck();

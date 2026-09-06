@@ -48,6 +48,9 @@ import {
   residents, frictionBetween, BORZ_BY_PLACE, borzArchetype, nameFor,
 } from './StationCast.js';
 import { barman } from './Bars.js';
+/* #44's tanks, read here so the men in them are bodies in the glass. */
+import { TANKS, tankLocal, wardOf } from './Medbay.js';
+const TANK_WARD = 44;
 import { companyOf } from './StationBoards.js';
 /**
  * ══ THE HANDLERS, AND WHY THIS IMPORT POINTS BACKWARDS ════════════════════
@@ -233,6 +236,12 @@ export function headcount(place, hour, ev = _event) {
    * hours a day, midday among them. `fixed` says the number is the number.
    */
   if (place.fixed) return heads + extra;
+  /* #44 HOLDS WHOEVER IS IN ITS TANKS (V17), whatever the hour: a man
+   * suspended in bacta does not go home at night. */
+  if (place.id === TANK_WARD) {
+    const filled = wardOf(companyOf()).tanks.filter(Boolean).length;
+    return Math.max(filled, extra + Math.round(heads * fullness(place, hour)));
+  }
   const n = Math.round(heads * fullness(place, hour));
   /* A place somebody LIVES in is never literally empty while the day is on
    * it. The mortician is one person in a room of drawers and the curve would
@@ -253,6 +262,13 @@ export function headcount(place, hour, ev = _event) {
  * copy of it.
  */
 export function slotIn(place, i, out) {
+  /* #44's first slots are the tanks themselves — see `occupant`. */
+  if (place.id === TANK_WARD && i < TANKS) {
+    const [lx, , lz] = tankLocal(i, place.w, place.d);
+    const c = Math.cos(place.yaw), s = Math.sin(place.yaw);
+    out.set(place.x + lx * c + lz * s, floorOf(place), place.z - lx * s + lz * c);
+    return out;
+  }
   const u = h2(place.id * 1000, i * 7 + 1) - 0.5;
   const v = h2(place.id * 1000 + 3, i * 7 + 2) - 0.5;
   /**
@@ -1477,6 +1493,19 @@ export function occupant(place, i, opts = {}) {
    * stable across a despawn: the Forge's smith has to be the same Wookiee
    * every time you look at the Forge.
    */
+  /* ══ THE TANKS ARE OCCUPIED BY YOUR OWN MEN (V17) ═══════════════════════
+   * `Medbay.checkIn` put a designation in `ward.tanks[i]` and the panel said
+   * "tank 1 · CT-7200 · 8.6 h" — and the room's five glass tubes stood empty
+   * every hour of every day, because nothing read the ward. Now #44's first
+   * slots are its tanks: slot i is the man in tank i, stood in the glass by
+   * `slotIn`, still, until `discharge` takes him off the list. */
+  if (place.id === TANK_WARD && i < TANKS) {
+    const who = wardOf(companyOf()).tanks[i];
+    if (who) {
+      const r = resident(`${seed}tank`, { species: 'human', role: 'trooper' });
+      return { ...r, name: who, role: 'trooper', tank: i, still: true, seed: `${seed}t${who}` };
+    }
+  }
   const borz = BORZ_BY_PLACE.get(place.id);
   if (borz && i < borz.length) {
     const R = borz[i];
@@ -1551,6 +1580,27 @@ export function occupant(place, i, opts = {}) {
    * never in their own hostel, and Grome and "other" were never anywhere. */
   const j = i - (borz ? borz.length : 0);
   const bias = planBias(place, j);
+  /**
+   * ══ PARTNERS STAND TOGETHER AT HOME — V17 ══════════════════════════════
+   *
+   * `StationCast.partnerFor` gives about half the residents somebody they
+   * live with; until here that person was only spoken of. In a QUARTER — the
+   * one place that is somebody's home — every odd slot is the partner of the
+   * even slot before it, when that slot's resident has one and the partner
+   * belongs to this quarter's species. So a couple is two bodies a metre
+   * apart in their own quarter, the same two every day that day's census
+   * seats them, and the person you were told about in the concourse at noon
+   * is the one standing beside them at home at night.
+   */
+  if (bias && QUARTER_OF[place.id] && (j & 1) === 1 && i > 0) {
+    const A = occupant(place, i - 1, opts);
+    const P = A && A.partner;
+    if (P && P.species === bias) {
+      const B = resident(P.seed, { species: P.species });
+      B.partner = { seed: A.seed, species: A.species, name: A.name, role: A.role };
+      return B;
+    }
+  }
   if (bias) return resident(daily, { species: bias });
   /**
    * ══ AND THEN THE FLOOR (§5.3) ══════════════════════════════════════════
@@ -2376,6 +2426,8 @@ function spawnResident(world, st, place, i) {
    * asked and get the same person back. The place id alone cannot: a room
    * holds a dozen and only one of them has a dog. */
   body.stationSlot = i;
+  /* A man in a tank stands in it — see `occupant`'s tank rows. */
+  body.stillIn = !!r.still;
   /* A body on a walkway rather than in a room. `stepWalkers` below is the
    * route this was set for; `wayPlacesOn` says why the corridors have to be
    * tellable from the rooms in the first place. */
@@ -2887,10 +2939,27 @@ function arrest(world, st, life) {
 }
 
 /** Put the player on the bench in #47. True if they were moved. */
+/** Which wedge of the six you wake in, and how long its field holds. */
+const CELL_ANGLE = 0.52, CELL_HOLD = 25;
+const _UP = new THREE.Vector3(0, 1, 0);
+
 function putInCell(world, st) {
   const cell = PLACE.get(BRIG);
   const p = world.player;
   if (!cell || !p?.position) return false;
+  /* INSIDE THE FIRST WEDGE (V17), between its field and its bunk — not at a
+   * scatter slot beside the guard desk. */
+  {
+    const r = Math.min(cell.w, cell.d) / 2, a = CELL_ANGLE + cell.yaw, cr = r - 3.9;
+    _v.set(cell.x + cr * Math.sin(a), floorOf(cell) + 0.1, cell.z + cr * Math.cos(a));
+    p.position.copy(_v);
+    p.actor?.setPosition?.(_v);
+    if (p.velocity) p.velocity.set(0, 0, 0);
+    p.fallSpeed = 0;
+    p._sweepFromY = _v.y;
+    if (p.camera) p.camera.yaw = Math.atan2(cell.x - _v.x, cell.z - _v.z);
+    return true;
+  }
   /* A slot in the cell ring, off `slotIn` — the same deterministic scatter
    * every body in every room on the station is placed by. */
   slotIn(cell, 3, _v);
@@ -2918,7 +2987,24 @@ function deliverToBrig(world, st, life) {
   setBrigPending(false);
   life.arrest = life.arrest || { deck: st.deck, hour: st.hour, at: 'woke' };
   life.arrest.woke = true;
-  world.notify?.('THE BRIG', 'you wake in the cell block — the counters are shut');
+  /* ══ AND THE CELL SHUTS (V17) ═══════════════════════════════════════════
+   * You woke 2.9 m from the guard desk and walked out in twenty seconds:
+   * the cell's field is a lit slab with `collide: false`, and the six-hour
+   * skip was the whole sentence. Now the field across your wedge is a real
+   * static box for `CELL_HOLD` seconds of standing there, with the desk in
+   * front of you, and it drops with a word. Repeats hold longer. */
+  const cell = PLACE.get(BRIG);
+  const phys = world.physics;
+  if (cell && phys?.addStaticBox) {
+    const r = Math.min(cell.w, cell.d) / 2, a = CELL_ANGLE + cell.yaw;
+    const fr = r - 5.2;
+    const cx = cell.x + fr * Math.sin(a), cz = cell.z + fr * Math.cos(a);
+    life.cellBox = phys.addStaticBox(new THREE.Vector3(cx, floorOf(cell) + cell.h / 2, cz),
+      new THREE.Vector3(1.4, cell.h / 2, 0.2), new THREE.Quaternion().setFromAxisAngle(_UP, a), { friction: 0.6 }) || null;
+    life.cellHold = CELL_HOLD * (1 + 0.5 * Math.min(3, life.arrests | 0));
+    life.arrests = (life.arrests | 0) + 1;
+  }
+  world.notify?.('THE BRIG', 'you wake in the cell block — the field is up, and the counters are shut');
 }
 
 /**
@@ -3597,7 +3683,7 @@ function standHere(body, place, at) {
    * `fixed` is the gazetteer's own word for a place whose occupancy is a fact
    * rather than a rhythm. A body in one turns and breathes and does not take
    * a step, which is what the row says about him. */
-  body.standStill = !!place.fixed;
+  body.standStill = !!place.fixed || !!body.stillIn;
   body.standN = 0;
   body.standIn = 0;
 }
@@ -3786,6 +3872,16 @@ export function stepStationLife(world, dt) {
   const cam = world.player?.position;
   const px = cam ? cam.x : 0, pz = cam ? cam.z : 0;
 
+  /* The cell's field, counting down while you stand behind it — see
+   * `deliverToBrig`. */
+  if (life.cellBox) {
+    life.cellHold -= dt;
+    if (life.cellHold <= 0) {
+      world.physics?.removeStaticBox?.(life.cellBox);
+      life.cellBox = null;
+      world.notify?.('THE BRIG', 'the field drops — out, and mind yourself');
+    }
+  }
   life.reseatIn -= dt;
   if (life.reseatIn <= 0) {
     life.reseatIn = RESEAT_EVERY;

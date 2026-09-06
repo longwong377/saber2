@@ -2188,6 +2188,15 @@ export class HUD {
       const hull = Math.max(0, Math.round((hp / Math.max(1, max || 1)) * 100));
       const what = v ? (v.A?.label ?? 'machine') : (d.label ?? 'machine');
       text = `<b>${this._chip('drive')}</b> climb down · ${esc(what)} · hull ${hull}%`;
+      /* AT THE STICK YOU ARE TOLD HOW FAST AND HOW FAR (V17): a pilot with no
+       * airspeed and no bearing to the bay reached 1 100 m/s and 36 km out
+       * with nothing on the glass. */
+      if (d.craft?.velocity && d.craft?.position) {
+        const cv = d.craft.velocity, cp = d.craft.position;
+        const spd = Math.round(Math.hypot(cv[0], cv[1], cv[2]));
+        const range = Math.round(Math.hypot(cp[0], cp[2]));
+        text += ` · ${spd} m/s · bay ${range >= 1000 ? (range / 1000).toFixed(1) + ' km' : range + ' m'}`;
+      }
     } else {
       const near = drivableNear(world, player);
       if (near) {

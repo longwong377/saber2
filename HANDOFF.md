@@ -104,6 +104,52 @@ quarter, a job of their own, spoken of in the `partner` bark topic and never
 spawned. Seating partners together at home at sleeping hours is the obvious
 next step and was not done.
 
+### 0.2b THE SUPER-CRITIQUE — five hostile reviewers, every system driven
+
+The player: *"do a super critique of everything; full steam ahead; get to
+fixing and building."* Five reviewers, one per system group, each ordered to
+PLAY the system headless and report good / thin / slop with a reproduction.
+Their verdicts, and what was done about each in this same session:
+
+| system | verdict | the defect that decided it | done here |
+|---|---|---|---|
+| Sabacc | thin | hand index restarted at 0 on every visit and the deal is `hash(place, day, index)`: +65 credits per four clicks all day; strict `<` gave seat 0 (you) every tie, a five-point gift | index and held tickets persist in the station fold; ties push |
+| Dejarik | good underneath, slop as shipped | 14 of 15 legal moves shown; two pieces printed as `g`; no stake, no spectators | all moves shown; unique glyphs. Stake and side choice still open |
+| The Drum | thin | honest 11 % edge, one fixed ticket, no decision | tickets survive a reload |
+| Races | good | board calibrated ±2 pts over 1 232 races; form-reader +10 % to +63 % | — (`form %` printed for every runner makes the reading room moot; open) |
+| Strangers' pit card (#20) | slop | ungraded pairs: the sub-10 % dog quoted 0.05 won 0.127, back it blind for +37 % | card graded by adjacent rating |
+| Companion pits | good, two holes | BREAK OFF every round: 99.7 % decisions, 0 deaths at a mortal stake; `retire` announced and ignored | BREAK shortens two rounds a bout; retire stops the bout |
+| Feed + announcer | thin | the room's screen is a text panel; no scene, no voice | open |
+| Credits / counters / keepsakes | good | keepsake moved no number; a 1 900 row is 7.5 mean runs | — |
+| Food | good, thin in the room | cooking ran only on a purchase | stalls cook on their own every 14 s (`stepAmbientCook`) |
+| Medbay | good maths, slop in the room | `wakePlan` had no caller; tanks never occupied; nobody walks off the transport | you wake in #43 after a death on a run launched from the deck; your men stand in the tanks. Litters still open |
+| Leave / bars | good | men only stand and turn | open (a sit verb) |
+| Quests | good, over-paid | median offer 340 against a 252 run | pay halved |
+| Brig | slop | woke 2.9 m from the desk, walked out in 20 s | a wedge, a real field for 25 s+ (longer on repeats), then it drops |
+| Starfury | good physics, slop world | flew THROUGH the drum at 368 m/s; 1 132 m/s and 36 km with nothing said | hull strike + damage; soft ceiling 220 m/s; a pattern call at 2 km; speed and range on the glass |
+| Warp | good | 9 s, 0 level loads, never loses control | — |
+| Holodeck | slop | `lattice`/`paint` were `() => {}` | #57 has its own floor and lattice materials; the floor takes the ground's colour, the lattice glows |
+| Calibration | thin | untouched dials scored 0.59 of 0.99; perfect bought a tenth of a cooldown | drift 0.30; 15 %/10 % at a perfect solution (the doctrine's 0.85/0.90 bound holds) |
+| Forge as the only door | thin | armoury and mirror open the same tab | open, deliberately: the menu keeps the tab until the room is proven |
+| Bolt catch / One Point | good | both do what they say; the catch is EASIER than the blade for one bolt in the hand | open: tighten the catch cone |
+
+**Also built this session, off the first sheet's second verdict** (the plan
+is good, the architecture is mediocre): the atrium is architecture now —
+on 44 and 48 the plate steps down to a gallery a storey-and-a-half below it
+round the void, four stairs between the spines, a bridge across the void with
+a landing over the Concourse, a lit column down the axis from under the dome
+(`Station.buildAtrium`, `buildChandelier`, `ATRIUM`); rooms are FILLED to
+their headcount with real bodies (`StationKit.furnish`); the light comes in
+at 28° from one bearing per deck with a cool rim, so a room has a lit side and
+a dark side (`lightStation`); the ring's lid hangs lamps and ducts; partners
+stand together in their quarters.
+
+**Tried and reverted, and worth knowing:** the texture foundry on the
+station's walls. Brushed plate and duracrete at any repeat that read as a
+panel read as terrazzo and dirt against the cel bands. Flat fills with ink
+are the look; the interest is geometry and light. The note is on
+`stationMats`.
+
 ### 0.3 THE TRAP IT ADDED
 
 **`Home.js` finds the cabin's movable partition by scanning every mesh in the

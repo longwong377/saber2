@@ -103,7 +103,9 @@ import { Sortie, canLaunch } from './Launch.js';
 import { sample as orbitSample, sightLine, CIRCUIT_LENGTH } from './Outside.js';
 import { CircuitPilot, PlayerPilot, TOP_SPEED } from './Pilot.js';
 import { dressCobraBay, drawCobraBay, undressCobraBay } from './CobraBay.js';
-import { GANTRY_Y, stepCook, dressFeeds, stepFeeds } from './StationKit.js';
+import { GANTRY_Y, stepCook, dressFeeds, stepFeeds, CookSet } from './StationKit.js';
+import * as Food from './Food.js';
+import { shelfFor } from './Counter.js';
 import { flightState, setFlightState } from './StationSave.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -215,6 +217,14 @@ export function stationMats(deck) {
      * emissive material here is `strip`, and it is inked like the rest. */
     return (M[k] = m);
   };
+  /**
+   * FLAT FILLS, ON PURPOSE — tried and reverted in V17. The engine's texture
+   * foundry (brushed plate, poured duracrete) was put on these four for one
+   * contact sheet: at any repeat that read as a panel it read as terrazzo
+   * and dirt, and it fought the cel bands and the ink. This game's surfaces
+   * are flat colour with ink round the edges; the interest belongs in the
+   * GEOMETRY (`StationKit.dressWallRun`) and the light, not in a noise map.
+   */
   std('hull', { color: P.hull, roughness: 0.66, metalness: 0.28 });
   std('dark', { color: P.dark, roughness: 0.74, metalness: 0.24 });
   std('deep', { color: P.deep, roughness: 0.82, metalness: 0.14 });
@@ -565,7 +575,23 @@ function buildDeckPlate(kit, M, deck) {
    * IT REPORTS is what gets railed — not `well`, which is only the request.
    * See `standingWell`: a second derivation of this region is precisely the
    * defect, so there is not one. */
-  const hole = annulus(kit, M.deep, y - 0.3, 0.6, DRUM.atrium, DRUM.R, 72, { omit: cutPlate });
+  /* ══ THE ATRIUM AS ARCHITECTURE — V17 ═══════════════════════════════════
+   *
+   * It was a hole with a rail: the plate ran to the void's edge and stopped.
+   * Rule 1 says the void is the landmark that makes the station one place,
+   * so on the two upper decks the plate now stops short and STEPS DOWN to a
+   * gallery a storey-and-a-half below it, ringing the void, reached by four
+   * stairs between the spines; a BRIDGE crosses the void at the gallery's
+   * level (east–west on 44, north–south on 48) with a landing in the middle
+   * where you stand over the Concourse; and a lit column hangs down the axis
+   * from the dome's underside, so from any deck the middle of the station
+   * is a thing you look at and not a gap you look across. See `buildAtrium`.
+   */
+  const stepped = deck === 44 || deck === 48;
+  const plateR0 = stepped ? ATRIUM.galleryR : DRUM.atrium;
+  const hole = annulus(kit, M.deep, y - 0.3, 0.6, plateR0, DRUM.R, 72, { omit: cutPlate });
+  if (stepped) buildAtrium(kit, M, deck, y);
+  buildChandelier(kit, M, y);
   /* The soffit over it — the next deck's underside, so a player on 40 looking
    * up sees a ceiling and not the sky. The top deck gets one too. It quantises
    * on its own 48 segments and is NOT railed: nothing stands on a ceiling. */
@@ -575,10 +601,14 @@ function buildDeckPlate(kit, M, deck) {
    * wants the void READ as the station's landmark, and an unlit edge at
    * twelve metres reads as a wall. */
   const n = 64;
+  /* The rail at the plate's edge: at the void on 40, at the gallery's lip on
+   * the stepped decks, where the stairs leave a gap in it. */
+  const railR = plateR0;
   for (let i = 0; i < n; i++) {
     const a = TAU * (i / n);
-    const x = DRUM.atrium * Math.sin(a), z = DRUM.atrium * Math.cos(a);
-    const wide = 2 * DRUM.atrium * Math.tan(Math.PI / n) * 1.06;
+    if (stepped && atStair(a)) continue;
+    const x = railR * Math.sin(a), z = railR * Math.cos(a);
+    const wide = 2 * railR * Math.tan(Math.PI / n) * 1.06;
     kit.slab(M.dark, wide, 1.05, 0.16, x, y + 0.52, z, { ry: a, collide: true, bevel: 0 });
     kit.slab(M.strip, wide, 0.1, 0.1, x, y + 0.02, z, { ry: a, collide: false, bevel: 0 });
   }
@@ -611,6 +641,151 @@ function buildDeckPlate(kit, M, deck) {
  * own — a person navigating by the light in the floor is reading the arc they
  * are in, which is what a wayfinding system is.
  */
+/** The atrium's own numbers. `DRUM.atrium` is the void; these are what stands
+ * round it on the stepped decks. */
+export const ATRIUM = Object.freeze({
+  /** The gallery's outer edge — where the plate stops and steps down. */
+  galleryR: 21.6,
+  /** How far below the deck the gallery sits. */
+  drop: 1.65,
+  /** The four stairs down, between the spines, and their half-width in radians. */
+  stairs: [45, 135, 225, 315],
+  stairHalf: 0.075,
+  /** The bridge's width, and the landing's radius at its middle. */
+  bridgeW: 3.6,
+  landingR: 4.6,
+});
+
+function atStair(a) {
+  for (const deg of ATRIUM.stairs) {
+    const d = Math.abs(((a - deg * Math.PI / 180 + Math.PI * 3) % TAU) - Math.PI);
+    if (d < ATRIUM.stairHalf) return true;
+  }
+  return false;
+}
+
+/** The stepped gallery, its stairs, and the bridge — see `buildDeckPlate`. */
+function buildAtrium(kit, M, deck, y) {
+  const g0 = DRUM.atrium, g1 = ATRIUM.galleryR, gy = y - ATRIUM.drop;
+  /* The gallery floor, a storey-and-a-half down, and the riser it steps off. */
+  annulus(kit, M.dark, gy - 0.3, 0.6, g0, g1, 64);
+  const n = 64;
+  for (let i = 0; i < n; i++) {
+    const a = TAU * (i / n);
+    const wide = 2 * g1 * Math.tan(Math.PI / n) * 1.06;
+    if (!atStair(a)) {
+      kit.slab(M.hull, wide, ATRIUM.drop, 0.3, (g1 - 0.15) * Math.sin(a), gy + ATRIUM.drop / 2, (g1 - 0.15) * Math.cos(a),
+        { ry: a, collide: true, bevel: 0 });
+      /* A light under the plate's lip, along the whole riser. */
+      kit.slab(M.strip, wide * 0.9, 0.08, 0.1, (g1 - 0.36) * Math.sin(a), y - 0.12, (g1 - 0.36) * Math.cos(a),
+        { ry: a, collide: false, bevel: 0 });
+    }
+    /* The void rail, on the gallery, and the light under its lip. */
+    const wv = 2 * g0 * Math.tan(Math.PI / n) * 1.06;
+    kit.slab(M.dark, wv, 1.05, 0.16, g0 * Math.sin(a), gy + 0.52, g0 * Math.cos(a), { ry: a, collide: true, bevel: 0 });
+    kit.slab(M.strip, wv, 0.1, 0.1, g0 * Math.sin(a), gy + 0.02, g0 * Math.cos(a), { ry: a, collide: false, bevel: 0 });
+    /* Benches on the gallery every eighth bay, facing the void. */
+    if (i % 8 === 3) {
+      const br = g0 + 1.3;
+      kit.slab(M.wing, 2.2, 0.08, 0.5, br * Math.sin(a), gy + 0.46, br * Math.cos(a), { ry: a, collide: true, bevel: 0.02 });
+      kit.slab(M.dark, 2.0, 0.42, 0.34, br * Math.sin(a), gy + 0.21, br * Math.cos(a), { ry: a, collide: true, bevel: 0 });
+    }
+  }
+  /* The four stairs, six risers each, running down toward the void. */
+  /* NOTHING ROUND THE VOID IS SYMMETRIC (the walkway rule): two flights are
+   * wide with cheek walls, two are narrow with a post and a lamp, and the
+   * bridge's landing sits a third of the way along it with a sign gantry
+   * over the other end — the first cut read 0.865 from opposite spines. */
+  ATRIUM.stairs.forEach((deg, si) => {
+    const a = deg * Math.PI / 180, sx = Math.sin(a), sz = Math.cos(a);
+    const wideFlight = si % 2 === 0;
+    const sw = wideFlight ? 3.0 : 2.0;
+    const steps = 6, rise = ATRIUM.drop / steps, run = 0.42;
+    for (let k = 0; k < steps; k++) {
+      const r = g1 - 0.2 - (k + 0.5) * run;
+      kit.slab(M.dark, sw, rise + 0.02, run + 0.04, r * sx, y - (k + 0.5) * rise, r * sz, { ry: a, collide: true, bevel: 0 });
+    }
+    const cr = g1 - 0.2 - (steps * run) / 2;
+    for (const sgn of [-1, 1]) {
+      const px = cr * sx + sgn * (sw / 2 + 0.1) * Math.cos(a), pz = cr * sz - sgn * (sw / 2 + 0.1) * Math.sin(a);
+      if (wideFlight) {
+        kit.slab(M.hull, 0.16, 1.0, steps * run + 0.3, px, y - ATRIUM.drop / 2 + 0.5, pz, { ry: a, collide: true, bevel: 0 });
+      } else {
+        kit.post(M.dark, 0.07, 0.07, 1.1, px, y - ATRIUM.drop / 2 + 0.55, pz, { radial: 6, collide: true });
+        kit.slab(M.wing, 0.06, 0.05, steps * run + 0.3, px, y - ATRIUM.drop / 2 + 1.05, pz, { ry: a, collide: false, bevel: 0, rx: Math.atan2(ATRIUM.drop, steps * run) * (sgn > 0 ? 1 : 1) });
+      }
+    }
+    if (!wideFlight) {
+      const lr = g1 + 0.9;
+      kit.post(M.dark, 0.12, 0.1, 3.2, lr * sx, y + 1.6, lr * sz, { radial: 8, collide: true });
+      kit.post(M.strip, 0.32, 0.32, 0.12, lr * sx, y + 3.2, lr * sz, { radial: 10 });
+    }
+  });
+  /* The bridge: across the void at the gallery's level, with a landing. */
+  const ba = (deck === 44 ? 90 : 0) * Math.PI / 180;
+  const L = g0 * 2 + 0.6, w = ATRIUM.bridgeW;
+  kit.push(0, gy, 0, ba);
+  kit.slab(M.deep, w, 0.4, L, 0, -0.2, 0, { collide: true, bevel: 0 });
+  for (const sgn of [-1, 1]) {
+    kit.slab(M.dark, 0.12, 1.05, L, sgn * (w / 2 - 0.06), 0.52, 0, { collide: true, bevel: 0 });
+    kit.slab(M.strip, 0.08, 0.06, L * 0.9, sgn * (w / 2 - 0.02), 1.02, 0, { collide: false, bevel: 0 });
+    /* The cable stays, up to the deck above, every four metres. */
+    for (let z = -g0 + 3; z < g0 - 2; z += 4.2) {
+      kit.post(M.wing, 0.05, 0.05, DRUM.pitch - ATRIUM.drop - 0.6, sgn * (w / 2 + 0.2), (DRUM.pitch - ATRIUM.drop - 0.6) / 2, z, { radial: 5 });
+    }
+  }
+  /* The landing, a third of the way along: a disc with a ring of bench and
+   * a lamp; and over the far third, a sign gantry with a screen. */
+  const lr = ATRIUM.landingR, lz = g0 * 0.34;
+  kit.post(M.deep, lr, lr, 0.4, 0, -0.2, lz, { radial: 24, collide: true });
+  kit.post(M.dark, lr + 0.05, lr + 0.05, 1.05, 0, 0.52, lz, { radial: 24, open: true, collide: false });
+  kit.post(M.strip, lr + 0.02, lr + 0.02, 0.06, 0, 1.02, lz, { radial: 24, open: true });
+  for (let i = 0; i < 24; i++) {
+    const a = TAU * (i / 24);
+    kit.post(M.dark, 0.06, 0.06, 1.0, lr * Math.sin(a), 0.5, lr * Math.cos(a) + lz, { radial: 4 });
+  }
+  kit.post(M.wing, 0.5, 0.5, 0.08, 0, 0.44, lz, { radial: 16 });
+  kit.post(M.dark, 0.28, 0.24, 0.42, 0, 0.21, lz, { radial: 10, collide: true });
+  kit.post(M.wing, 2.6, 2.6, 0.08, 0, 0.46, lz, { radial: 20, open: true });
+  kit.post(M.dark, 2.4, 2.4, 0.42, 0, 0.21, lz, { radial: 20, open: true, collide: true });
+  kit.post(M.dark, 0.1, 0.08, 3.6, 0, 1.8, lz, { radial: 8, collide: true });
+  kit.post(M.strip, 0.5, 0.5, 0.1, 0, 3.6, lz, { radial: 12 });
+  const gz = -g0 * 0.45;
+  for (const sgn of [-1, 1]) kit.post(M.dark, 0.14, 0.12, 4.2, sgn * (w / 2 + 0.3), 2.1, gz, { radial: 8, collide: true });
+  kit.slab(M.dark, w + 1.2, 0.5, 0.3, 0, 4.3, gz, { collide: false, bevel: 0 });
+  kit.slab(M.screen, 2.6, 0.9, 0.08, 0, 3.55, gz - 0.12, { collide: false, bevel: 0 });
+  kit.pop();
+}
+
+/** The lit column down the axis of the void, hung from the dome's underside. */
+function buildChandelier(kit, M, y) {
+  /* Only where a deck can see it: the axis over the Concourse from the
+   * living deck's height to under the dome. Every deck builds the same one
+   * at the same absolute heights, so it is the same object from all three. */
+  const top = DECK_Y[60] - 1.0, bottom = DECK_Y[44] + 2.6;
+  if (y > top) return;
+  /* Off the axis by a stride, with an arm out one side at the third ring, so
+   * it is a different thing from every bearing. */
+  const cx = 2.6, cz = -1.4;
+  kit.post(M.dark, 0.55, 0.55, top - bottom, cx, (top + bottom) / 2, cz, { radial: 10 });
+  const rings = 6;
+  for (let i = 0; i < rings; i++) {
+    const ry = bottom + (top - bottom) * ((i + 0.5) / rings);
+    const r = 2.4 + 2.2 * Math.sin(Math.PI * ((i + 0.5) / rings)) + (i % 2 ? 0.7 : 0);
+    kit.post(M.strip, r, r, 0.22, cx, ry, cz, { radial: 28, open: true });
+    kit.post(M.dark, r + 0.14, r + 0.14, 0.12, cx, ry + 0.17, cz, { radial: 28, open: true });
+    for (let k = 0; k < 6; k++) {
+      const a = TAU * (k / 6) + i * 0.3;
+      kit.post(M.wing, 0.04, 0.04, r - 0.5, cx + (r / 2) * Math.sin(a), ry, cz + (r / 2) * Math.cos(a), { radial: 4, ry: a, rz: Math.PI / 2 });
+    }
+    if (i === 2) {
+      kit.slab(M.dark, 7.5, 0.3, 0.3, cx + 3.6, ry + 0.6, cz + 1.2, { collide: false, bevel: 0, ry: 0.5 });
+      kit.post(M.strip, 0.9, 0.9, 0.16, cx + 6.7, ry + 0.2, cz + 3.4, { radial: 14, open: true });
+    }
+  }
+  kit.light(cx, (top + bottom) / 2, cz, { intensity: 14, distance: 60 });
+}
+
 function channel(kit, M, S, a, sx, sz, wide, y) {
   const at = { centre: [0], outer: [3.2], inner: [-3.2], both: [-3.2, 3.2] }[S.channel] || [0];
   for (const dr of at) {
@@ -943,19 +1118,41 @@ function lightStation(world, deck, st) {
    * a directional key, a flat ambient that IS the colour of every shadow
    * under the cel model, and a fill from the opposite side.
    */
-  const key = new THREE.DirectionalLight(P.key, 1.45);
-  key.position.set(30, 120, -40);
+  /**
+   * ══ THE KEY COMES IN LOW AND FROM ONE SIDE — V17 ══════════════════════
+   *
+   * It came from 68 degrees overhead. A directional light with no shadow map
+   * (the engine's cascades belong to a sun this level has not got) lights
+   * whatever faces it, so at that angle every floor was full key and every
+   * wall got the same sliver — and under a cel model that is one band on
+   * every wall in the room, which is the flat look the sheet showed. At 28
+   * degrees from one bearing, the walls facing the key take the top band,
+   * the walls across from it fall to the fill, and a room has a lit side and
+   * a dark side the way a room does. A cool RIM from the opposite low side
+   * keeps the dark side from going dead. The bearing turns with the deck so
+   * the three decks are not lit the same way twice.
+   */
+  const bearing = deck === 44 ? 2.1 : deck === 48 ? -0.7 : 0.75;
+  const el = 28 * Math.PI / 180;
+  const key = new THREE.DirectionalLight(P.key, 1.55);
+  key.position.set(120 * Math.cos(el) * Math.sin(bearing), DECK_Y[deck] + 120 * Math.sin(el), 120 * Math.cos(el) * Math.cos(bearing));
   key.target.position.set(0, DECK_Y[deck], 0);
   world.scene.add(key); world.scene.add(key.target);
   world.levelLights.push(key, key.target);
 
-  const amb = new THREE.AmbientLight(P.ambient, 0.42);
+  const rim = new THREE.DirectionalLight(P.fill, 0.55);
+  rim.position.set(-key.position.x, DECK_Y[deck] + 40, -key.position.z);
+  rim.target.position.set(0, DECK_Y[deck], 0);
+  world.scene.add(rim); world.scene.add(rim.target);
+  world.levelLights.push(rim, rim.target);
+
+  const amb = new THREE.AmbientLight(P.ambient, 0.3);
   world.scene.add(amb); world.levelLights.push(amb);
 
-  const fill = new THREE.HemisphereLight(P.fill, P.fog, 0.34);
+  const fill = new THREE.HemisphereLight(P.fill, P.fog, 0.3);
   world.scene.add(fill); world.levelLights.push(fill);
-  if (st) st.rig = { key, amb, fill, base: [key.intensity, amb.intensity, fill.intensity], lit: 1 };
-  return 3;
+  if (st) st.rig = { key, amb, fill, rim, base: [key.intensity, amb.intensity, fill.intensity], lit: 1 };
+  return 4;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -4541,6 +4738,43 @@ export function drainStationBuild(world, st = world?._station, all = false, dt =
  */
 export function finishStationBuild(world) { return drainStationBuild(world, world?._station, true); }
 
+/**
+ * ══ THE STALLS COOK WHETHER YOU BUY OR NOT — V17 ══════════════════════════
+ *
+ * V16 §B5's *"you actually see them cook"* was a `CookSet` that only ever
+ * ran when the player ordered, so a walk past the food court at the meal
+ * rush showed three stalls with nobody at the range. Now, while no order is
+ * cooking, every `AMBIENT_COOK_EVERY` seconds one food counter on this deck
+ * whose keeper is standing at it cooks a dish off its own shelf — the same
+ * set, the same range, the same arms — with the banner kept quiet, because
+ * the lines are for the person who ordered. It stops the moment a real order
+ * starts (`cookAtCounter` disposes `world._cook`), and it costs one property
+ * read a frame while nothing is on.
+ */
+const AMBIENT_COOK_EVERY = 14;
+function stepAmbientCook(world, st, dt) {
+  if (world._cook || world.netMode === 'client') return;
+  st.cookIn = (st.cookIn ?? 4) - dt;
+  if (st.cookIn > 0) return;
+  st.cookIn = AMBIENT_COOK_EVERY;
+  const keepers = st.keepers || [];
+  const able = [];
+  for (const k of keepers) {
+    if (!k.body || k.body.dead) continue;
+    const counter = counterById(k.id);
+    if (!counter) continue;
+    const rows = shelfFor(counter, st.day | 0).filter((r) => Food.prepOf(r));
+    if (rows.length) able.push({ counter, rows });
+  }
+  if (!able.length) return;
+  const pick = able[(st.cookN = (st.cookN | 0) + 1) % able.length];
+  const row = pick.rows[(st.cookN * 7) % pick.rows.length];
+  const cook = new Food.Cook(row, { say: () => {}, done: () => {} });
+  const set = new CookSet(world, pick.counter, cook, Food.prepOf(row)?.id || null);
+  if (set.done) { set.dispose(); return; }
+  world._cook = set;
+}
+
 export function stepStation(world, dt) {
   const st = world._station;
   if (!st) return;
@@ -4596,6 +4830,7 @@ export function stepStation(world, dt) {
    * has posed itself at step 2, which is what lets it write the keeper's arms
    * at all. */
   stepCook(world, dt);
+  stepAmbientCook(world, st, dt);
   /* THE SORTIE, on the same terms and for the same reason (§7). A no-op until
    * somebody launches, which is one property read a frame. */
   if (world._sortie || world._flying) stepSortie(world, st, dt);

@@ -168,14 +168,21 @@ export function playSabacc(players, seed = null) {
 
   /* THE SHOWDOWN. Nearest to the target on either side of zero; a bomb-out
    * cannot win; everybody folded or bombed is a push. */
-  let best = -1, bestOff = Infinity, pure = false;
+  let best = -1, bestOff = Infinity, pure = false, tied = false;
   for (let i = 0; i < hands.length; i++) {
     if (out[i]) continue;
     const s = sabaccScore(hands[i]);
     if (s.bomb) continue;
-    if (s.pure && !pure) { pure = true; best = i; bestOff = 0; continue; }
-    if (!pure && s.off < bestOff) { bestOff = s.off; best = i; }
+    if (s.pure && !pure) { pure = true; best = i; bestOff = 0; tied = false; continue; }
+    if (s.pure && pure) { tied = true; continue; }
+    if (!pure && s.off < bestOff) { bestOff = s.off; best = i; tied = false; }
+    else if (!pure && s.off === bestOff) tied = true;
   }
+  /* A TIE IS A PUSH (V17). Strict `<` handed every tie to the lowest seat,
+   * and the player is always seat 0: measured over 6 000 hands that was a
+   * five-point gift hiding inside the house edge. Two hands the same distance
+   * from 23 split nothing — the middle stands and nobody is paid. */
+  if (tied) best = -1;
   return { winner: best, hands: hands.map((h) => h.slice()), out: out.slice(), events, pure };
 }
 

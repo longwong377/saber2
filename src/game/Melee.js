@@ -481,7 +481,11 @@ export function stepMelee(player, dt, ctx = null, mods = null) {
 /** How far in front of the palm a caught bolt hangs. A foot, as asked. */
 const CATCH_STAND = 0.34;
 /** The cone the hand covers, and how far up the line it can reach. */
-const CATCH_ARC = 0.62, CATCH_RANGE = 3.2;
+/* 0.42 rad and 2.4 m (V17, down from 0.62 and 3.2): measured, the hand caught
+ * a single bolt more easily than the blade — a 0.62 rad, 3.2 m cone against a
+ * five-centimetre segment — and the design says worse than the blade in
+ * every measurable way. It still catches; it has to be meant. */
+const CATCH_ARC = 0.42, CATCH_RANGE = 2.4;
 /** Force a second, while the hand is up and holding. */
 const CATCH_DRAIN = 9;
 /** How wide a returned bolt scatters. A blade's return does not do this. */

@@ -2915,11 +2915,19 @@ export const SHAPES = {
    * it at all fails §11 and is also a lie about a working machine, because
    * something has to be put on the floor to trim the emitters against.
    */
-  latticecell(kit, M, p) {
+  latticecell(kit, M, p, ctx) {
     const { w, d, h } = p;
     /* Black plate, and `dark` for the shell too: this room is a hole in the
-     * deck's own palette until a program paints it. */
-    floor(kit, M, w, d, 0, M.dark);
+     * deck's own palette until a program paints it. THE FLOOR AND THE
+     * LATTICE ARE THIS ROOM'S OWN MATERIALS (V17): `main.js`'s `paint` and
+     * `lattice` sinks were no-ops because the floor was merged into the
+     * deck's shared `dark` and the studs into its shared `strip`, and a
+     * material the whole deck wears cannot be painted for one room. A clone
+     * each, named as the engine's own, binned on their own by the kit. */
+    const holo = M.dark.clone(); holo.name = `station-${M.deck}-holo`;
+    const lat = M.strip.clone(); lat.name = `station-${M.deck}-lattice`;
+    ctx.holo = { floor: holo, lattice: lat, base: holo.color.clone(), glow: lat.emissiveIntensity };
+    floor(kit, M, w, d, 0, holo);
     walls(kit, M, w, d, h, { doorW: 3.4, mat: M.dark });
     ceiling(kit, M, w, d, h, { ribs: 0, strips: false, mat: M.dark });
 
@@ -2931,7 +2939,7 @@ export const SHAPES = {
     const ny = Math.max(3, Math.round(h / PITCH));
     const at = (n, span, i) => -span / 2 + (span * (i + 0.5)) / n;
     const stud = (x, y, z, sx, sy, sz) =>
-      kit.slab(M.strip, sx, sy, sz, x, y, z, { collide: false, bevel: 0 });
+      kit.slab(lat, sx, sy, sz, x, y, z, { collide: false, bevel: 0 });
     /* The back wall and the two sides. The front wall is the doorway, and its
      * two returns carry the grid too — a face that skipped it would be the one
      * face you look at on the way out. */
@@ -3119,6 +3127,79 @@ export const SHAPES = {
  * place, which is why a builder keeps to four or five materials and why
  * `station.mjs` counts them.
  */
+/**
+ * ══ FILLED TO ITS HEADCOUNT — V17 ═════════════════════════════════════════
+ *
+ * The player's bar is §11's: *"everything actually modelled and with physics
+ * and interactable like any other body in Battlefield Borz."* Every builder
+ * below drops SOME loose bodies, and the sandbox check holds a deck to more
+ * than twenty of them — a floor, not the bar. The sheet showed the gap: a
+ * restaurant with four tables for sixteen diners, a gambling den with one
+ * desk for twelve players. A room that says sixteen people are in it and
+ * seats six is a stage set.
+ *
+ * So after a builder has laid its own plan, this fills the rest of the room
+ * to its `heads` with real `Prop` bodies — chairs, low tables, stools,
+ * crates, barrels, cases — chosen by the room's character and scattered on a
+ * seed with a rejection pass, so nothing lands in the doorway, over a sunken
+ * well, inside a declared blocker, or on top of what the builder already put
+ * down. Rooms that are not rooms (a shaft, a pit, a dead corridor, a pool
+ * hall in a suit) opt out by shape. Everything it places is grabbable,
+ * throwable and cuttable, which is the whole point.
+ */
+const NO_FURNISH = new Set(['obelisk', 'deadend', 'shaft', 'deeppit', 'cathedral', 'wetgrating', 'compactor',
+  'walkwaypools', 'chainpit', 'darkdrum', 'windowring', 'vault', 'daispit', 'glassdome', 'canyon',
+  'containerrow', 'cellar', 'collar', 'twinroom', 'cutthrough', 'runninggallery', 'sunkenring', 'fanauditorium']);
+function furnish(kit, M, place, ctx) {
+  if (NO_FURNISH.has(place.shape) || place.room) return;
+  const { w, d } = place;
+  if (!w || !d || w < 7 || d < 6) return;
+  const heads = place.heads || 0;
+  const want = Math.min(16, Math.round(heads * 0.7)) - kit.deferred.length;
+  if (want <= 0) return;
+  let h = ((place.id * 1000) | 0) >>> 0;
+  const rnd = () => { h = (h * 1664525 + 1013904223) >>> 0; return h / 4294967296; };
+  const taken = kit.deferred.map((e) => e.c);
+  const keep = [...(ctx.home?.blockers || []), ...(kit.dressKeep || [])];
+  const sunk = ctx.sunk || [];
+  /* What a room like this has lying about. */
+  const social = /cantina|bar|court|restaurant|pit|den|hostel|salon|lounge|club|mess|ready/i.test(place.name + place.look);
+  const work = /shop|bay|hold|plant|pool|forge|cage|armoury|galley|laundry|fabric|maint|rack|recycl/i.test(place.name + place.look);
+  const menu = social ? ['chair', 'chair', 'table', 'stool', 'case']
+    : work ? ['crate', 'crate', 'barrel', 'case', 'stool']
+    : ['chair', 'table', 'crate', 'case', 'stool'];
+  let placed = 0;
+  for (let tries = 0; tries < want * 12 && placed < want; tries++) {
+    const x = (rnd() - 0.5) * (w - 2.6), z = (rnd() - 0.5) * (d - 2.6);
+    /* Not across the door — the front third of the centre line stays clear. */
+    if (z < -d / 2 + 3.0 && Math.abs(x) < 2.6) continue;
+    let bad = false;
+    for (const q of taken) if (Math.hypot(q.x - x, q.z - z) < 1.15) { bad = true; break; }
+    if (!bad) for (const r of keep) if (Math.abs(x - r.x) <= r.w / 2 + 0.5 && Math.abs(z - r.z) <= r.d / 2 + 0.5) { bad = true; break; }
+    if (!bad) for (const r of sunk) if (Math.abs(x) <= r.w / 2 + 0.6 && Math.abs(z) <= r.d / 2 + 0.6) { bad = true; break; }
+    if (bad) continue;
+    const kind = menu[Math.floor(rnd() * menu.length)];
+    const yaw = rnd() * TAU;
+    const at = new THREE.Vector3(x, 0, z);
+    taken.push(at);
+    placed++;
+    if (kind === 'chair') loose(kit, x, 0, z, (world, q) => spin(chairBody(world, q, M), yaw));
+    else if (kind === 'table') loose(kit, x, 0, z, (world, q) => spin(tableBody(world, q, M, 1.0, 1.0, 0.74), yaw));
+    else if (kind === 'stool') loose(kit, x, 0, z, (world, q) => boxBody(world, q, M, 0.4, 0.66, 0.4, M.deep, 6, 'stool'));
+    else if (kind === 'crate') loose(kit, x, 0, z, (world, q) => makeCrate(world, q, 0.55 + rnd() * 0.4));
+    else if (kind === 'barrel') loose(kit, x, 0, z, (world, q) => makeBarrel(world, q));
+    else loose(kit, x, 0, z, (world, q) => boxBody(world, q, M, 0.5, 0.3, 0.24, M.wing, 6, 'case'));
+  }
+}
+
+/** Turn a freshly made body about Y. A chair facing the same way as every
+ * other chair is a showroom. */
+function spin(body, yaw) {
+  const q = body?.body?.quaternion;
+  if (q) { q.setFromAxisAngle(UPV, yaw); body.mesh?.quaternion.copy(q); }
+  return body;
+}
+
 export function buildPlace(world, group, place, M, st) {
   const fn = SHAPES[place.shape];
   if (!fn) throw new Error(`StationKit: place #${place.id} (${place.name}) declares shape '${place.shape}', which has no builder`);
@@ -3147,10 +3228,13 @@ export function buildPlace(world, group, place, M, st) {
     shaft: standingShaft(place),
     /** #25's lit slabs, handed back so `Notices.js` can write on them. */
     notices: null,
+    /** #57's own floor and lattice materials — see `latticecell`. */
+    holo: null,
     /** The screen a room with a card on has in it — see `dressFeeds`. */
     feed: null,
   };
   fn(kit, M, place, ctx, world);
+  furnish(kit, M, place, ctx);
   const y = floorOf(place);
   const pos = new THREE.Vector3(place.x, y, place.z);
   const quat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), place.yaw);
@@ -3174,6 +3258,7 @@ export function buildPlace(world, group, place, M, st) {
    * `counterHere` for what the key does there. */
   if (kit.counters?.length) (st.counters || (st.counters = new Map())).set(place.id, kit.counters);
   if (ctx.home) st.home = ctx.home;
+  if (ctx.holo) st.holo = ctx.holo;
   if (ctx.obelisk) st.obelisk = { ...ctx.obelisk, group };
   /* The group as well as the numbers: `Habitat.js` parents its six panels to
    * the place's own node so they are culled, moved and disposed with the room

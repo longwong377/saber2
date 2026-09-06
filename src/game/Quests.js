@@ -96,7 +96,7 @@ export const SHAPES = [
      * player can tell they are making progress on without a tracker. */
     roll: (rng, ctx) => {
       const n = 30 + Math.floor(rng() * 90);
-      return { n, word: `${n} of them`, pay: 60 + n * 2 };
+      return { n, word: `${n} of them`, pay: 30 + n };
     },
     test: (run, job) => (run.kills | 0) >= job.n,
     line: (job) => `Kill ${job.n} of them and come back.`,
@@ -105,7 +105,7 @@ export const SHAPES = [
     id: 'depth', name: 'a place', needs: () => ['depth'],
     roll: (rng) => {
       const n = 6 + Math.floor(rng() * 14);
-      return { n, word: `area ${n}`, pay: 90 + n * 22 };
+      return { n, word: `area ${n}`, pay: 45 + n * 11 };
     },
     test: (run, job) => (run.depth | 0) >= job.n,
     line: (job) => `Get as far as area ${job.n}. I do not care how.`,
@@ -125,7 +125,7 @@ export const SHAPES = [
       if (!men.length) return null;
       const who = men[Math.floor(rng() * men.length)];
       if (!who?.id) return null;
-      return { who: who.id, name: who.name || 'him', pay: 340 };
+      return { who: who.id, name: who.name || 'him', pay: 170 };
     },
     test: (run, job) => (run.home || []).includes(job.who),
     line: (job) => `${job.name} goes out with you. ${job.name} comes back. That is the job.`,
@@ -151,7 +151,7 @@ export const SHAPES = [
         noforce: 'without touching the Force',
         nolost: 'and lose nobody',
       }[how];
-      return { how, word, pay: 420 };
+      return { how, word, pay: 210 };
     },
     test: (run, job) => (job.how === 'whole' ? (run.limbs | 0) === 0
       : job.how === 'noforce' ? (run.forceCasts | 0) === 0
@@ -165,7 +165,7 @@ export const SHAPES = [
     roll: (rng, ctx) => {
       const kinds = ctx?.kinds?.length ? ctx.kinds : ['b1', 'trooper', 'droideka'];
       const kind = kinds[Math.floor(rng() * kinds.length)];
-      return { kind, word: kind, pay: 380 };
+      return { kind, word: kind, pay: 190 };
     },
     test: (run, job) => !((run.killedKinds || {})[job.kind] > 0),
     line: (job) => `There will be ${job.word} down there. Leave them be. All of them.`,
@@ -188,7 +188,7 @@ export const SHAPES = [
     roll: (rng) => {
       const n = 1 + Math.floor(rng() * 3);
       const who = ['a runner of mine', 'my brother', 'a man who owes me', 'one of the crew'][Math.floor(rng() * 4)];
-      return { n, who, word: `${n} off the floor`, pay: 220 + n * 80 };
+      return { n, who, word: `${n} off the floor`, pay: 110 + n * 40 };
     },
     test: (run, job) => (run.saves | 0) >= job.n,
     line: (job) => `${job.who[0].toUpperCase()}${job.who.slice(1)} is down there. `

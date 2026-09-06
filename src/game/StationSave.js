@@ -73,6 +73,11 @@ function blank() {
     name: DEFAULT_NAME,
     /** §3.4's clock, so a return visit is later in the same day. */
     hour: 9,
+    /** THE CASINO'S MONEY ON THE TABLE (V17). A Drum ticket and a sabacc
+     * ante survive the door in `main.js` module state and died on a reload;
+     * and the hand index restarted at 0 every visit, which made the first
+     * deal of the day a known hand you could replay for the pot all day. */
+    casino: { index: 0, sabacc: null, drum: null },
     /**
      * ── HOW MANY MIDNIGHTS THIS STATION HAS CROSSED ────────────────────────
      *
@@ -359,6 +364,8 @@ export function homeState() { return read().home; }
 export function setHomeState(v) { const s = read(); s.home = v; return write(s).home; }
 
 /** The flight-ops fold. Opaque here too: `FlightOps.js` owns its shape (§7). */
+export function casinoState() { const c = read().casino; return c && typeof c === 'object' ? c : { index: 0, sabacc: null, drum: null }; }
+export function setCasinoState(v) { const s = read(); s.casino = v; return write(s).casino; }
 export function flightState() { return read().flight; }
 export function setFlightState(v) { const s = read(); s.flight = v; return write(s).flight; }
 

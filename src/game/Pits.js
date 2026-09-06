@@ -894,7 +894,14 @@ export function runRound(bout) {
   if (!bout || bout.over) return null;
   if (bout.phase !== 'read') throw new Error('no round is open');
   bout.phase = 'fight';
-  const broke = bout.orders.some((o) => o.id === 'break');
+  /* BREAK OFF IS WORTH TWO ROUNDS A BOUT (V17). Breaking every round halved
+   * every round and put a mortal stake at zero risk — 300 mortal bouts, no
+   * deaths, a decision 99.7 % of the time. The third and later BREAKs are
+   * still orders (they still cost the animal its attention) and no longer
+   * shorten anything. */
+  const askedBreak = bout.orders.some((o) => o.id === 'break');
+  if (askedBreak) bout.breaks = (bout.breaks || 0) + 1;
+  const broke = askedBreak && bout.breaks <= 2;
   const per = broke ? Math.max(2, Math.ceil(bout.venue.perRound / 2)) : bout.venue.perRound;
 
   /* WHAT THE CORNER IS WORTH THIS ROUND, as a rating and nothing else — no
@@ -975,6 +982,10 @@ export function runRound(bout) {
   for (const ev of tagged) {
     if (ev.type === 'refusal') stop = { by: ev.who === mine.id ? 'theirs' : 'mine', how: 'refusal' };
     else if (ev.type === 'beaten') stop = { by: ev.who === mine.id ? 'theirs' : 'mine', how: 'stoppage' };
+    /* A RETIREMENT STOPS THE BOUT (V17). The announcer already said "is done
+     * — the handler is over the rail"; the animal then fought four more
+     * rounds. What is announced as over is over. */
+    else if (ev.type === 'retire') stop = { by: ev.who === mine.id ? 'theirs' : 'mine', how: 'stoppage' };
   }
   if (!stop && bout.taken.mine >= bout.pool) stop = { by: 'theirs', how: 'stoppage' };
   if (!stop && bout.taken.theirs >= bout.pool) stop = { by: 'mine', how: 'stoppage' };
@@ -1241,15 +1252,20 @@ export function pitCard(venue, { hour = ROSTER_HOUR, day = 0, size = 0, roster =
   const rng = streamOf('field', V.id, String(day));
   const entrants = [];
   const taken = new Set();
-  for (let i = 0; i < n && pool.length; i++) {
-    let h = null;
-    for (let tries = 0; tries < 12 && !h; tries++) {
-      const c = pool[rng.int(0, pool.length - 1)];
-      if (!taken.has(c.id)) h = c;
-    }
-    if (!h) break;
+  /* A GRADED CARD (V17). Drawn at random from the roster, a licensed card
+   * put a 20-rated animal against a 90 one and the board priced the dog at
+   * 5 % when it won 12.7 % — back the dog blind and it paid +37 % over 240
+   * nights. `Tote.drawField` grades its fields by adjacent rating; this does
+   * the same: sort the night's handlers by rating and take a run of
+   * neighbours from a seeded start, so the matches are the ones a matchmaker
+   * would make and the book prices them. */
+  const rated = pool.map((h) => ({ h, rating: Math.round(clamp(46 + streamOf('rate', h.id)() * 46, 20, 100)) }))
+    .sort((a, b) => a.rating - b.rating);
+  const start = rated.length > n ? rng.int(0, rated.length - n) : 0;
+  for (let i = 0; i < n && i + start < rated.length; i++) {
+    const { h, rating } = rated[i + start];
+    if (taken.has(h.id)) continue;
     taken.add(h.id);
-    const rating = Math.round(clamp(46 + streamOf('rate', h.id)() * 46, 20, 100));
     entrants.push(makeEntrant({
       id: h.id, name: h.animal, kind: 'companion',
       rating,
