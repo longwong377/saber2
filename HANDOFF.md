@@ -39,6 +39,21 @@ Playable two ways:
 
 ---
 
+## 0. V20 — A LIVING, BREATHING STATION: LIGHT, MOTION, VOICE, THE STAGE, HANDS
+
+The player asked for an objective view and a "2.0" list, then said: *"can you
+fix 4, 5, 6, 10, and 'the world is wide and shallow … only a handful put
+your hands on something' and 'presentation lags the simulation … lighting
+contrast, particles, animation on anything that is not a body, and sound with
+words in it' all right now. I want a living breathing station."* Lanes:
+
+1. **LIGHT** — light moods per room and hour (the cantina at 02:00 is not the cantina at noon), key-light shadows on bodies, emissive surfaces lighting the floor near them. `StationLight.js`.
+2. **MOTION AND PARTICLES** — doors that open, fans that turn, screens that flicker, steam from the galley, litter drifting in the atrium's draught, dust motes in light, sparks at the forge, spray at the wet grating. `StationMotion.js`.
+3. **GESTURES** — bodies that lean on rails, drink, argue with their hands, point, wave a friend over, scratch, check a wrist. `Gestures.js`.
+4. **VOICE AND SCORING** — synthesised speech-like cadence for the tannoy and barks (syllables, pitch contour, a voice per species), and music that scores what you are doing (a fight, a chase, the vigil, the market) not only where you stand. `Voice.js`, `Music.js`.
+5. **THE STAGE** — the drum's symmetry broken: deck 48 gets a dark abandoned quarter (sealed rooms, flickering strips, a warren of service corridors you can get lost in), deck 44 the rich deck, deck 40 the workers' street; some rooms huge, some tiny. `StationPlan.js`, `StationKit.js`.
+6. **HANDS** — ten verbs that put your hands on something: carry a crate to a shelf, pull the compactor's lever, pour at the cantina bar, throw the Drazi dice, ring the chapel bell, fix a fan (hold), wash at the laundry, feed the kennel, arm-wrestle at the Pit, spar the gym's remote. `Verbs.js`.
+
 ## 0. V19 — TWENTY MORE, ACROSS THE WHOLE GAME
 
 The player asked for more holes and additions "anything in the game, not
