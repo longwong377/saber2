@@ -97,6 +97,13 @@ change and every future builder gets it for free:
   `tools/_stationshot.mjs`'s output — re-shoot and look, do not take this
   paragraph's word for it.
 
+**Also landed:** the ring's lid (lamps on 40, pendants on 44, a duct run
+with caged lamps on 48 — `buildRing`); and PARTNERS: `StationCast.partnerFor`
+gives about half the residents somebody they live with, same seed, same
+quarter, a job of their own, spoken of in the `partner` bark topic and never
+spawned. Seating partners together at home at sleeping hours is the obvious
+next step and was not done.
+
 ### 0.3 THE TRAP IT ADDED
 
 **`Home.js` finds the cabin's movable partition by scanning every mesh in the

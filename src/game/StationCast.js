@@ -1231,7 +1231,7 @@ export function residentLine(who) {
  */
 export const BARK_TOPICS = [
   {
-    id: 'home',
+    id: 'partner',
     say(who) {
       const P = who.partner;
       const home = placeName(who.home);
@@ -1240,7 +1240,7 @@ export const BARK_TOPICS = [
       const job = String(P.role || 'visitor').replace(/_/g, ' ');
       const off = R && R.hours > 0 ? `, off at ${hhmm(R.start + R.hours)}` : '';
       return `I live with ${P.name}${P.species !== who.species ? `, a ${P.species}` : ''}`
-        + `${home ? ` at ${home.toLowerCase()}` : ''} — a ${job}${off}. Ask after them.`;
+        + `${home ? ` at ${home.toLowerCase()}` : ''} — ${job} work${off}. Ask after them.`;
     },
   },
   {
