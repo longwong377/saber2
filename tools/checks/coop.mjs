@@ -3484,8 +3484,10 @@ export async function run({ check, assert }) {
       for (const [who, w] of [['host', H], ['guest', C]]) {
         const py = w.player.position.y;
         assert(Math.abs(py - y) < 0.6, `the ${who} stands at y ${py.toFixed(2)} on a deck whose plate is at ${y}`);
-        const off = alive(w).filter((e) => !e.netDriven && Math.abs(e.position.y - w.floorAt(e.position.x, e.position.z)) > 0.6);
-        assert(off.length === 0, `${off.length} of the ${who}'s residents stand off the floor (first at y ${off[0]?.position.y.toFixed(2)})`);
+        /* UNDER the floor is the defect; a body two metres up is on a
+         * mezzanine or a tram step, which `floorAt` does not know. */
+        const off = alive(w).filter((e) => !e.netDriven && (e.position.y - w.floorAt(e.position.x, e.position.z)) < -0.6);
+        assert(off.length === 0, `${off.length} of the ${who}'s residents stand under the floor (first at y ${off[0]?.position.y.toFixed(2)})`);
         assert(Math.abs(w.terrain.height(0, 60) - y) < 0.2, `the ${who}'s ground sheet reads ${w.terrain.height(0, 60).toFixed(2)} under a plate at ${y}`);
       }
       return `deck 44: ${nh} people on both, both players at ${y}, the ground sheet at ${H.terrain.height(0, 60).toFixed(2)}`;
@@ -3580,7 +3582,10 @@ export async function run({ check, assert }) {
       assert(g.length === 0,
         `${g.length} net-driven bodies in the guest's station on top of its own ${alive(C).length - g.length} `
         + 'residents — every one of them is a second copy of somebody already standing there');
-      const nh = alive(H).length, nc = alive(C).length;
+      /* Not the mission walkers — the guide droid comes once per machine
+       * (`hasSeen`), and two headless machines share one localStorage. */
+      const census = (w) => alive(w).filter((e) => !e.wayMission).length;
+      const nh = census(H), nc = census(C);
       assert(nh > 20, `only ${nh} bodies on the host's deck 40 — this check is measuring an empty station`);
       assert(nh === nc,
         `the host's station holds ${nh} people and the guest's ${nc}`);
