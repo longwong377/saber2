@@ -3146,7 +3146,7 @@ function showCasino() {
       const owed = done.result.pay;
       const paid = owed > 0 ? pay(owed, 'sabacc') : 0;
       casino.settled = done.result.line
-        + (owed ? ` — ${paid} credits` : ` — the ${casino.stake.ante} you anted is gone`)
+        + (owed ? ` — ${paid} credits` : ` — the ${done.result.put} you put in is gone`)
         + (paid < owed ? ` (the wallet capped it at ${paid} of ${owed})` : '');
       casino.shown = done;
       casino.index = done.index;
@@ -3172,8 +3172,9 @@ function showCasino() {
     const t = live || casino.shown || sabaccTable(WHEELHOUSE, day, casino.index, [], 3, 0);
     const ante = SABACC.ANTE;
     html += `<p class="sub">Nearest ${t.target} on either side; over is a bomb-out. `
-      + `Four seats ante ${ante}, so the middle is ${sabaccPot(ante)} `
-      + `— the house takes ${Math.round(SABACC.RAKE * 100)}% of a decided one.</p>`;
+      + `Four seats ante ${ante}, so the middle opens at ${sabaccPot(ante)}; after every draw the seats `
+      + `bet in units of ${SABACC.UNIT}, up to ${SABACC.RAISES} raises — the house takes `
+      + `${Math.round(SABACC.RAKE * 100)}% of a decided one.</p>`;
     html += '<div class="rows">';
     /* YOUR CARDS ONLY ONCE THEY ARE YOURS. A hand shown before the ante is
      * free information: you would sit out every bad deal at no cost, which is
@@ -3183,18 +3184,36 @@ function showCasino() {
         + `<span>${t.hand.map(cardOf).join('  ')} <i>= ${cardOf(t.score.sum)}, `
         + `${t.score.bomb ? 'bombed out' : `${t.score.off} off`}</i></span></div>`;
     }
+    /* THE READ. Each seat's species, a one-word temper — pushy, steady, timid
+     * — and what they DID this betting round, so a raise from a timid seat and
+     * a raise from a pushy one are two different pieces of information. */
     t.seats.forEach((s, i) => {
       const held = t.others[i + 1];
-      html += `<div class="row"><b>${esc(s.name)}</b><span>the ${esc(s.species)}, ${esc(s.role)} `
-        + `<i>${held === 0 ? 'folded' : `${held} cards`}</i></span></div>`;
+      const said = held === 0 ? 'folded' : s.did || (live ? 'waiting' : '');
+      html += `<div class="row"><b>${esc(s.name)}</b><span>the ${esc(s.species)}, ${esc(s.role)}, `
+        + `${esc(s.temper)} · <i>${held === 0 ? 'folded' : `${held} cards`}${said ? `, ${esc(said)}` : ''}</i></span></div>`;
     });
     html += '</div>';
     if (live && !live.done) {
-      html += `<p class="sub">Round ${t.round + 1} of ${t.rounds}. ${t.pot} in the middle. `
-        + `Every card may shift before the next one.</p><div class="rows">`
+      /* TWO QUESTIONS A ROUND, and the buttons are the engine's own list:
+       * hold/draw/fold in the draw phase, then check-or-call, bet-or-raise,
+       * fold in the betting round. `t.can` is what is legal right now. */
+      const BET_WHY = {
+        check: 'nothing owed — stay in for free',
+        bet: `put ${t.unit} in the middle`,
+        call: `match the ${t.toCall} owed`,
+        raise: `match the ${t.toCall} and put ${t.unit} more in`,
+        fold: `throw the hand in and lose the ${t.put} you have put in`,
+      };
+      html += `<p class="sub">Round ${t.round + 1} of ${t.rounds}. ${t.pot} in the middle, ${t.put} of it yours. `
+        + (t.phase === 'bet'
+          ? `<b>The betting round</b>${t.toCall ? ` — ${t.toCall} to you` : ''}, ${t.raises} of ${SABACC.RAISES} raises used.`
+          : 'Every card may shift before the next one.')
+        + `</p><div class="rows">`
         + t.can.map((v) => `<div class="row"><button class="act" data-act="${v}">${v}</button>`
-          + `<span>${v === 'hold' ? 'stand on it and let the shift come'
-            : v === 'draw' ? 'take another card' : 'throw the hand in and lose the ante'}</span></div>`).join('')
+          + `<span>${t.phase === 'bet' ? BET_WHY[v] || v
+            : v === 'hold' ? 'stand on it and let the shift come'
+              : v === 'draw' ? 'take another card' : `throw the hand in and lose the ${t.put} you have put in`}</span></div>`).join('')
         + '</div>';
     } else {
       if (casino.settled) html += `<p class="sub"><b>${esc(casino.settled)}</b></p>`;
@@ -3205,8 +3224,8 @@ function showCasino() {
           const who = i === 0 ? 'you' : (casino.shown.seats[i - 1]?.name || 'the house');
           const sc = casino.shown.result.scores[i];
           return `<div class="row"><b>${esc(who)}</b><span>${h.map(cardOf).join('  ')} `
-            + `<i>${sc.out ? 'folded' : sc.bomb ? 'bomb-out' : cardOf(sc.sum)}</i></span></div>`;
-        }).join('') + '</div>';
+            + `<i>${sc.out ? 'folded' : sc.bomb ? 'bomb-out' : cardOf(sc.sum)}, put in ${sc.put}</i></span></div>`;
+        }).join('') + `</div><p class="sub">${casino.shown.result.pot} in the middle at the end.</p>`;
       }
       const afford = purse() >= ante;
       html += '<div class="rows"><div class="row">'

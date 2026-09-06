@@ -52,7 +52,7 @@
 import { PLACE } from './StationPlan.js';
 import { occupant, headcount } from './StationLife.js';
 import {
-  SABACC, playSabacc, sabaccScore, sabaccBot, sabaccPot, sabaccPays,
+  SABACC, playSabacc, sabaccScore, sabaccBot, sabaccBet, sabaccOwed, sabaccTemper, sabaccPot,
   DEJARIK, dejarikMoves, dejarikBot, playDejarik,
   DRUM, drumAt, drumPays, bandOf,
 } from './Games.js';
@@ -172,6 +172,10 @@ function temperOf(res) {
 export function botFor(who) {
   const push = who?.push ?? 4, nerve = who?.nerve ?? 9;
   return (view) => {
+    /* THE BETTING ROUND IS THE SAME DIAL, and it is where the temper shows:
+     * `Games.sabaccBet` raises thin at a high `push` and folds to pressure at
+     * a low one, off the seeded roll the engine hands every ask. */
+    if (view.phase === 'bet') return sabaccBet(view, push);
     const s = sabaccScore(view.hand);
     if (s.bomb) return (Math.abs(s.sum) - SABACC.TARGET) > nerve ? 'fold' : 'draw';
     if (s.off <= push) return 'hold';
@@ -222,26 +226,33 @@ export function sabaccTable(placeId, day = 0, index = 0, acts = [], foes = 3, an
   const views = [];
   const me = (view) => {
     views.push(view);
-    /* Past what the person has actually said, HOLD — so the replay always
+    /* Past what the person has actually said, STAY IN — hold in the draw
+     * phase, check or call in the betting round — so the replay always
      * finishes and `views.length` is exactly how many times they will be
      * asked. Nothing downstream reads the outcome until they have said it. */
-    return acts[views.length - 1] ?? 'hold';
+    return acts[views.length - 1] ?? (view.phase === 'bet' ? (view.toCall > 0 ? 'call' : 'check') : 'hold');
   };
-  const r = playSabacc([me, ...who.map(botFor)], seed);
-  const seats = who.length + 1;
   const stake = Math.max(0, Math.round(Number(ante) || 0));
-  const pot = sabaccPot(stake, seats);
+  const r = playSabacc([me, ...who.map(botFor)], seed, { ante: stake });
+  const seats = who.length + 1;
   const asked = views.length;
   const done = acts.length >= asked;
   const view = done ? null : views[acts.length];
-  const scores = r.hands.map((h, i) => ({ ...sabaccScore(h), out: r.out[i] }));
+  const scores = r.hands.map((h, i) => ({ ...sabaccScore(h), out: r.out[i], put: r.put[i] }));
+  /* THE MIDDLE AS IT STANDS: the antes plus every bet said so far, which is
+   * the pot the player was looking at when they were asked. */
+  const pot = view ? view.pot : r.pot;
+  /* WHAT EACH SEAT DID this round, so a read is possible — and each seat's
+   * temper in a word, which is the read the review said was invisible. */
+  const table = view ? view.table : r.did;
   return {
     game: 'sabacc', place: placeId, day: day | 0, index: index | 0,
-    seed, acts: acts.slice(), seats: who,
+    seed, acts: acts.slice(),
+    seats: who.map((w, i) => ({ ...w, temper: sabaccTemper(w?.push), did: table[i + 1] || '' })),
     /* WHAT IS ON THE TABLE. `ante` is what each seat put in, `pot` is the
      * middle, and `staked` is the one a panel branches on: a hand nobody has
      * paid for is a hand nobody may act on. */
-    ante: stake, pot, staked: stake > 0,
+    ante: stake, pot, staked: stake > 0, unit: r.unit, put: view ? view.put : r.put[0],
     /* WHAT THE PLAYER MAY SEE. Their own cards and how many everyone else
      * holds — never the deck and never a face-down hand, which is the same
      * view `playSabacc` hands a bot and for the same reason. */
@@ -250,7 +261,12 @@ export function sabaccTable(placeId, day = 0, index = 0, acts = [], foes = 3, an
     rounds: SABACC.ROUNDS, target: SABACC.TARGET, shift: SABACC.SHIFT,
     others: view ? view.others : r.hands.map((h, k) => (k === 0 ? null : (r.out[k] ? 0 : h.length))),
     score: sabaccScore(view ? view.hand : r.hands[0]),
-    can: done ? [] : ['hold', 'draw', 'fold'],
+    /* WHICH QUESTION IS BEING ASKED — draw or bet — and what is legal to
+     * answer, straight from the engine. The panel draws buttons off `can`. */
+    phase: view ? view.phase : null,
+    toCall: view ? view.toCall : 0,
+    raises: view ? view.raises : 0,
+    can: done ? [] : view.can.slice(),
     done,
     /* Only once the hand is over. A panel cannot show a showdown it has not
      * played to, because there is nothing here that knows one. */
@@ -258,12 +274,12 @@ export function sabaccTable(placeId, day = 0, index = 0, acts = [], foes = 3, an
       winner: r.winner, pure: r.pure, hands: r.hands, scores,
       won: r.winner === 0,
       /* WHAT THE PANEL OWES YOU, in whole credits: the middle less the house's
-       * cut if you took it, your ante back if nobody did, nothing otherwise. */
-      pay: sabaccPays(r.winner, stake, seats),
-      pot,
+       * cut if you took it, what you put in if nobody did, nothing otherwise. */
+      pay: sabaccOwed(r, 0),
+      pot: r.pot, put: r.put[0],
       /* WHAT HAPPENED, and not what it paid. The number is `pay` one line up;
        * the panel is the thing that knows whether the wallet took it. */
-      line: r.winner < 0 ? (stake ? 'nobody takes it — the antes come back' : 'nobody takes it')
+      line: r.winner < 0 ? (stake ? 'nobody takes it — the middle comes back' : 'nobody takes it')
         : r.winner === 0 ? (r.pure ? 'pure sabacc — you take the middle' : 'you take the middle')
           : `${who[r.winner - 1]?.name || 'the house'} takes the middle`,
     } : null,
