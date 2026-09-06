@@ -46,6 +46,7 @@ import { deckBattleState } from './DeckBattle.js';
 import { COUNTERS } from './Vendors.js';
 import { shelfFor, priceOf } from './Counter.js';
 import { resident, barkFor, SPECIES_BY } from './StationCast.js';
+import { speak } from './Voice.js';
 import { venueAtPlace, watch as toteWatch, resultOf, racesOn } from './Tote.js';
 import { drumTable } from './Casino.js';
 import { DRUM, drumAt, drumPays } from './Games.js';
@@ -702,6 +703,33 @@ export function dressTV(world, st) {
   return made;
 }
 
+/** How close to a screen the anchor is audible. A room, not a deck. */
+export const ANCHOR_REACH = 8;
+
+/**
+ * THE ANCHOR READS THE HEADLINE — once a cut, and only while the programme IS
+ * the news and you are close enough to a screen to be watching it. Everything
+ * else on the channel stays what it was: an advert is a picture, and a station
+ * where every screen talked at once would be unliveable.
+ */
+function anchorSays(world, st, P, cut, day, hour) {
+  if (P.kind !== 'news' || st.tvSaid === cut) return;
+  const p = world?.player?.position;
+  if (!p) return;
+  let near = false;
+  for (const tv of st.tvs || []) {
+    if (!tv.mesh || (tv.group && !tv.group.visible)) continue;
+    if (Math.hypot(p.x - tv.mesh.position.x, p.z - tv.mesh.position.z) <= ANCHOR_REACH) { near = true; break; }
+  }
+  if (!near) return;
+  st.tvSaid = cut;
+  const N = newsAt(world, P, cut, day, hour);
+  /* HIS OWN LARYNX: the anchor is a resident like any other and the portrait
+   * on the glass is drawn from the same row, so the face and the voice agree. */
+  const A = anchorFor();
+  try { speak(N.line, A?.species || 'human', { pos: p, gain: 0.55 }); } catch { /* no voice */ }
+}
+
 export function stepTV(world, st, dt) {
   const list = st?.tvs;
   if (!list || !list.length || !(dt > 0)) return 0;
@@ -726,5 +754,6 @@ export function stepTV(world, st, dt) {
     tv.frames++;
     painted++;
   }
+  anchorSays(world, st, P, cut, day, hour); // V20 lane 4: the news is read out
   return painted;
 }

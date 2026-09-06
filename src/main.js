@@ -2868,6 +2868,7 @@ function showPit(placeId) {
  */
 function pitBell() {
   if (!pit?.bout || pit.bout.over) return;
+  if (world) world._pitBout = pit.bout; // V20 lane 4: the score knows a bout is on
   beginRound(pit.bout);
   pit.t0 = performance.now();
   showPit(pit.placeId);

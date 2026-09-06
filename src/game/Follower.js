@@ -32,6 +32,7 @@ import { SABER_COLORS } from './Saber.js';
 import { wayPlacesOn, headcount, slotIn } from './StationLife.js';
 import { liftState } from './DeckLift.js';
 import { stationDay } from './StationSave.js';
+import { speak } from './Voice.js';
 
 export const FOLLOW = {
   /** Walk this close past the curious one and they latch. */
@@ -292,6 +293,7 @@ export function stepFollower(world, st, dt) {
     const q = F.questions[F.asked++];
     F.ask.push({ t: F.t, q });
     world.notify?.(F.name.toUpperCase(), q);
+    speak(q, b.stationSpecies, { pos: b.position }); // V20 lane 4: and it is a question, so it rises
   }
 }
 

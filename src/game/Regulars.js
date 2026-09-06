@@ -27,6 +27,7 @@ import { note } from './Journal.js';
 import { openJobs, owedJobs } from './Quests.js';
 import { PLACE } from './StationPlan.js';
 import { barkFor, homeFor, RHYTHMS } from './StationCast.js';
+import { speak } from './Voice.js';
 import { dismissFollower } from './Follower.js';
 
 /** Talks before somebody is a regular. */
@@ -235,6 +236,7 @@ export function talkHook(world, body) {
   plate(body, true);
   const [head, line] = regularTalkLine(body, world, rec);
   world?.notify?.(head, line);
+  speak(line, body.stationSpecies, { pos: body.position }); // V20 lane 4
   return true;
 }
 

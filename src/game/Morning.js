@@ -42,8 +42,7 @@
  */
 import * as THREE from '../../vendor/three/three.module.js';
 import { DRUM, DECK_Y } from './StationPlan.js';
-import { audio } from '../engine/Audio.js';
-import { PA_SPEAKER } from './Station.js';
+import { speak } from './Voice.js';
 
 /** When the shutters go up / the strips start, station hours. */
 export const OPEN_AT = 6;
@@ -236,7 +235,7 @@ export function stepMorning(world, st, dt) {
     const head = `${String(st.name || 'STATION').toUpperCase()} CONTROL`;
     const p = world.player?.position;
     _paAt.set(p ? p.x : 0, (DECK_Y[st.deck] ?? 0) + DRUM.storey, p ? p.z : 0);
-    try { audio.radio(PA_SPEAKER, `${head} — 0600 hours, ${line}`, { pos: _paAt, gain: 0.8 }); } catch { /* no synth */ }
+    try { speak(`${head} — 0600 hours, ${line}`, 'tannoy', { pos: _paAt, gain: 0.8 }); } catch { /* no synth */ } // V20 lane 4
     world.notify?.(head, `0600 hours — ${line}`);
   }
 }

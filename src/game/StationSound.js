@@ -19,7 +19,8 @@
  *   THE PA         `PA_KINDS` seeded lines — arrivals, departures, a lost
  *                  child, the day's weather (`StationEvents.weatherAt`),
  *                  market day, the 20:00 vigil, lights-out and the rest —
- *                  spoken through `Audio.radio` with a two-tone chime before
+ *                  spoken through `Voice.speak` — syllables, a pitch contour
+ *                  and the PA's own band-limited larynx — with a chime before
  *                  them, and read as a banner, at most one per `PA_EVERY`
  *                  station-minutes (45 min, which is 90 real seconds on the
  *                  station's 2-min hour). `stepPA` takes over `Station.
@@ -43,6 +44,7 @@ import { boardAt } from './FlightOps.js';
 import { racesOn, VENUES } from './Tote.js';
 import { occupied } from './Medbay.js';
 import { companyOf } from './StationBoards.js';
+import { speak } from './Voice.js';
 
 /** Seconds a crossfade between beds takes (to ~95%). */
 export const XFADE = 1.5;
@@ -186,11 +188,6 @@ function teardown(S) {
 
 /* ── the PA ───────────────────────────────────────────────────────────── */
 
-const PA_SPEAKER = Object.freeze({
-  id: 'tannoy', name: 'Station control',
-  f0: 122, wave: 'sawtooth', formants: [560, 1180], q: [5.5, 4.6], mix: 0.5,
-  rasp: 0.12, raspFreq: 1900, cadence: 0.94, bend: 0.05, gain: 1.0,
-});
 
 function hashF(s) {
   let h = 0x811c9dc5;
@@ -329,7 +326,11 @@ export function stepPA(world, st, dt) {
   const p = world.player?.position;
   _paAt.set(p ? p.x : 0, (DECK_Y[st.deck] ?? 0) + DRUM.storey, p ? p.z : 0);
   pa.chimed = chime(_paAt);
-  try { pa.spoke = audio.radio(PA_SPEAKER, pa.said, { pos: _paAt, gain: 0.8 }) || ''; }
+  /* V20 lane 4: THE TANNOY SAYS THE WORDS. `Voice.speak` splits the line into
+   * syllables and reads it through the PA's band-limited larynx; in the
+   * player's 'spoken' mode it stands aside and `Audio.radio` says it with the
+   * browser's own speech, which is why this is one call and not two. */
+  try { pa.spoke = speak(pa.said, 'tannoy', { pos: _paAt, gain: 0.8 }) ? pa.said : ''; }
   catch { pa.spoke = ''; }
   world.notify?.(head, line);
   S.paLog.push({ kind, line, t: S.t, hour: abs });

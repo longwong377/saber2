@@ -77,6 +77,7 @@ import { countersAt, counterById, COUNTERS } from './Vendors.js';
 /* THE KEEPERS' BODIES come off the same census every other resident does — see
  * `dressKeepers`. One import, no new archetype. */
 import { resident, barkFor, roomLine, residentLine, RHYTHMS, homeFor } from './StationCast.js';
+import { speak } from './Voice.js';
 /* `isHurt` IS THE MEDBAY'S OWN QUESTION and #21's reading asks it rather
  * than comparing `m.hp` to 1: `FIT` is the threshold the ward triages on, and
  * two files disagreeing about what "carrying something" means would be the
@@ -114,7 +115,7 @@ import { disposeLiveFeeds } from './RaceFeed.js';
 import { dressTV, stepTV } from './Holonet.js';
 import { dressHealing, stepHealing, undressHealing } from './Healing.js';
 import { dressStationSound, stepStationSound, undressStationSound, stepPA } from './StationSound.js';
-import { dressMusic, stepMusic, undressMusic, musicKey } from './Music.js'; // V19 add 5: the band, the busker, the Drum's theme
+import { dressMusic, stepMusic, undressMusic, musicKey, scoreStinger } from './Music.js'; // V19 add 5: the band, the busker, the Drum's theme; V20 lane 4: the score
 import { dressFormBoards, stepFormBoards, undressFormBoards, printedTicket } from './Form.js';
 import { sitKey, releaseSeat } from './StationSit.js';
 import { dressMorning, stepMorning, undressMorning } from './Morning.js';
@@ -2663,6 +2664,7 @@ export function talkTo(world, body) {
     return true;
   }
   world.notify?.(said[0], said[1]);
+  speak(said[1], body.stationSpecies, { pos: body.position }); // V20 lane 4: in his own larynx
   return true;
 }
 
@@ -3632,6 +3634,7 @@ export function payForJob(jobId) {
   const got = collect(jobId);
   if (!got.ok) return { ...got, paid: 0, capped: false };
   const paid = pay(got.pay, 'work');
+  scoreStinger('win'); // V20 lane 4: a job paid is the one unambiguous win the station has
   /**
    * ══ AND THE STATION REMEMBERS THAT YOU DID IT ═══════════════════════════
    *
@@ -4839,7 +4842,7 @@ function stepTannoy(world, st, dt) {
   /* IT IS HEARD. Overhead of the player, at the soffit — see the note above. */
   const p = world.player?.position;
   _paAt.set(p ? p.x : 0, (DECK_Y[st.deck] ?? 0) + DRUM.storey, p ? p.z : 0);
-  try { pa.spoke = audio.radio(PA_SPEAKER, pa.said, { pos: _paAt, gain: 0.8 }) || ''; }
+  try { pa.spoke = speak(pa.said, 'tannoy', { pos: _paAt, gain: 0.8 }) ? pa.said : ''; }
   catch { pa.spoke = ''; }
   /* AND IT IS READ. */
   world.notify?.(head, line);

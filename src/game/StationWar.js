@@ -66,6 +66,7 @@ for (const [k, p] of [['Levels', './Levels.js'], ['Hangar', './Hangar.js'], ['So
 }
 import { frontAt } from '../world/Front.js';
 import { loadProgress } from './Progress.js';
+import { speak } from './Voice.js';
 
 /** How long the strips stay red, real seconds. */
 export const ALERT_FOR = 20;
@@ -80,7 +81,6 @@ export const WALL_NEAR = 45;
 export const NEVER_CLOSED = Object.freeze(new Set([26, 27, 29, 40, 41, 43, 44, 47, 48]));
 
 const NAMES = ['Rehn', 'Task', 'Vell', 'Oda', 'Brakk', 'Dunn', 'Sable', 'Trask', 'Kell', 'Mott', 'Iss', 'Pell'];
-const KLAXON_VOICE = Object.freeze({ f0: 112, cadence: 1.05 });
 
 function h2(a, b) {
   let h = Math.imul(a * 374761393 + b * 668265263, 1) | 0;
@@ -307,7 +307,7 @@ function alert(world, st, life, T, war, ph, why) {
   const line = why === 'lost'
     ? `${ph.victimSide === 'republic' ? 'a Venator' : 'a Providence'} is breaking up outside — battle stations`
     : `the lines are back — round ${war.alerts} — battle stations`;
-  try { war.spoke = audio.radio(KLAXON_VOICE, `all hands. ${line}`, { pos: _v, gain: 0.9 }) || ''; } catch { war.spoke = ''; }
+  try { war.spoke = speak(`all hands. ${line}`, 'tannoy', { pos: _v, gain: 0.9 }) ? line : ''; } catch { war.spoke = ''; } // V20 lane 4
   world.notify?.('BATTLE STATIONS', line);
   /* A turn for the worse brings the next party sooner: within the new
    * phase's own cadence, not the old one's. */

@@ -37,6 +37,7 @@ import { companyOf } from './StationBoards.js';
 import { funeralsDone, markFuneral } from './StationSave.js';
 import { lookFor } from './StationCast.js';
 import { note } from './Journal.js';
+import { speak } from './Voice.js';
 
 export const VIGIL = Object.freeze({
   /** Station hour the vigil begins, and how long the window stays open. */
@@ -177,6 +178,7 @@ function vigilOf(life) {
 
 function say(world, V, life, head, line) {
   world.notify?.(head, line);
+  speak(line, 'tannoy', { pos: world?.player?.position || null, gain: 0.75 }); // V20 lane 4: the names are read aloud
   const off = life.live.get('vigil:officiant');
   if (off) {
     /* The bark: on his plate (`HUD` prints `stationRole` under the name) and

@@ -46,9 +46,10 @@ import { PLACE, DECK_Y, floorOf } from './StationPlan.js';
 import { wayPlacesOn } from './StationLife.js';
 import { cupInHand } from './Bars.js';
 import { spend, purse } from './Credits.js';
-import { buskerState, setBuskerState, stationDay } from './StationSave.js';
+import { buskerState, setBuskerState, stationDay, pickpocketState } from './StationSave.js';
 import { duckMurmur } from './StationSound.js';
 import { resident } from './StationCast.js';
+import { speak } from './Voice.js';
 
 /* ── constants ─────────────────────────────────────────────────────────── */
 
@@ -172,7 +173,11 @@ export function tuneFor(seed, styleId = null, opts = {}) {
   /* A SOLO (`voices: 1`) is the melody alone — the busker's — with no drums. */
   const solo = (opts.voices | 0) === 1;
   const root = 48 + pick(s, 2, 12); // C3..B3
-  const bpm = style.bpm + (pick(s, 3, 9) - 4) * 2;
+  /* THE TEMPO IS THE STYLE'S, jittered by the seed — unless the caller names
+   * one. The score (`SCORES`) is the one caller that does: a state is a style
+   * AND a tempo, and a chase that ran at the Drazi row's own 152 whatever the
+   * state asked for would have no tempo of its own to change. */
+  const bpm = Number.isFinite(opts.bpm) ? Math.max(30, Math.round(opts.bpm)) : style.bpm + (pick(s, 3, 9) - 4) * 2;
   const scale = style.scale;
   const N = scale.length;
   const degMidi = (deg, base) => {
@@ -733,7 +738,9 @@ export function musicKey(world) {
   B.tune = buskerTune(M.deck === 40 ? stationDay() : 0, 12, B.request);
   M.rearm = 0;
   const patron = led.tips >= PATRON_AT;
-  world.notify?.(BUSKER_NAME.toUpperCase(), `${patron ? 'for my patron — ' : ''}"${B.tune.name}"${led.tips === 1 ? '. the first coin of the day' : ''}`);
+  const line = `${patron ? 'for my patron — ' : ''}"${B.tune.name}"${led.tips === 1 ? '. the first coin of the day' : ''}`;
+  world.notify?.(BUSKER_NAME.toUpperCase(), line);
+  speak(line, B.body?.stationSpecies || 'human', { pos: B.body?.position || null }); // V20 lane 4
   M.log.push({ t: M.t, busker: true, name: B.tune.name, tips: led.tips });
   return true;
 }
@@ -769,6 +776,258 @@ function stepDrum(world, st, M, dt, px, pz) {
   M.levels.drum = g;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+ *  THE SCORE — music that scores WHAT YOU ARE DOING (V20 lane 4, half two)
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * *"a music system that scores what you are doing, not where you are standing."*
+ *
+ * Everything above this line is music as PLACE: the band is in the cantina, the
+ * busker is by a kiosk, the Drum's theme is under a screen, and all three are a
+ * distance law — walk away and they go. That is right for a station and it is
+ * not a score. A player being chased along the ring by a thief with his money
+ * heard exactly what a player standing on the same metre of deck doing nothing
+ * heard, because the only question the music had ever been asked was where the
+ * listener was.
+ *
+ * So: NINE STATES, each a style, a tempo, an intensity and four layers, and one
+ * derivation from the things the station already knows — the thief is running,
+ * the saber is lit and something is close, Command has sounded the klaxon, the
+ * names are being read in the chapel, the market is on, you are asleep.
+ *
+ * ── WHY IT IS BUILT ON `tuneFor` AND NOT ON A SECOND ENGINE ─────────────
+ *
+ * The tune engine above is already a seeded, deterministic, in-mode composer
+ * with a bass, a melody, a harmony, a counter voice and drums on four separate
+ * gains. A state is therefore a SET OF ARGUMENTS to it — a style, a tempo
+ * override (the one thing `tuneFor` did not take, added for this), and which of
+ * its four voices are up — rather than a new synthesiser. Everything the band
+ * gets for free the score gets too: it is in a key, it loops, it goes through
+ * `musicBus`, it stops at Music 0, and it cannot make a note outside the mode.
+ *
+ * ── THE CROSSFADE IS ON THE BEAT AND TAKES TWO BARS ─────────────────────
+ *
+ * A cut is what a menu does. Two players run at once through the change: the
+ * outgoing one falls and the incoming one rises over `SCORE_BARS` bars, and the
+ * change does not START until the next beat, so a fight beginning halfway
+ * through a bar does not put the drums a quaver out for the rest of the level.
+ *
+ * The fade runs on the SCORE'S OWN CLOCK (`dt`) and not on the audio clock,
+ * which is what makes it measurable: `scoreNow()` is true whether or not a
+ * WebAudio context ever existed, and the state machine is therefore checkable
+ * on a machine with no sound at all.
+ *
+ * ── IT SITS UNDER THE ROOM ──────────────────────────────────────────────
+ *
+ * Idle is 0.06 — under the band, under the busker, under the beds; you are
+ * meant to notice it only when it is not there. `UNDER_PLACE` drops it further
+ * again while a musician in the room is actually playing, because the cantina's
+ * band is the better music and the score's job at that moment is to get out of
+ * its way.
+ */
+
+/** Bars a state change is crossfaded over, and the beats in them. */
+export const SCORE_BARS = 2;
+/** A win or a loss holds the score for this long before the derivation resumes. */
+export const SCORE_STINGER = 6;
+/** What the score is multiplied by while the band or the busker is audible. */
+export const UNDER_PLACE = 0.35;
+
+/**
+ * NINE STATES. `bpm` and `intensity` are the two numbers a listener perceives;
+ * `layers` is which of the tune engine's four voices and its drums are up, and
+ * is what makes an intensity audible rather than merely louder.
+ */
+export const SCORES = Object.freeze({
+  idle: { id: 'idle', style: 'human', bpm: 76, intensity: 0.15, gain: 0.06,
+    layers: { drums: 0, bass: 0.9, melody: 0.25, pad: 1 } },
+  market: { id: 'market', style: 'centauri', bpm: 116, intensity: 0.45, gain: 0.13,
+    layers: { drums: 0.7, bass: 1, melody: 0.9, pad: 0.8 } },
+  chase: { id: 'chase', style: 'drazi', bpm: 158, intensity: 0.85, gain: 0.24,
+    layers: { drums: 1, bass: 1, melody: 0.8, pad: 0 } },
+  fight: { id: 'fight', style: 'narn', bpm: 142, intensity: 1.00, gain: 0.28,
+    layers: { drums: 1, bass: 1, melody: 1, pad: 0.5 } },
+  vigil: { id: 'vigil', style: 'minbari', bpm: 56, intensity: 0.25, gain: 0.18,
+    layers: { drums: 0, bass: 0.7, melody: 0.9, pad: 1 } },
+  alert: { id: 'alert', style: 'drum', bpm: 128, intensity: 0.75, gain: 0.24,
+    layers: { drums: 1, bass: 1, melody: 0.3, pad: 0.9 } },
+  sleep: { id: 'sleep', style: 'minbari', bpm: 44, intensity: 0.08, gain: 0.10,
+    layers: { drums: 0, bass: 0.5, melody: 0, pad: 1 } },
+  win: { id: 'win', style: 'cantina', bpm: 132, intensity: 0.70, gain: 0.22,
+    layers: { drums: 0.9, bass: 1, melody: 1, pad: 0.7 } },
+  loss: { id: 'loss', style: 'narn', bpm: 58, intensity: 0.30, gain: 0.20,
+    layers: { drums: 0, bass: 1, melody: 0.6, pad: 1 } },
+});
+export const SCORE_KEYS = Object.keys(SCORES);
+export const scoreCfg = (name) => SCORES[name] || SCORES.idle;
+
+/**
+ * ONE SCORE, at module scope, because there is one of them: it outlives a deck
+ * change the way the player's own ears do, and a hook in `Quests` or
+ * `Pickpocket` can reach it without being handed a world.
+ */
+const SC = {
+  state: 'idle', from: 'idle', want: 'idle',
+  tempo: SCORES.idle.bpm, intensity: SCORES.idle.intensity,
+  beat: 0, armAt: 0, fade: 1, hold: 0, level: 0, t: 0, lost: '',
+  player: null, old: null, rearm: 0, changes: 0, log: [],
+};
+
+/** What the score is doing. The observable, and it needs no audio context. */
+export function scoreNow() {
+  return { state: SC.state, from: SC.from, want: SC.want, tempo: SC.tempo,
+    intensity: SC.intensity, level: SC.level, fade: SC.fade, beat: SC.beat,
+    hold: SC.hold, changes: SC.changes };
+}
+export function scoreLog() { return SC.log.slice(); }
+
+/**
+ * Ask for a state. Takes effect on the NEXT BEAT and is then crossfaded over
+ * `SCORE_BARS` bars; asking twice for the same state is not a change.
+ */
+export function setScore(state) {
+  const name = SCORES[state] ? state : 'idle';
+  if (name === SC.want) return false;
+  SC.want = name;
+  SC.armAt = Math.ceil(SC.beat + 1e-6);
+  return true;
+}
+
+/** A job paid, or money gone: the score says so, and then goes back to work. */
+export function scoreStinger(kind = 'win') {
+  const name = kind === 'loss' ? 'loss' : 'win';
+  SC.hold = SCORE_STINGER;
+  setScore(name);
+  return name;
+}
+
+/** Everything back to the top. For a level teardown, and for a check. */
+export function resetScore() {
+  if (SC.player) closePlayer(SC.player);
+  if (SC.old) closePlayer(SC.old);
+  SC.state = SC.from = SC.want = 'idle';
+  SC.tempo = SCORES.idle.bpm; SC.intensity = SCORES.idle.intensity;
+  SC.beat = 0; SC.armAt = 0; SC.fade = 1; SC.hold = 0; SC.level = 0; SC.t = 0; SC.lost = '';
+  SC.player = null; SC.old = null; SC.rearm = 0; SC.changes = 0; SC.log.length = 0;
+}
+
+/** A player for a state: its style, its tempo, and only the layers it wants. */
+function openScore(state, day = 0) {
+  const C = scoreCfg(state);
+  const tune = tuneFor(seedOf(`score:${state}:${day | 0}`), C.style, { bpm: C.bpm });
+  const P = openPlayer(tune, { gain: 0, loop: true });
+  if (!P) return null;
+  const L = C.layers;
+  /* melody, bass, harmony, counter — the harmony rides the melody's layer at a
+   * lower level, and the counter voice IS the pad. */
+  const want = [L.melody, L.bass, L.melody * 0.7, L.pad];
+  for (let i = 0; i < 4; i++) { try { P.voices[i].gain.value = VOICE_GAIN[i] * want[i]; } catch { /* gone */ } }
+  try { P.drums.gain.value = 0.5 * L.drums; } catch { /* gone */ }
+  P.score = state;
+  return P;
+}
+
+/** How far from the player a hostile counts as a fight. */
+export const FIGHT_REACH = 20;
+
+/**
+ * WHAT THE PLAYER IS DOING, off what the station already knows. Every one of
+ * these is a fact some other file owns; nothing here decides anything.
+ */
+export function deriveScore(world, st) {
+  const life = world?._stationLife;
+  if (world?._sleep?.active) return 'sleep';
+  /* THE SABER IS LIT AND SOMETHING IS CLOSE — or a bout is on in the Arena. */
+  const bout = world?._pitBout;
+  if (bout && !bout.over) return 'fight';
+  if (world?.player?.saber?.lit) {
+    const p = world.player.position;
+    for (const e of world.enemies || []) {
+      if (!e || e.dead || e.alive === false || !e.position) continue;
+      if (Math.hypot(e.position.x - p.x, e.position.z - p.z) <= FIGHT_REACH) return 'fight';
+    }
+  }
+  /* THE THIEF IS RUNNING: he has your money, he is on his feet, he is not caught. */
+  const P = life?.pick;
+  if (P && P.body && P.lifted > 0 && !P.caught) return 'chase';
+  if ((life?.war?.alert || 0) > 0) return 'alert';
+  if (life?.vigil?.on) return 'vigil';
+  /* MARKET DAY, and it is `StationLife`'s own running row rather than an hour
+   * written twice: the event is 10:00 for 55 minutes and says so itself. */
+  if (life?.event?.id === 'market') return 'market';
+  return 'idle';
+}
+
+/**
+ * `stepMusic`'s one line. Derives the state, moves the crossfade, and commands
+ * the two players' levels.
+ */
+export function stepScore(world, st, dt) {
+  if (!(dt > 0)) return;
+  SC.t += dt;
+  SC.beat += dt * SC.tempo / 60;
+  /* THE LOSS THE STATION CAN ACTUALLY DETECT, and it is not a purse going
+   * down: a purse goes down at every counter on the deck. The thief getting
+   * away with your money is the one unambiguous one, and `StationSave` already
+   * writes it — `gone` with a `taken`, once a day, which is also what makes
+   * this fire once rather than every frame after it. */
+  let S = null;
+  try { S = pickpocketState(); } catch { S = null; }
+  const key = S && S.gone && (S.taken | 0) > 0 ? `${S.day | 0}:${S.taken | 0}` : '';
+  if (key && key !== SC.lost) { SC.lost = key; scoreStinger('loss'); }
+  if (SC.hold > 0) SC.hold = Math.max(0, SC.hold - dt);
+  else if (world && st) setScore(deriveScore(world, st));
+  else if (SC.want === 'win' || SC.want === 'loss') setScore('idle');
+
+  /* THE CHANGE, ON THE BEAT. */
+  if (SC.want !== SC.state && SC.beat >= SC.armAt) {
+    SC.from = SC.state;
+    SC.state = SC.want;
+    SC.tempo = scoreCfg(SC.state).bpm;
+    SC.fade = 0;
+    SC.changes++;
+    SC.log.push({ t: SC.t, from: SC.from, to: SC.state, tempo: SC.tempo });
+    if (SC.log.length > 32) SC.log.shift();
+    if (SC.old) { closePlayer(SC.old); SC.old = null; }
+    SC.old = SC.player; SC.player = null;
+    SC.rearm = 0;
+  }
+  const C = scoreCfg(SC.state), F = scoreCfg(SC.from);
+  if (SC.fade < 1) {
+    const bars = SCORE_BARS * BEATS * 60 / Math.max(20, SC.tempo);
+    SC.fade = Math.min(1, SC.fade + dt / bars);
+  }
+  SC.intensity = F.intensity + (C.intensity - F.intensity) * SC.fade;
+
+  const M = world?._music;
+  const off = M ? M.off : (!((audio.musicVolume ?? 0.45) > 0.001) || !!audio.muted);
+  if (off) {
+    if (SC.player) { closePlayer(SC.player); SC.player = null; }
+    if (SC.old) { closePlayer(SC.old); SC.old = null; }
+    SC.level = 0;
+    return;
+  }
+  /* UNDER THE ROOM'S OWN MUSIC. */
+  const place = M?.levels || {};
+  const under = ((place.band || 0) + (place.busker || 0)) > 0.02 ? UNDER_PLACE : 1;
+  const base = C.gain * under;
+  SC.level = base * SC.fade;
+
+  if (!SC.player) {
+    SC.rearm -= dt;
+    if (SC.rearm <= 0) {
+      SC.player = openScore(SC.state, st?.day ?? 0);
+      if (!SC.player) SC.rearm = REARM;
+    }
+  }
+  if (SC.player) { setLevel(SC.player, SC.level); stepPlayer(SC.player); }
+  if (SC.old) {
+    const gone = scoreCfg(SC.from).gain * under * (1 - SC.fade);
+    setLevel(SC.old, gone); stepPlayer(SC.old);
+    if (SC.fade >= 1) { closePlayer(SC.old); SC.old = null; }
+  }
+}
+
 export function stepMusic(world, st, dt) {
   const M = world?._music;
   if (!M || !st || !(dt > 0)) return;
@@ -787,6 +1046,7 @@ export function stepMusic(world, st, dt) {
   stepBand(world, st, M, dt, px, pz);
   stepBusker(world, st, M, dt, px, pz);
   stepDrum(world, st, M, dt, px, pz);
+  stepScore(world, st, dt); // V20 lane 4: the score, under the place's own music
 }
 
 export function undressMusic(world) {
@@ -795,5 +1055,6 @@ export function undressMusic(world) {
   bandDown(world, M);
   buskerDown(world, M);
   if (M.drum) { closePlayer(M.drum.player); M.drum = null; }
+  resetScore(); // V20 lane 4: the score goes with the deck
   world._music = null;
 }
