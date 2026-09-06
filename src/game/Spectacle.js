@@ -1411,3 +1411,133 @@ export function screenOf(reading, events = null, opts = {}) {
   out.key = out.rows.join('|');
   return out;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  THE WINDOW, PART THREE — the moment as a PICTURE, not a list
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * V16 Lane D: *"the sim emits events and the screen shows a short procedurally
+ * posed shot of that event with the actual entrants."* `screenOf` is the list;
+ * this is the shot. It is a MODEL — runners in unit coordinates, who leads,
+ * what just happened to whom — and `StationKit.paintShot` is the only thing
+ * that turns it into pixels, so a check can hold "the leader's marker advances
+ * with the sim" as a number off this and "the canvas changed" as a number off
+ * the paint, separately.
+ *
+ * ── IT KNOWS EXACTLY WHAT THE ROWS KNOW ──────────────────────────────────
+ *
+ * `standingsAt`'s note stands: the sim's distances are NOT read. A runner's x
+ * is the feed's own account — the leader at `progress`, the rest spaced behind
+ * in the running order the feed has announced — and a runner who is out is
+ * parked at the gate the feed said it went out. A bout's two bodies stand at a
+ * distance that follows what has been called: a blow this gate is a clinch and
+ * a flash, and each quiet gate after it opens the gap. Nothing here can show a
+ * gap the rail has not been told about.
+ */
+
+/** A steady hue off an entrant's id, so the same pod is the same colour on every screen, every night. */
+export function entrantHue(id) {
+  let h = 2166136261;
+  const s = String(id ?? '');
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  return h % 360;
+}
+
+/** The moments that are a BLOW in a bout — the ones that close the distance and flash. */
+export const BLOWS = Object.freeze(['knockdown', 'wound', 'beaten', 'refusal']);
+
+/** How far behind the leader each place stands on a course shot, in track lengths. */
+export const SHOT_GAP = 0.05;
+/** The pair's distance in a bout shot: on a blow, and per quiet gate after one. */
+export const BOUT_CLINCH = 0.16;
+export const BOUT_OPEN = 0.30;
+export const BOUT_STEP = 0.04;
+
+/**
+ * THE SHOT — what the screen in the room is showing, as a posed picture.
+ *
+ * Same arguments as `screenOf`, which it calls for the rows and the cut, so
+ * the two can never disagree about which moment is on. `caption` is the
+ * announcer's LATEST line — `reading.calls` is the same stream the rail hears
+ * — and falls back to the cut's word when nothing has been said yet.
+ */
+export function shotOf(reading, events = null, opts = {}) {
+  const view = screenOf(reading, events, opts);
+  const phase = view.phase;
+  const gate = view.gate, of = view.of;
+  const calls = reading?.calls || [];
+  const caption = calls.length ? String(calls[calls.length - 1]) : view.caption;
+  const entrants = reading?.race?.card?.entrants || [];
+  const skin = SKINS[reading?.race?.card?.skin] || null;
+  const mode = skin?.mode === 'bout' ? 'bout' : 'course';
+  const shot = {
+    mode: 'quiet', phase, gate, of,
+    progress: phase === 'called' ? 1 : phase === 'running' ? clamp(Number(reading?.progress) || 0, 0, 1) : 0,
+    title: String(reading?.name || reading?.venue || 'the feed'),
+    caption, cut: view.cut, rows: view.rows, runners: [], flash: null, pair: null, key: '',
+  };
+  const done = () => {
+    const f = shot.flash ? `${shot.flash.type}:${shot.flash.who}:${shot.flash.t}` : '';
+    shot.key = `${shot.mode}|${shot.gate}|${shot.progress}|${f}|${caption}|${view.key}`;
+    return shot;
+  };
+  if (phase !== 'running' && phase !== 'called') return done();
+  const standings = reading?.standings || [];
+  if (!standings.length || !entrants.length) return done();
+  shot.mode = mode;
+  const lane = new Map(entrants.map((e, i) => [e.id, i]));
+  const kindOf = (id) => entrants.find((e) => e.id === id)?.kind || 'pod';
+  const cut = view.cut;
+  /* A moment is a flash on THIS gate and a memory on the ones after: the
+   * skid mark stays drawn where the wall strike was, but the burst is over. */
+  if (cut && cut.type !== 'off' && cut.type !== 'result') {
+    shot.flash = { type: cut.type, who: cut.who, other: cut.by || cut.past || cut.from || null, t: cut.t, now: cut.t === gate };
+  }
+  const markOf = (id) => (shot.flash ? (shot.flash.who === id ? shot.flash.type : shot.flash.other === id ? 'other' : null) : null);
+  /* Where each runner went out, off the events the feed has already read. */
+  const outAt = new Map();
+  for (const ev of events || []) {
+    if ((ev.t || 0) > gate) break;
+    if (ev.type === 'retire' || ev.type === 'beaten' || ev.type === 'refusal') outAt.set(ev.who, ev.t);
+  }
+  const n = entrants.length;
+  if (mode === 'course') {
+    let place = 0;
+    for (const s of standings) {
+      const out = !QUIET_STATUS.has(s.status);
+      const li = lane.get(s.id) ?? 0;
+      const x = out ? clamp((outAt.get(s.id) ?? gate) / Math.max(1, of), 0, 1)
+        : clamp(shot.progress - place * SHOT_GAP, 0, 1);
+      shot.runners.push({
+        id: s.id, name: s.name, kind: kindOf(s.id), hue: entrantHue(s.id),
+        x, y: n > 1 ? li / (n - 1) : 0.5, lead: !out && place === 0, out: out ? s.status : null,
+        mark: markOf(s.id), scale: 1, facing: 1,
+      });
+      if (!out) place++;
+    }
+  } else {
+    /* THE PAIR: whoever the moment is about, else the two in front. */
+    const live = standings.filter((s) => QUIET_STATUS.has(s.status));
+    let a = shot.flash?.who || null, b = shot.flash?.other || null;
+    const has = (id) => id && standings.some((s) => s.id === id);
+    if (!has(a) || !has(b) || a === b) { a = (live[0] || standings[0])?.id; b = (live[1] || standings[1])?.id; }
+    const blow = !!(shot.flash && BLOWS.includes(shot.flash.type));
+    const since = blow ? gate - shot.flash.t : of;
+    const d = clamp(blow ? BOUT_CLINCH + since * BOUT_STEP : BOUT_OPEN, BOUT_CLINCH, BOUT_OPEN);
+    shot.pair = { a, b, d, blow: blow && shot.flash.now };
+    let k = 0;
+    for (const s of standings) {
+      const out = !QUIET_STATUS.has(s.status);
+      const big = s.id === a || s.id === b;
+      let x, y;
+      if (big) { x = s.id === a ? 0.5 - d / 2 : 0.5 + d / 2; y = 0.5; }
+      else { x = 0.12 + 0.76 * (k / Math.max(1, n - 3)); y = out ? 0.92 : 0.12; k++; }
+      shot.runners.push({
+        id: s.id, name: s.name, kind: kindOf(s.id), hue: entrantHue(s.id), x, y,
+        lead: !out && s.id === (live[0] || standings[0])?.id, out: out ? s.status : null,
+        mark: markOf(s.id), scale: big ? 1 : 0.45, facing: s.id === a ? 1 : -1,
+      });
+    }
+  }
+  return done();
+}

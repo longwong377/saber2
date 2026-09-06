@@ -4411,12 +4411,350 @@ export function stepCook(world, dt) {
  * §12.2's 2.5 ms in `tools/checks/frame-budget.mjs`'s station clause.
  */
 
-/** How wide and tall a feed panel's canvas is. 26 columns of Courier at 47 px. */
+/** How wide and tall a feed panel's canvas is. 2:1, close to the three slabs it hangs on. */
 const FEED_PX = 768;
 const FEED_PY = 384;
 
 /** How often the screen is re-read, in seconds. See the header. */
 export const FEED_EVERY = 0.2;
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE SHOT — V16 Lane D: a posed picture of the moment, not a list of it    */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ WHAT WAS THERE ══════════════════════════════════════════════════════════
+ *
+ * Six rows of Courier: a caption and the running order. Correct, cut to the
+ * moment, and a TELETEXT PAGE — nothing on it moved, and the sixty people in
+ * the seats were roaring at a list. Lane D's words are *"the screen shows a
+ * short procedurally posed shot of that event with the actual entrants."*
+ *
+ * ══ WHAT THIS IS ════════════════════════════════════════════════════════════
+ *
+ * A cel-shaded 2D picture painted onto the SAME canvas `signPanel` already
+ * owns — its texture, its material, its one draw call; not one new THREE
+ * object. `Spectacle.shotOf` says WHAT is in the picture (who is where, who
+ * leads, what just happened to whom) and the functions below say what a pod,
+ * a beast, a droid and a sentient look like on a monitor: flat fills, a dark
+ * outline, one highlight. Stylised is right for a screen in a room; the
+ * bodies on the Pit's floor are the real thing, this is the feed of it.
+ *
+ * ── A RACE ────────────────────────────────────────────────────────────────
+ *
+ * A track band with a gate tick per segment, the entrants as pods in their
+ * card colour on their own lane, the leader ringed, the moment drawn AT the
+ * runner it happened to: a skid streak behind a wall strike, smoke over a
+ * mechanical, a chevron past an overtake, a burst on a lead change, a cross
+ * on a retirement parked where it went out.
+ *
+ * ── A BOUT ────────────────────────────────────────────────────────────────
+ *
+ * A ring, the two the moment is about facing each other at a distance the
+ * called blows have set, the rest of the card small along the rail — and a
+ * strike burst between the pair on the gate a blow lands.
+ *
+ * ── WHAT IT COSTS ─────────────────────────────────────────────────────────
+ *
+ * Painted only on the feed's beat and only when `shot.key` changed, which is
+ * at most `progress`'s two decimals — five a second while a race runs, none
+ * between races. The shim's canvas is a no-op in a check, so the pixel test in
+ * `tools/checks/spectacle.mjs` hangs its own raster on `f.canvas`.
+ */
+
+/* An import at the foot, because this is the foot's business: `screenOf`
+ * came in at the head with the rows; the shot lives with the paint. */
+import { shotOf } from './Spectacle.js';
+
+const SHOT_BG = '#07090b';
+const SHOT_INK = '#0b0f14';
+const SHOT_CAPTION = '#ffffff';
+
+const hsl = (h, s, l) => `hsl(${h | 0}, ${s | 0}%, ${l | 0}%)`;
+
+/** A flat body with a dark outline — the whole of the cel look. */
+function cel(ctx, fill) {
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.strokeStyle = SHOT_INK;
+  ctx.lineWidth = 3;
+  ctx.stroke();
+}
+
+/** A POD: two engines ahead of a cockpit on cables, nose to +x. */
+function drawPod(ctx, x, y, s, hue, dim) {
+  const c = hsl(hue, dim ? 12 : 72, dim ? 28 : 56), hi = hsl(hue, 60, 78);
+  ctx.beginPath();
+  ctx.ellipse(x - s * 0.9, y, s * 0.55, s * 0.32, 0, 0, Math.PI * 2);
+  cel(ctx, c);
+  for (const dy of [-0.55, 0.55]) {
+    ctx.beginPath();
+    ctx.moveTo(x - s * 0.5, y + dy * s);
+    ctx.lineTo(x + s * 0.9, y + dy * s * 0.9);
+    ctx.lineTo(x + s * 1.4, y + dy * s * 0.55);
+    ctx.lineTo(x + s * 0.9, y + dy * s * 0.2);
+    ctx.lineTo(x - s * 0.5, y + dy * s * 0.35);
+    ctx.closePath();
+    cel(ctx, c);
+  }
+  ctx.beginPath();
+  ctx.ellipse(x - s * 1.0, y - s * 0.1, s * 0.22, s * 0.1, 0, 0, Math.PI * 2);
+  ctx.fillStyle = hi;
+  ctx.fill();
+}
+
+/** A BEAST: a long body, a wedge head, four legs, facing `f`. */
+function drawBeast(ctx, x, y, s, hue, dim, f) {
+  const c = hsl(hue, dim ? 10 : 48, dim ? 26 : 46), hi = hsl(hue, 40, 66);
+  for (const dx of [-0.55, -0.25, 0.3, 0.6]) {
+    ctx.beginPath();
+    ctx.moveTo(x + dx * s, y + s * 0.2);
+    ctx.lineTo(x + dx * s + f * s * 0.08, y + s * 0.95);
+    ctx.lineTo(x + dx * s + f * s * 0.3, y + s * 0.95);
+    ctx.lineTo(x + dx * s + s * 0.18, y + s * 0.2);
+    ctx.closePath();
+    cel(ctx, c);
+  }
+  ctx.beginPath();
+  ctx.ellipse(x, y, s * 0.95, s * 0.5, 0, 0, Math.PI * 2);
+  cel(ctx, c);
+  ctx.beginPath();
+  ctx.moveTo(x + f * s * 0.7, y - s * 0.45);
+  ctx.lineTo(x + f * s * 1.6, y - s * 0.15);
+  ctx.lineTo(x + f * s * 0.8, y + s * 0.25);
+  ctx.closePath();
+  cel(ctx, c);
+  ctx.beginPath();
+  ctx.ellipse(x - f * s * 0.2, y - s * 0.2, s * 0.4, s * 0.14, 0, 0, Math.PI * 2);
+  ctx.fillStyle = hi;
+  ctx.fill();
+}
+
+/** A SENTIENT: upright, a head, a guard up on the side it faces. */
+function drawBiped(ctx, x, y, s, hue, dim, f) {
+  const c = hsl(hue, dim ? 10 : 55, dim ? 26 : 48), hi = hsl(hue, 45, 70);
+  for (const dx of [-0.28, 0.22]) {
+    ctx.beginPath();
+    ctx.moveTo(x + dx * s, y + s * 0.4);
+    ctx.lineTo(x + dx * s - f * s * 0.05, y + s * 1.5);
+    ctx.lineTo(x + dx * s + s * 0.22, y + s * 1.5);
+    ctx.lineTo(x + dx * s + s * 0.25, y + s * 0.4);
+    ctx.closePath();
+    cel(ctx, c);
+  }
+  ctx.beginPath();
+  ctx.ellipse(x, y, s * 0.42, s * 0.62, 0, 0, Math.PI * 2);
+  cel(ctx, c);
+  ctx.beginPath();
+  ctx.moveTo(x + f * s * 0.25, y - s * 0.3);
+  ctx.lineTo(x + f * s * 0.95, y - s * 0.55);
+  ctx.lineTo(x + f * s * 1.0, y - s * 0.3);
+  ctx.lineTo(x + f * s * 0.3, y);
+  ctx.closePath();
+  cel(ctx, c);
+  ctx.beginPath();
+  ctx.arc(x + f * s * 0.05, y - s * 0.9, s * 0.3, 0, Math.PI * 2);
+  cel(ctx, c);
+  ctx.beginPath();
+  ctx.ellipse(x - f * s * 0.1, y - s * 0.25, s * 0.16, s * 0.3, 0, 0, Math.PI * 2);
+  ctx.fillStyle = hi;
+  ctx.fill();
+}
+
+/** A DROID: a box on a tread with a sensor stalk. */
+function drawDroid(ctx, x, y, s, hue, dim, f) {
+  const c = hsl(hue, dim ? 6 : 30, dim ? 30 : 52), hi = hsl(hue, 30, 74);
+  ctx.beginPath();
+  ctx.rect(x - s * 0.6, y + s * 0.6, s * 1.2, s * 0.45);
+  cel(ctx, c);
+  ctx.beginPath();
+  ctx.rect(x - s * 0.5, y - s * 0.4, s * 1.0, s * 1.0);
+  cel(ctx, c);
+  ctx.beginPath();
+  ctx.moveTo(x + f * s * 0.5, y - s * 0.1);
+  ctx.lineTo(x + f * s * 1.1, y - s * 0.2);
+  ctx.lineTo(x + f * s * 1.1, y + s * 0.1);
+  ctx.lineTo(x + f * s * 0.5, y + s * 0.2);
+  ctx.closePath();
+  cel(ctx, c);
+  ctx.beginPath();
+  ctx.rect(x - s * 0.08, y - s * 0.95, s * 0.16, s * 0.55);
+  cel(ctx, c);
+  ctx.beginPath();
+  ctx.arc(x, y - s * 1.0, s * 0.18, 0, Math.PI * 2);
+  cel(ctx, hi);
+}
+
+const SILHOUETTE = { pod: drawPod, beast: drawBeast, sentient: drawBiped, droid: drawDroid, companion: drawBeast };
+
+/** A burst: the strike flash, the lead-change star. */
+function burst(ctx, x, y, r, colour) {
+  ctx.beginPath();
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2, rr = i % 2 ? r : r * 0.45;
+    if (i) ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+    else ctx.moveTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+  }
+  ctx.closePath();
+  ctx.fillStyle = colour;
+  ctx.fill();
+}
+
+/** The moment, drawn at the runner it happened to. */
+function drawMark(ctx, r, x, y, s, now) {
+  switch (r.mark) {
+    case 'wall': {
+      ctx.strokeStyle = '#3a2a1e';
+      ctx.lineWidth = s * 0.28;
+      ctx.beginPath();
+      ctx.moveTo(x - s * 2.6, y + s * 0.5);
+      ctx.lineTo(x - s * 0.6, y + s * 0.25);
+      ctx.stroke();
+      if (now) burst(ctx, x + s * 0.9, y - s * 0.7, s * 0.9, '#ffb15a');
+      break;
+    }
+    case 'mechanical': case 'retire': {
+      ctx.fillStyle = 'rgba(160,160,160,0.75)';
+      for (let i = 0; i < 3; i++) {
+        ctx.beginPath();
+        ctx.arc(x - s * 0.9 + i * s * 0.5, y - s * 0.9 - i * s * 0.35, s * (0.35 + i * 0.12), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (r.mark === 'retire') {
+        ctx.strokeStyle = '#ff5a5a';
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(x - s, y - s); ctx.lineTo(x + s, y + s);
+        ctx.moveTo(x + s, y - s); ctx.lineTo(x - s, y + s);
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'overtake': case 'lead': {
+      if (now) burst(ctx, x + s * 1.2, y - s * 0.9, s * 0.8, r.mark === 'lead' ? '#ffe680' : '#7fe0ff');
+      ctx.fillStyle = r.mark === 'lead' ? '#ffe680' : '#7fe0ff';
+      ctx.beginPath();
+      ctx.moveTo(x + s * 1.7, y);
+      ctx.lineTo(x + s * 1.2, y - s * 0.45);
+      ctx.lineTo(x + s * 1.2, y + s * 0.45);
+      ctx.closePath();
+      ctx.fill();
+      break;
+    }
+    case 'knockdown': case 'beaten': case 'refusal': case 'wound': {
+      if (now) burst(ctx, x, y - s * 0.4, s * 1.1, '#ffffff');
+      break;
+    }
+    default: break;
+  }
+}
+
+/**
+ * PAINT THE SHOT onto a feed's canvas. Pure over `(ctx, W, H, shot)`, so a
+ * check can hand it any raster it likes; the shipped call comes from
+ * `stepFeeds` with the panel's own.
+ */
+export function paintShot(ctx, W, H, shot) {
+  if (!ctx || !shot) return false;
+  ctx.fillStyle = SHOT_BG;
+  ctx.fillRect(0, 0, W, H);
+  const capH = Math.round(H * 0.17);
+  const top = Math.round(H * 0.11);
+  /* The head: the room and the gate. */
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#7fc4ff';
+  ctx.font = `bold ${Math.round(H * 0.07)}px "Courier New", monospace`;
+  ctx.fillText(String(shot.title).toUpperCase(), 18, top / 2);
+  if (shot.mode !== 'quiet') {
+    ctx.textAlign = 'right';
+    ctx.fillText(`${shot.gate}/${shot.of}`, W - 18, top / 2);
+  }
+  const areaY = top, areaH = H - capH - top;
+  if (shot.mode === 'course') {
+    /* The band, and a tick a gate. */
+    const x0 = W * 0.08, x1 = W * 0.92, by = areaY + areaH * 0.08, bh = areaH * 0.84;
+    ctx.fillStyle = '#1a2230';
+    ctx.fillRect(x0 - 12, by, x1 - x0 + 24, bh);
+    ctx.fillStyle = '#26303f';
+    for (let g = 1; g <= shot.of; g++) {
+      const gx = x0 + (x1 - x0) * (g / shot.of);
+      ctx.fillRect(gx - 1, by, 2, bh);
+    }
+    ctx.fillStyle = '#ffd9a0';
+    ctx.fillRect(x1 - 3, by - 6, 6, bh + 12);
+    const s = Math.max(6, areaH * 0.055);
+    /* Back lanes first so the front rows overlap them. */
+    const order = shot.runners.slice().sort((a, b) => a.y - b.y);
+    for (const r of order) {
+      const x = x0 + (x1 - x0) * r.x, y = by + bh * (0.12 + 0.76 * r.y);
+      if (r.lead) {
+        ctx.beginPath();
+        ctx.ellipse(x - s * 0.2, y, s * 2.0, s * 1.1, 0, 0, Math.PI * 2);
+        ctx.strokeStyle = '#ffe680';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+      drawMark(ctx, r, x, y, s, !!shot.flash?.now);
+      (SILHOUETTE[r.kind] || drawPod)(ctx, x, y, s, r.hue, !!r.out, 1);
+      ctx.fillStyle = r.out ? '#6b6b6b' : '#e8f2ff';
+      ctx.textAlign = 'center';
+      ctx.font = `bold ${Math.round(s * 0.95)}px "Courier New", monospace`;
+      ctx.fillText(String(r.name).toUpperCase(), x, y - s * 1.1);
+    }
+  } else if (shot.mode === 'bout') {
+    /* The ring, seen from the rail. */
+    const cx = W / 2, cy = areaY + areaH * 0.62, rx = W * 0.4, ry = areaH * 0.34;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fillStyle = '#3a2f22';
+    ctx.fill();
+    ctx.strokeStyle = '#6b5a3e';
+    ctx.lineWidth = 5;
+    ctx.stroke();
+    const S = areaH * 0.13;
+    const small = shot.runners.filter((r) => r.scale < 1), big = shot.runners.filter((r) => r.scale >= 1);
+    for (const r of small) {
+      const x = W * r.x, y = areaY + areaH * (r.out ? 0.98 : 0.18);
+      (SILHOUETTE[r.kind] || drawBiped)(ctx, x, y, S * r.scale, r.hue, !!r.out, r.facing);
+    }
+    for (const r of big) {
+      const x = cx + (r.x - 0.5) * W * 0.8, y = cy - S * 0.2;
+      drawMark(ctx, r, x, y, S, !!shot.pair?.blow);
+      (SILHOUETTE[r.kind] || drawBiped)(ctx, x, y, S, r.hue, !!r.out, r.facing);
+      if (r.lead) {
+        ctx.beginPath();
+        ctx.ellipse(x, y + S * 1.6, S * 1.3, S * 0.35, 0, 0, Math.PI * 2);
+        ctx.strokeStyle = '#ffe680';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }
+      ctx.fillStyle = r.out ? '#6b6b6b' : '#e8f2ff';
+      ctx.textAlign = 'center';
+      ctx.font = `bold ${Math.round(S * 0.5)}px "Courier New", monospace`;
+      ctx.fillText(String(r.name).toUpperCase(), x, y + S * 2.1);
+    }
+    if (shot.pair?.blow) burst(ctx, cx, cy - S * 0.5, S * 1.2, '#ffffff');
+  } else {
+    /* Between races: the rows say when. */
+    ctx.fillStyle = '#c9a06a';
+    ctx.textAlign = 'center';
+    ctx.font = `bold ${Math.round(H * 0.09)}px "Courier New", monospace`;
+    for (let i = 1; i < shot.rows.length && i < 4; i++) {
+      if (shot.rows[i]) ctx.fillText(String(shot.rows[i]).toUpperCase(), W / 2, areaY + areaH * (0.25 + 0.25 * (i - 1)));
+    }
+  }
+  /* The caption strip: the announcer's latest line. */
+  ctx.fillStyle = '#101820';
+  ctx.fillRect(0, H - capH, W, capH);
+  ctx.fillStyle = SHOT_CAPTION;
+  ctx.textAlign = 'left';
+  ctx.font = `bold ${Math.round(capH * 0.42)}px "Courier New", monospace`;
+  const cap = String(shot.caption || '').toUpperCase();
+  const room = Math.floor(W / (capH * 0.42 * 0.62)) - 2;
+  ctx.fillText(cap.length > room ? cap.slice(0, room - 1) + '…' : cap, 18, H - capH / 2);
+  return true;
+}
 
 /**
  * HANG THE SCREENS. `dressNotices`' shape and for its reasons: the room hands
@@ -4442,6 +4780,11 @@ export function dressFeeds(world, st) {
     (f.group || world.scene).add(mesh);
     f.panel = panel;
     f.mesh = mesh;
+    /* THE CANVAS ITSELF, off the texture `signPanel` made: the shot paints on
+     * it directly. Read through `getContext` on every paint rather than held
+     * as a context, so a check can hang a raster of its own on the canvas. */
+    f.canvas = panel.texture?.image || null;
+    f.shot = null;
     /* ON THE DECK'S BILL — `dressNotices`' stated reason: a mesh that goes to
      * the scene and is counted by nothing makes §12.2's 400 a measurement of
      * the wrong number. */
@@ -4473,18 +4816,27 @@ export function stepFeeds(world, st, dt) {
   for (const f of list) {
     if (f.group && !f.group.visible) continue;
     const reading = toteWatch(f.venue, st.day | 0, st.hour);
-    const view = screenOf(reading, reading.race ? resultOf(reading.race).events : null,
+    /* `shotOf` calls `screenOf` for the rows and the cut, so the observables
+     * below are the same ones the list gave — plus the shot itself. */
+    const shot = shotOf(reading, reading.race ? resultOf(reading.race).events : null,
       { rows: SCREEN_ROWS, cols: SCREEN_COLS });
-    f.cut = view.cut;
-    f.gate = view.gate;
-    f.of = view.of;
-    f.phase = view.phase;
-    f.rows = view.rows;
-    if (view.key === f.key) continue;
-    f.key = view.key;
+    f.cut = shot.cut;
+    f.gate = shot.gate;
+    f.of = shot.of;
+    f.phase = shot.phase;
+    f.rows = shot.rows;
+    f.shot = shot;
+    if (shot.key === f.key) continue;
+    f.key = shot.key;
     f.draws++;
     drawn++;
-    f.panel?.draw(view.rows);
+    /* THE PICTURE. On the panel's own canvas and texture; `signPanel.draw` is
+     * not called — its text is the list this replaced. Without a canvas (no
+     * document) the panel is a flat lit plate, exactly as it was. */
+    const ctx = f.canvas?.getContext?.('2d') || null;
+    if (ctx && paintShot(ctx, f.canvas.width || FEED_PX, f.canvas.height || FEED_PY, shot)) {
+      if (f.panel?.texture) f.panel.texture.needsUpdate = true;
+    } else f.panel?.draw(shot.rows);
   }
   return drawn;
 }
