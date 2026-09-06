@@ -86,7 +86,7 @@ import { pitAtPlace } from './Pits.js';
 /* THE ROOM'S OWN NOISE — see `stepCrowd`. The same singleton sixteen other
  * game files reach for; §G4's crowd is a cue on the engine, not a new path. */
 import { audio } from '../engine/Audio.js';
-import { venueAtPlace, ticketFor, settleTickets, crowdAt } from './Tote.js';
+import { venueAtPlace, settleTickets, crowdAt } from './Tote.js';
 import { openWheelhouse, wheelhouseLine, drumQuote, WHEELHOUSE } from './Casino.js';
 /* THE JOB BOARD'S DOOR. `takeJob` is NOT here: a panel takes a job straight
  * off `Quests.js`, and a pass-through in this file would be a second name for
@@ -106,6 +106,9 @@ import { dressCobraBay, drawCobraBay, undressCobraBay } from './CobraBay.js';
 import { GANTRY_Y, stepCook, dressFeeds, stepFeeds, CookSet } from './StationKit.js';
 import { disposeLiveFeeds } from './RaceFeed.js';
 import { dressTV, stepTV } from './Holonet.js';
+import { dressHealing, stepHealing, undressHealing } from './Healing.js';
+import { dressStationSound, stepStationSound, undressStationSound, stepPA } from './StationSound.js';
+import { dressFormBoards, stepFormBoards, undressFormBoards, printedTicket } from './Form.js';
 import { sitKey, releaseSeat } from './StationSit.js';
 import * as Food from './Food.js';
 import { shelfFor } from './Counter.js';
@@ -1503,6 +1506,8 @@ export function dressStation(world) {
    * every deck the three rooms are not on. */
   dressFeeds(world, st);
   dressTV(world, st);
+  dressFormBoards(world, st); // V18 hole 10: the reading room's form odds, under every feed screen
+  dressStationSound(world, st); // V18 hole 7: per-place beds and the PA
   /* ── AND THE PEOPLE BEHIND THE COUNTERS (V16 Lane B) ───────────────────
    *
    * AFTER `dressStationLife`, so the pool has already claimed its budget and
@@ -1510,6 +1515,7 @@ export function dressStation(world) {
    * the places, because a keeper stands behind a desk the room's own shape
    * recorded. See `dressKeepers` for why they are not in the pool. */
   st.keeperCount = dressKeepers(world, st);
+  dressHealing(world, st); // V18 hole 5: the medic, the monitors, the fluid — see Healing.js
 
   /* ── AND THE ONE ROOM THAT IS YOURS (V15 §1.3) ─────────────────────────
    *
@@ -1670,6 +1676,7 @@ export function undressStation(world) {
    * they are still bodies. */
   leaveHome(world);
   undressHome(world);
+  undressHealing(world); undressStationSound(world); undressFormBoards(world); // V18 holes 5, 7, 10
   for (const rec of st.places.values()) {
     rec.group.parent?.remove(rec.group);
     rec.group.traverse((o) => { if (o.isMesh) o.geometry?.dispose?.(); });
@@ -3510,7 +3517,7 @@ export function payForJob(jobId) {
 
 /** Strike a ticket and take the money for it. Refuses the way the shop does. */
 export function stakeAtTote(race, bet) {
-  const quote = ticketFor(race, bet);
+  const quote = printedTicket(race, bet); // V18 hole 10: a win ticket carries the reading room's printed odds
   if (!quote.ok) return quote;
   const paid = spend(quote.ticket.stake, 'tote');
   if (!paid.ok) return { ok: false, why: paid.why, short: paid.short, ticket: null };
@@ -4634,6 +4641,7 @@ const _paAt = new THREE.Vector3();
  * here is written and not read.
  */
 function stepTannoy(world, st, dt) {
+  if (stepPA(world, st, dt)) return; // V18 hole 7: StationSound owns the PA when it is dressed
   if (!(dt > 0)) return;
   const pa = st.pa || (st.pa = { calls: 0, at: -1, said: '', head: '', line: '', name: '', spoke: '' });
   /* ON THE STATION CLOCK AND NOT ON A TIMER OF ITS OWN. `st.hour` is the one
@@ -4870,6 +4878,7 @@ export function stepStation(world, dt) {
    * into the cantina and look at him. `Bars.stepLeave` credits the nerve and
    * the mending; the banner is only for a man who came off the wounded list,
    * because that is the one event worth interrupting somebody for. */
+  stepHealing(world, st, dt); // V18 hole 5: after the ward has settled, so a freed tank is seen this frame
   const rested = stepLeave(world, dt);
   if (rested) {
     for (const r of rested) {
@@ -4921,10 +4930,12 @@ export function stepStation(world, dt) {
    * only where the door cull has the room drawn — see `StationKit.stepFeeds`.
    * One property read a frame on every other deck. */
   stepFeeds(world, st, dt);
+  stepFormBoards(world, st, dt); // V18 hole 10: the odds drift on the board
   /* AND THE TANNOY, which says the station's own name on the station's own
    * clock (V15 §1.1). One floor and one integer compare a frame — see
    * `stepTannoy`. */
   stepTannoy(world, st, dt);
+  stepStationSound(world, st, dt); // V18 hole 7: crossfade the bed under the player
 
   const cam = world.player?.camera?.obj || world.player;
   if (!cam) return;

@@ -117,12 +117,12 @@ chords of the ring's circle with glass beside the door on public rooms.
 2. Rooms are rectangles inboard of a curved ring. **HALF** — see cool 20.
 3. No windows between rooms (rule 5 is a wall with a door). **HALF** — glazed fronts onto the ring on public rooms; nothing room-to-room yet.
 4. Residents do not sit, eat, drink or hold anything. **CLOSED** — `Rig.poseSeated`, the pool's sit verb with a cup (`seated.mjs`), and the player's own (`StationSit.js`: the key beside a chair sits you, a move key stands you up).
-5. The medbay has no visible healing beyond occupied tanks.
+5. The medbay has no visible healing beyond occupied tanks. **CLOSED** — `Healing.js`: a medic on a seeded round of the lit tanks, bubbling fluid, a heart-rate monitor over each tank, a healed man sitting up and walking out to the ring, the count falling (`healing.mjs`).
 6. Co-op on the station is apartments only; population and clock unproven with a guest.
-7. Sound is levels, not beds; the PA has three lines.
+7. Sound is levels, not beds; the PA has three lines. **CLOSED** — `StationSound.js`: seven synthesised beds crossfaded by `placeUnder` in 1.5 s, the tram on a distance law, and a 24-line seeded PA with a chime, one per 45 station-min (`healing.mjs`).
 8. Human, Brakiri, Llort and Other share one face; the Vree wears the Kel Dor mask. **CLOSED** — `Bodies.SPECIES_HEADS` brakiri/llort/vree/other.
 9. Every screen but the feeds was static text — the holonet is the answer, and it is new. **CLOSED** — `Holonet.js`, 24/7 procedural, on every kit TV.
-10. The reading room prints form odds for every runner.
+10. The reading room prints form odds for every runner. **CLOSED** — `Form.js`: a five-result form and an overround price per runner, drifting every 30 station-min, on a board under every feed screen; a win ticket struck at the window pays at the printed odds (`form.mjs`).
 
 ## 0. V17b — THE REVIEW OF EVERYTHING POST-SHARK, AND THE ONE THING IT FOUND
 

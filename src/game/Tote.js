@@ -760,7 +760,12 @@ export function settleTickets(tickets = [], result = null) {
     else if (t.kind === 'win') won = result.winner === t.on;
     else if (t.kind === 'field') won = result.winner != null && result.winner !== t.on;
     else if (t.kind === 'place') won = place.get(t.on) <= (t.places || 0);
-    const back = won ? Math.round(stake * t.price) : 0;
+    /* A WIN TICKET STRUCK AT THE STATION'S WINDOW CARRIES THE READING ROOM'S
+     * PRINTED ODDS (V18 hole 10) — `Form.printedTicket` stamps `form` on it —
+     * and is PAID at them; a ticket without the stamp pays at its own price,
+     * which is what every measurement in `edgeOf` and the checks buys. */
+    const at = t.kind === 'win' && Number.isFinite(t.form) && t.form > 0 ? t.form : t.price;
+    const back = won ? Math.round(stake * at) : 0;
     staked += stake;
     returned += back;
     lines.push({ ...t, won, returned: back });
