@@ -16,6 +16,19 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import { clamp, lerp, damp, smoothstep, shortestArc, quatToRotVec, Ema, TAU } from '../engine/MathUtil.js';
 import { ENVELOPES } from './SaberSet.js';
+/* `zoneTolerance` IS THE LADDER, AND IT IS NOW READ RATHER THAN REPEATED.
+ *
+ * Combat.js has always carried it — "One function so the ladder cannot drift:
+ * SaberController multiplies by GUARD.tolerance and adds GUARD.sector, and
+ * this is the same arithmetic named once" — and this file did the multiplying
+ * and the adding itself, so the sentence was a description of a coincidence.
+ * `directional.mjs` measures the guard's real width against `zoneTolerance` at
+ * all four tiers, which means the check and the game were reading two copies
+ * of one formula and the check was the only one that could tell.
+ *
+ * The dependency runs one way only: Combat takes `base` and `full` as
+ * arguments precisely so it need not import this file, and it does not. */
+import { zoneTolerance } from './Combat.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
@@ -2308,7 +2321,7 @@ export class SaberController {
    */
   _publishGuard(chest, aimQuat) {
     const g = this.guard;
-    this.zoneTol = clamp(this.assist, 0, 1) * GUARD.tolerance;
+    this.zoneTol = zoneTolerance(this.assist, 0, GUARD.tolerance);
     g.active = this.guarding;
     if (!g.active) { g.zone = ZONE.NONE; g.parry = false; return; }
     g.zone = this.zone;
@@ -2343,8 +2356,8 @@ export class SaberController {
      * `half` widens what a zone ANSWERS without changing what a zone IS, which
      * is why directional.mjs's twin check is untouched.
      */
-    g.half = Math.min(GUARD.sector + GUARD.tolerance,
-      GUARD.sector + this.zoneTol + (this.setHalf ?? 0));
+    g.half = Math.min(zoneTolerance(1, GUARD.sector, GUARD.tolerance),
+      zoneTolerance(this.assist, GUARD.sector, GUARD.tolerance) + (this.setHalf ?? 0));
     g.centre = GUARD.centre;
     /**
      * ── AND THE PAIR'S EXTRA COVERAGE IS BOUGHT ON THE OTHER GATE ────────

@@ -1156,11 +1156,14 @@ export function opposingArmy(armyId) {
   return others.length === 1 ? others[0] : null;
 }
 
-/** Is this body one of the two that fight a war, rather than a Jedi or a beast? */
-export function isSoldier(type) {
-  const f = factionOf(type);
-  return !!f && !!FACTIONS[f]?.army;
-}
+/* `isSoldier(type)` stood here — `!!FACTIONS[factionOf(type)]?.army` — with no
+ * caller anywhere. This file already answers the question four times over in
+ * its own body (`ARMY_FACTIONS`, and three `FACTIONS[…].army` tests within
+ * twenty lines of where it stood), and every one of those is a different
+ * question shaped around the caller that asks it: which factions are armies,
+ * which army fights which order, who the OTHER army is. A general predicate
+ * over the same field, exported and unused, is a fifth spelling of a fact this
+ * module has never had trouble stating. */
 
 /** The entry, or null. Callers must handle null; nothing here invents a page. */
 export function entryFor(type) {

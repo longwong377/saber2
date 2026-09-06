@@ -1024,12 +1024,25 @@ for (const r of BORZ_RESIDENTS) {
  * hit, which is the same check `CompanionKinds.js` earns by keeping twelve
  * kinds and switching on none of them.
  */
-const MANIFESTS = new Map();
+/* ══ THE MODE MANIFEST NO MODE EVER FILLED ════════════════════════════════
+ *
+ * `const MANIFESTS = new Map()` and `addResidents(id, rows)` stood here —
+ * "Contribute a mode's residents. Called once, at module load, by the mode."
+ * No mode ever called it. Not one reference under `src/` or `tools/`, so the
+ * map was written by nothing, and `residents()` closed with a loop over an
+ * empty map on every call for the whole life of the feature.
+ *
+ * It was an extension point with no extension, which is the most expensive
+ * kind of dead code because it READS as a live seam: anyone tracing where the
+ * station's cast comes from had a third source to rule out, and the answer was
+ * always the two tables above it — `SPECIES` and `BORZ_RESIDENTS`.
+ *
+ * Deleted rather than wired, because wiring it means inventing a mode's cast
+ * that nobody asked for. A mode that wants residents adds its rows to the two
+ * tables that already carry the station's, where `residentPlaces` and the
+ * databank's gazetteer will find them without a registry in between. */
 
-/** Contribute a mode's residents. Called once, at module load, by the mode. */
-export function addResidents(id, rows) { MANIFESTS.set(id, rows); }
-
-/** Every resident row every mode has contributed, plus the station's own. */
+/** Every resident row on the station: the species pool, then the Borz cast. */
 export function residents() {
   const out = [];
   for (const S of SPECIES) {
@@ -1045,7 +1058,6 @@ export function residents() {
       job: r.job, home: r.home, haunt: r.haunt, rhythm: 'human',
     });
   }
-  for (const rows of MANIFESTS.values()) for (const r of rows) out.push(r);
   return out;
 }
 

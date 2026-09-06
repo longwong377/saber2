@@ -691,9 +691,24 @@ export function stepMedbay(world, dt) {
  * `StationKit.tankrow` owns this geometry and this MIRRORS it rather than
  * replacing it: the loop there is `-w/2 + (w/5)*(i+0.5)` along the wall at
  * `d/2 - 1.6`, and a renderer that wants to stand a body behind the glass
- * needs the same five points. Kept here so there is one place to correct if
- * the row is ever re-laid, and named after the kit so the next reader knows
- * which of the two is the original.
+ * needs the same five points.
+ *
+ * ── AND THE MIRROR IS THE THING THAT IS WRONG WITH IT ──────────────────
+ *
+ * The sentence that used to close this note — "kept here so there is one
+ * place to correct if the row is ever re-laid" — describes two places while
+ * claiming one. Nothing in the game calls this, so the copy that CAN be
+ * checked is the one nothing draws, and the glass is built off the copy that
+ * cannot be. The repair is one line: `tankrow` calls `tankLocal` and the row
+ * has a single spelling.
+ *
+ * It is not made here because `tools/checks/medbay.mjs` holds the two copies
+ * together by READING StationKit's source — it regexes the literal `5` out of
+ * `for (let i = 0; i < 5; i++)` and `new Function`s the two coordinate
+ * expressions out of the `tank(...)` call beside it — so a `tankrow` that
+ * calls this function stops being parseable by the check that exists because
+ * it is a copy. The check has to move first, and that file is not this lane's
+ * to move.
  */
 export function tankLocal(i, w, d) {
   const n = Math.max(1, TANKS);

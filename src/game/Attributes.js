@@ -158,7 +158,18 @@ export const ATTRS = [
 
 export const ATTR_IDS = ATTRS.map((a) => a.id);
 const ATTR_BY_ID = new Map(ATTRS.map((a) => [a.id, a]));
-export const attrById = (id) => ATTR_BY_ID.get(id) || null;
+/* `attrById` STOOD HERE AND WAS A SECOND DOOR ONTO THE LINE ABOVE IT.
+ *
+ * `ATTR_BY_ID.get(id) || null`, exported, with no caller anywhere under `src/`
+ * or `tools/` — while `attrName`, `attrBlurb` and `attrScale`, the three
+ * functions directly below it in this file, each read `ATTR_BY_ID.get(id)`
+ * themselves. It was a name for something that already had one, and the map is
+ * module-private, so nothing outside could have wanted it either.
+ *
+ * Deleted rather than wired: there is no reading a player could reach that
+ * needs the whole row where `attrName` and `attrBlurb` do not already answer.
+ * A caller who genuinely needs the row should export it as the thing it wants
+ * rather than re-opening the map. */
 
 /** What this attribute is called for a man or for a machine. */
 export function attrName(id, kind) {

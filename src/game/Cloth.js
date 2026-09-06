@@ -1525,8 +1525,23 @@ export const CAPE_CUTS = [
 ];
 
 const CAPE_BY_ID = new Map(CAPE_CUTS.map((c) => [c.id, c]));
-/** The cape cut with this id, or null. Same contract as `robeCut`. */
-export function capeCut(id) { return CAPE_BY_ID.get(id) || null; }
+/* ══ THE FOUR ACCESSORS THAT STOOD OVER THESE FOUR MAPS ═══════════════════
+ *
+ * `capeCut`, `tabardCut`, `sashCut` and `fleshMotion` — each one
+ * `X_BY_ID.get(id) || null`, each exported, and not one of them called from
+ * anywhere under `src/` or `tools/`. The comment further down said they were
+ * indexed "for the same reason the four tables above are: `wardrobeOf` must be
+ * able to refuse an id nothing recognises", and that reason is real — but
+ * `wardrobeOf` refuses with `map.has(v)` on the maps themselves, and every
+ * builder in this file reads `CAPE_BY_ID.get`, `TABARD_BY_ID.get`,
+ * `SASH_BY_ID.get` and `FLESH_MOTION_BY_ID.get` directly. The accessors were
+ * second doors onto lookups whose only callers live in this file and were
+ * already using the front one.
+ *
+ * `robeCut` and `hairTail` are still exported and are NOT this shape: the
+ * settings key `robeCut` and the rig field `hairTail` are named across
+ * `Menu.js`, `Net.js` and `World.js`, so those two words are load-bearing
+ * outside this module in a way these four never were. */
 
 /**
  * THE OVER-PANELS — the tabard, and the two ways of not having one.
@@ -1559,7 +1574,6 @@ export const TABARD_CUTS = [
     hideRigid: true, panels: ['front'], length: 0.40, width: 0.26, rows: 5 },
 ];
 const TABARD_BY_ID = new Map(TABARD_CUTS.map((c) => [c.id, c]));
-export function tabardCut(id) { return TABARD_BY_ID.get(id) || null; }
 
 /**
  * THE BELT — how much of the obi hangs, and whether any of it does.
@@ -1605,7 +1619,6 @@ export const SASH_CUTS = [
     ] },
 ];
 const SASH_BY_ID = new Map(SASH_CUTS.map((c) => [c.id, c]));
-export function sashCut(id) { return SASH_BY_ID.get(id) || null; }
 
 /* The hood cuts are Bodies.js's, because their numbers are geometry and not
  * cloth parameters — see the import at the top of this file. Indexed here for
@@ -1651,8 +1664,6 @@ export const FLESH_MOTION = [
   { id: 'live', name: 'Soft', blurb: 'The mass the Bust and Hips sliders added lags the body and settles when you stop — a third of the swell, damped, and nothing at all if the sex slider is at zero. It is not cloth: no particles, no links.' },
 ];
 const FLESH_MOTION_BY_ID = new Map(FLESH_MOTION.map((c) => [c.id, c]));
-/** The flesh-motion row with this id, or null. Same contract as `hairTail`. */
-export function fleshMotion(id) { return FLESH_MOTION_BY_ID.get(id) || null; }
 
 /**
  * THE TONES A PIECE MAY BE DYED, and why they are not ROBE_COLORS.

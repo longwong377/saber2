@@ -332,15 +332,13 @@ export function astromechDome() {
   return { geo: a.merge(), prims: a.prims };
 }
 
-/** The third leg as a part of its own — kept for a caller that wants it
- *  hinged; the deck's astromechs carry it in the chassis now. */
-export function astromechLeg() {
-  const a = new Assembly();
-  a.box(D.white, 0.14, 0.40, 0.14, 0, -0.20, 0);
-  a.box(D.white, 0.18, 0.14, 0.36, 0, -0.44, 0.04);
-  a.cyl(D.dark, 0.05, 0.05, 0.16, 0, -0.50, 0.18, 0, 0, Math.PI / 2, 8);
-  return { geo: a.merge(), prims: a.prims };
-}
+/* `astromechLeg()` stood here and said so itself: "kept for a caller that wants
+ * it hinged; the deck's astromechs carry it in the chassis now." The caller
+ * never came. A part built for a hinge nobody hung is three boxes and a
+ * cylinder that no astromech on this deck is made of, and keeping it means the
+ * next person to change the chassis has two legs to keep in step and one of
+ * them is not drawn. If a hinged leg is ever wanted, it wants building against
+ * the chassis that exists then, not against this one. */
 
 /**
  * THE TRACKED WELDER — the chassis the room already had, moved off

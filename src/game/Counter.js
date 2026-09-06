@@ -121,24 +121,32 @@ export const TIER_IDS = Object.keys(TIERS);
  * the same things"* — and a constant shelf size quietly deletes it on every
  * counter that has not been given a long table yet.
  *
- * So a shelf is a fraction of what the counter could sell, and
- * `stockedEnough` below refuses a counter whose table is too short for one:
- * a vendor with nothing held back is a wiki page, and finding that out by
- * reading six shelves is worse than being told at the door.
+ * So a shelf is a fraction of what the counter could sell: a vendor with
+ * nothing held back is a wiki page.
  */
 export const SHELF_SHARE = 0.55;
 export const SHELF_MIN = 4, SHELF_MAX = 10;
-/** How much a counter must hold back for its shelf to be able to change. */
-export const HELD_BACK = 4;
 
-/**
- * Can this counter's shelf actually reroll? A table no bigger than the shelf
- * it puts out is a fixed shelf, whatever the seed does.
- */
-export function stockedEnough(counter) {
-  const n = (counter?.stock || []).length;
-  return n >= SHELF_MIN + HELD_BACK;
-}
+/* ── `stockedEnough(counter)` AND `HELD_BACK` STOOD HERE ──────────────────
+ *
+ * `HELD_BACK = 4` — "how much a counter must hold back for its shelf to be
+ * able to change" — and `stockedEnough(counter)`, `stock.length >= SHELF_MIN
+ * + HELD_BACK`, which was the only thing that ever read it. Nothing read
+ * `stockedEnough`: no caller under `src/` or `tools/`, so the pair was a
+ * question and an answer with nobody in the room. The paragraph above used to
+ * end by saying the predicate "refuses a counter whose table is too short",
+ * and it refused nothing — it was never asked.
+ *
+ * The property is real and it is already enforced by the code that builds a
+ * shelf, one screen down: `want = max(SHELF_MIN, min(rows.length,
+ * min(SHELF_MAX, share)))` cannot put out more than the table holds, and a
+ * counter with a short table simply shows all of it. That is a quiet
+ * degradation rather than a refusal, which is the right behaviour and is why
+ * nothing ever needed to ask.
+ *
+ * If a thin table ever has to be REFUSED rather than shrunk, the refusal goes
+ * at the point of the reroll, where it can do something, and `HELD_BACK`
+ * comes back with it. */
 
 /**
  * WHO A VENDOR WILL DEAL WITH.

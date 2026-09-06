@@ -4575,8 +4575,12 @@ export const TOP_CUTS = [
   },
 ];
 const TOP_BY_ID = new Map(TOP_CUTS.map((t) => [t.id, t]));
-/** The torso cut with this id, or null. Same contract as `hoodCut`. */
-export function topCut(id) { return TOP_BY_ID.get(id) || null; }
+/* `topCut(id)` stood here — `TOP_BY_ID.get(id) || null`, exported, never
+ * called. `buildJedi` reads `TOP_BY_ID.get(opts.top)` directly and
+ * `Cloth.wardrobeOf` launders the id with `TOP_BY_ID.has`, so the accessor was
+ * a third name for one map lookup that the two real callers were already doing
+ * for themselves. Its docstring said "same contract as `hoodCut`", which was
+ * true and was the whole of its case for existing. */
 
 export const HOOD_CUTS = [
   {

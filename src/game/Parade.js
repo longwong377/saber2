@@ -843,11 +843,11 @@ export function poseParade(man, t, opts = {}) {
  * by whichever stance last ran. `pos` is the lower hand, `dir` the way the
  * barrel points.
  */
-export function gripFrame(man, out = {}) {
-  out.pos = (out.pos || new THREE.Vector3()).copy(man.grip.pos);
-  out.dir = (out.dir || new THREE.Vector3()).copy(man.grip.dir);
-  return out;
-}
+/* …and it was a second door onto `man.grip`, which is a plain field with no
+ * lock on it. `gripFrame` copied `man.grip.pos` and `man.grip.dir` into a
+ * caller's vectors and was never called; this file's own rig code reads
+ * `man.grip.pos` directly, which is the same two reads without the copy. A
+ * reader that wants the fists' line has it on the man. */
 
 /**
  * Stagger a formation so it does not start life in step.

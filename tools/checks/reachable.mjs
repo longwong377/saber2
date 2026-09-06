@@ -142,6 +142,53 @@ const SEAMS = new Map(Object.entries({
    * thing measuring. */
   'Bodies.js::setAssemblyProbe': 'the assembly probe, installed by a check and never by the game',
   'Reactions.js::resetReactionStats': 'the reaction census, zeroed between measurements',
+
+  /* ══ AND FIVE MOVED OUT OF THE RESIDUE, ONE ARGUMENT EACH ═══════════════
+   *
+   * This list is uncapped and `CENSUS` does not count it, so moving a name
+   * here is the cheapest way to make the number fall while nothing is fixed —
+   * which is why the bar is not "a check calls it" (that is true of most of
+   * the residue) but "the SHAPE of the thing is a measurement, and a player
+   * reading it would be reading an instrument". Every export below is either
+   * an assertion's own subject or a reader that exists so a check does not
+   * have to carry a second copy of the arithmetic it is checking. Anything
+   * whose stated purpose was a screen, a page or a line a player was meant to
+   * see stayed in the residue, however harness-only its callers are today —
+   * a feature nobody can reach is the debt this file was written to show, and
+   * relabelling it a seam is how that debt would disappear.
+   */
+
+  /* THE PROPERTY ITSELF, exported for the reason its own header gives:
+   * "a property that only exists inside a test is a property the game does
+   * not have". `arrivals.mjs` asserts every arrival kind against it; nothing
+   * in play needs to ask, because the placement code IS the answer. */
+  'Arrivals.js::deliveryIsAnnounced': 'the arrival invariant, asserted by arrivals.mjs — its own header says why it is exported',
+
+  /* THE CPU-SIDE READER OF WHAT THE GPU DRAWS. `cohortPose()` in `POSE_GLSL`
+   * addresses the same texels with the same two terms; `frame-budget.mjs`
+   * rasterises THROUGH this and fails if either term leaves the shader. A
+   * check that computed the pose itself would be the defect `_glsl.mjs`
+   * exists over — it would pass while the shader diverged. */
+  'Cohorts.js::poseMatrix': 'the only way anything without a GL context can read a cohort\'s pose — frame-budget.mjs',
+
+  /* A COMPARISON SHAPE AND NOT A READING. `worn-paint.mjs` diffs an Enemy
+   * against a parade figure of the same man; this is the sorted
+   * `slot:region=vertices` list it diffs. There is no screen this belongs on:
+   * a player looking at a man sees the paint. */
+  'Command.js::paintReport': 'the shape worn-paint.mjs compares an Enemy against a parade figure with',
+
+  /* HANDED TO THE CHECK RATHER THAN REBUILT INSIDE IT. `starfury.mjs` holds
+   * this file against `assets/station/starfury_manifest.json`, and its own
+   * note names the rule: "a check that rebuilds the thing it is checking
+   * cannot fail" (HANDOFF §2.3b). */
+  'Starfury.js::mountTable': 'the nine mounts as the manifest names them, so starfury.mjs need not re-derive them',
+
+  /* THE BUILD, DRAINED IN ONE GO, and the file says so where it stands: "For
+   * a caller that wants the station as it stands when somebody has been
+   * looking at it — a screenshot, a census, a check that asserts on the world
+   * it just booted without stepping it. Play never calls this: play steps."
+   * A declared seam that was filed as residue by mistake. */
+  'Station.js::finishStationBuild': 'the whole build at once, for a check that asserts on a world it has not stepped — play steps',
 }));
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -155,55 +202,98 @@ const SEAMS = new Map(Object.entries({
  * edit. Wiring one, or deleting it with the argument written into its file,
  * means taking its line out of this list — which is the only direction
  * `CENSUS` moves.
+ *
+ * ── ONE OF THEM WAS JUDGED AND KEPT, AND IT IS WORTH SAYING WHY ──────────
+ *
+ * `Spectacle.formBook` and `Spectacle.researchedProbabilities` are the entire
+ * model behind the tote's measured form-reader edge — +4.11 / +8.33 / +7.15%
+ * at the three windows in `_tote-edge.mjs` — and neither has a caller under
+ * `src/`. The bettor those numbers describe is implemented in the harness and
+ * nowhere else, which means the game's strongest claim about its own betting
+ * room is true of a man who does not exist in it.
+ *
+ * DELETING THEM WOULD DELETE THE CLAIM, so they are not deleted. Nor are they
+ * seams: a seam is an instrument, and this is a reading a player was meant to
+ * be able to make. `Tote.boardFor` already publishes every INPUT the model
+ * eats — `rating`, `recent`, `going`, `standing`, `read`, `beat`/`beaten` —
+ * and `main.js` prints all of them, so a human at the window can do by hand
+ * what `researchedProbabilities` does in a line. What is missing is the line:
+ * the model's own probability beside the price, as information, never as an
+ * auto-bet.
+ *
+ * That is a one-field addition to `boardFor`'s row and a one-line addition to
+ * the pane that renders it — and the pane is `main.js`, which enumerates the
+ * form fields by name, so a field added to the row alone would be a second
+ * dead thing rather than a fix. It stays counted here until both halves land
+ * together, because a number nobody can see is exactly what this file counts.
  */
 const RESIDUE = [
-  'Arrivals.js::deliveryIsAnnounced',
-  'Attributes.js::attrById', 'Attributes.js::profileMean',
-  'Bodies.js::topCut',
-  'Cloth.js::capeCut', 'Cloth.js::tabardCut', 'Cloth.js::sashCut', 'Cloth.js::fleshMotion',
-  'Cohorts.js::poseMatrix',
-  'Combat.js::zoneTolerance', 'Combat.js::gradeDeflection',
-  'Command.js::paintReport',
+  'Attributes.js::profileMean',
+  'Combat.js::gradeDeflection',
   'Company.js::trooperOf', 'Company.js::bondWorth',
   'Coop.js::apartment',
-  'Counter.js::stockedEnough',
-  'Databank.js::isSoldier',
-  'DeckBattle.js::deckBattleState',
-  'DeckCast.js::astromechLeg',
   'DeckEdit.js::renameMan', 'DeckEdit.js::paintMan', 'DeckEdit.js::attachPart',
   'DeckFlight.js::rampFoot', 'DeckFlight.js::flightPhase',
-  'DeckLift.js::liftPick', 'DeckLift.js::liftBusy',
-  'Dojo.js::buildDummy',
+  'DeckLift.js::liftPick',
   'Duel.js::guardToWorld',
   'Extraction.js::extractionSeconds',
-  'Food.js::kitchens', 'Food.js::gearFor',
-  'Games.js::playDejarik', 'Games.js::drumTicketEdge', 'Games.js::drumEdge',
+  'Food.js::kitchens',
+  'Games.js::drumTicketEdge', 'Games.js::drumEdge',
   'Hangar.js::inZone',
   'Holodeck.js::blankHold', 'Holodeck.js::heldPrograms',
   'Home.js::homeRecord',
-  'Impact.js::disarmKinetic',
   'Kennel.js::priceTemper',
   'Levels.js::templeColonnade',
   'Medbay.js::tankLocal',
   'Order.js::crystalAt', 'Order.js::orderReadout', 'Order.js::temperTime',
   'Outside.js::survey',
-  'Parade.js::gripFrame',
-  'Powers.js::unboundOf',
   'Progress.js::progressLines',
   'Quests.js::pinnedGivers',
   'SaberController.js::zoneOfDir',
   'Smoke.js::smokeClouds', 'Smoke.js::airDepth',
   'Spectacle.js::researchedProbabilities', 'Spectacle.js::formBook', 'Spectacle.js::momentsOf',
-  'Starfury.js::mountTable',
-  'Station.js::forgetStationMats', 'Station.js::finishStationBuild',
-  'StationCast.js::addResidents',
-  'StationMesh.js::roomReady',
   'Stratagems.js::phraseFaults', 'Stratagems.js::codeFaults',
-  'Tote.js::racesOn',
 ];
 
-/** What the sweep read on the day this file was written. It may only fall. */
-const CENSUS = 64;
+/**
+ * What the sweep read on the day this file was written. It may only fall.
+ *
+ * 64 → 37. Seventeen were closed on the pass that wrote this number down —
+ * sixteen deleted with the argument left standing in the file where the
+ * function was, and one WIRED: `Combat.zoneTolerance` was "one function so the
+ * ladder cannot drift", and `SaberController` was doing the multiplying and
+ * the adding itself, so the sentence described a coincidence and
+ * `directional.mjs` was measuring the game against a formula the game did not
+ * run. It runs it now.
+ *
+ * Five more came off because they had already been wired by other passes and
+ * this list had not caught up (`Games.playDejarik`, `Food.gearFor`,
+ * `Impact.disarmKinetic`, `Tote.racesOn`, `DeckBattle.deckBattleState`), and
+ * five moved to `SEAMS` with an argument each — the note over them explains
+ * what had to be true to allow it and what deliberately was not allowed.
+ *
+ * THE SIXTEEN DELETIONS WERE ALL ONE SHAPE and it is worth naming, because it
+ * is the shape that keeps arriving: a SECOND DOOR ONTO SOMETHING THAT ALREADY
+ * HAD ONE. `attrById` over `ATTR_BY_ID.get` (which three functions beneath it
+ * were already calling), `capeCut`/`tabardCut`/`sashCut`/`fleshMotion`/`topCut`
+ * over five maps every builder reads directly, `gripFrame` over `man.grip`,
+ * `isSoldier` over a field this file tests four other ways, `roomReady` over
+ * `Station.roomOf` — and `roomReady` is the one to remember, because it was
+ * not merely redundant: it returned `_cache.has(url)`, which is true from the
+ * FIRST byte of the fetch, under a docstring promising it was true from the
+ * last. A level that had trusted it would have dressed itself against
+ * geometry still on the wire. The only reason that never happened is that
+ * nothing called it, which is the argument for this whole file in one line: a
+ * function nothing calls is not a function that works.
+ *
+ * WHAT IS LEFT IS NOT THE SAME SHAPE. Most of the thirty-seven below have a
+ * harness caller and a stated purpose that names a screen — `progressLines`
+ * ("for the menu"), `homeRecord` ("§3.2's parcels desk"), `formBook` and
+ * `researchedProbabilities` (the tote's whole measured edge, implemented only
+ * in `_tote-edge.mjs`). Those are features nobody can reach, and the number
+ * stays honest only while they are counted as such.
+ */
+const CENSUS = 37;
 
 /** Every exported function in `src/game/*.js` that nothing under `src/` names. */
 async function uncalled() {

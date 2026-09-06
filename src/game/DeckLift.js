@@ -2015,11 +2015,13 @@ export function liftKey(world) {
   return false;
 }
 
-/** Whether the lift is currently the thing holding the player. For checks and the HUD. */
-export function liftBusy(world) {
-  const s = world?._deckLift?.state;
-  return s === STATE.RIDE || s === STATE.STOP || s === STATE.SEAL || s === STATE.LEAVE;
-}
+/* `liftBusy(world)` stood here, documented "for checks and the HUD", and
+ * neither ever called it — not one reference under `src/` or `tools/`. The
+ * four states it rolled up (RIDE, STOP, SEAL, LEAVE) are read by name where
+ * they matter, which is how the lift has always answered this; a rolled-up
+ * boolean is only worth having once something wants the roll-up, and a HUD
+ * that was going to want it has had the whole of this feature's life to say
+ * so. */
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE FRAME                                                                  */

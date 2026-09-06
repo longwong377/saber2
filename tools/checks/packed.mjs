@@ -39,6 +39,7 @@
  * run, not when it is looked at. */
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromiumPath, CHROME_ARGS } from './_browser.mjs';
@@ -46,6 +47,104 @@ import { chromiumPath, CHROME_ARGS } from './_browser.mjs';
 const ROOT = new URL('../../', import.meta.url).pathname.replace(/\/$/, '');
 
 export async function run({ check, assert }) {
+  /**
+   * ══════════════════════════════════════════════════════════════════════
+   *  THE SIZE CEILING — the gate SHARK names here and that did not exist
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * SHARK §5.3 names THIS FILE as the thing that holds it, in as many words:
+   * *"`packed.mjs` (exists): the single file boots with the station in it;
+   * pack ≤ 34 MB."* §12.2 bounds it the same way. The first clause was here.
+   * The second was not: the only size assertion in this suite was
+   * `size > 2e6`, a FLOOR — "that is not the whole game" — and a floor read
+   * as a size check for as long as anyone looked at it. `grep -rn '34 MB'`
+   * over `tools/checks/` found nothing, and `tools/pack.mjs`'s own comment
+   * recorded the bound having been blown once already, by the station's five
+   * rooms, and repaired by hand rather than by anything that would notice a
+   * second time.
+   *
+   * There was a second time. Measured the day this check was written: **34.64
+   * MB**, over by 640 KB, with every suite in the tree green. The cause was
+   * the packer inlining any `assets/…` path a COMMENT happened to name — six
+   * concept plates the game never draws, one of them carried five times
+   * because five files cite it — and the fix is in `pack.mjs`. The reason it
+   * survived long enough to go over is this check.
+   *
+   * ── AND THE NUMBER IS NOT TYPED HERE ─────────────────────────────────
+   *
+   * `MAX_BYTES` is declared once, in `tools/pack.mjs`, which prints it on the
+   * `bound:` line and refuses to finish above it. This check reads that line
+   * rather than carrying a second copy, because two copies of a bound is one
+   * bound and one stale number the moment either moves.
+   *
+   * Three things are asserted and each is a different failure:
+   *
+   *   1. THE BUILD IS UNDER IT. The plain arm, which is the file a player is
+   *      handed.
+   *   2. THE REFUSAL BITES. A bound the packer prints and does not enforce is
+   *      the same prose it replaced, so the packer is run again against a
+   *      bound this build cannot meet and is required to exit non-zero. Every
+   *      other assertion here is worth nothing if this one is not true.
+   *   3. THE BOUND IS STILL THE ONE SHARK AGREED TO. The cheapest way to pass
+   *      a ceiling is to raise it, so the packer's constant is pinned against
+   *      `SHARK.md` itself — the other place the number is written, in prose,
+   *      by the person who set it. Raising `MAX_BYTES` without amending the
+   *      document fails here.
+   */
+  check('packed: the build is under the size bound, the bound bites, and it is the bound SHARK set',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'borzsize-'));
+      const out = join(dir, 'borz.html');
+      try {
+        const packed = spawnSync(process.execPath, [`${ROOT}/tools/pack.mjs`, out], { encoding: 'utf8' });
+        assert(packed.status === 0,
+          `node tools/pack.mjs exited ${packed.status}: ${(packed.stderr || '').trim().slice(0, 500)}`);
+
+        const line = (packed.stdout.match(/^bound\s*:\s*(\d+)/m) || [])[1];
+        assert(line,
+          'tools/pack.mjs no longer prints its `bound:` line, so this check cannot read the bound it '
+          + `is meant to hold. Its output was: ${packed.stdout.trim().slice(0, 300)}`);
+        const bound = Number(line);
+        assert(bound > 2e6, `tools/pack.mjs declares a bound of ${bound} bytes, which is not a real ceiling`);
+
+        const size = statSync(out).size;
+        /* THE FLOOR STAYS. It is a different question — a page that packed
+         * cleanly and came out at 40 KB is a build with no game in it — and
+         * it is the assertion this suite already had. */
+        assert(size > 2e6, `the packed page is ${(size / 1e6).toFixed(2)} MB — that is not the whole game`);
+        assert(size <= bound,
+          `the packed page is ${(size / 1e6).toFixed(2)} MB against a bound of `
+          + `${(bound / 1e6).toFixed(2)} MB (SHARK §5.3, §12.2) — over by `
+          + `${((size - bound) / 1e6).toFixed(2)} MB. tools/pack.mjs prints the module and asset `
+          + 'breakdown; the bound is the constant in that file and it moves down, not up');
+
+        /* THE GUARD, PROVEN RATHER THAN TRUSTED. One byte under the size the
+         * build just came out at is a bound it cannot meet, so a packer that
+         * still exits 0 is a packer whose refusal is decoration. */
+        const over = spawnSync(process.execPath, [`${ROOT}/tools/pack.mjs`, out], {
+          encoding: 'utf8', env: { ...process.env, PACK_MAX_BYTES: String(size - 1) } });
+        assert(over.status !== 0,
+          `tools/pack.mjs was given a bound of ${size - 1} bytes, wrote ${size}, and exited 0 — `
+          + 'the ceiling is printed and not enforced, which is what the prose it replaced already did');
+        assert(/bound/.test(over.stderr || ''),
+          `the over-size refusal does not say what it refused: ${(over.stderr || '').trim().slice(0, 200)}`);
+
+        /* AND THE BOUND ITSELF, against the document that set it. */
+        const shark = await readFile(`${ROOT}/SHARK.md`, 'utf8');
+        const said = (shark.match(/pack\s*(?:size\s*\|\s*)?[≤<]=?\s*(\d+(?:\.\d+)?)\s*MB/) || [])[1];
+        assert(said,
+          'SHARK.md no longer states a pack bound, so there is nothing to pin tools/pack.mjs against');
+        assert(bound <= Number(said) * 1e6,
+          `tools/pack.mjs declares a bound of ${(bound / 1e6).toFixed(2)} MB and SHARK.md says the pack `
+          + `is ≤ ${said} MB. A ceiling raised to fit the build is not a ceiling — either cut the build `
+          + 'or change the document first, with the argument in it');
+
+        return `${(size / 1e6).toFixed(2)} MB against ${(bound / 1e6).toFixed(2)} MB `
+          + `(${(size / bound * 100).toFixed(0)}% used, ${((bound - size) / 1e6).toFixed(2)} MB spare); `
+          + `SHARK.md says ≤ ${said} MB; the packer refuses at ${size - 1} bytes`;
+      } finally { rmSync(dir, { recursive: true, force: true }); }
+    });
+
   check('packed: every module names three by the path a browser can follow', async () => {
     /**
      * ══ THE ONE-WORD BUG THAT IS INVISIBLE TO EVERY OTHER CHECK ═══════════

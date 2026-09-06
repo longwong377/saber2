@@ -86,9 +86,24 @@ export function loadRoom(url) {
   return p;
 }
 
-/** True once `loadRoom(url)` has settled — for a level that must not dress
- * itself half-built. `Station.js` awaits its rooms in `World._loadSteps`. */
-export function roomReady(url) { return _cache.has(url); }
+/* ══ `roomReady(url)` STOOD HERE AND WOULD HAVE LIED ══════════════════════
+ *
+ * It read "True once `loadRoom(url)` has settled — for a level that must not
+ * dress itself half-built", and it returned `_cache.has(url)`. The cache is
+ * keyed the instant `loadRoom` STARTS — the value stored is the pending
+ * promise, which is the whole point of the cache — so the function was true
+ * from the first byte of the fetch, not from the last. A level that had
+ * trusted it would have dressed itself against geometry that was still on the
+ * wire, which is precisely the failure the docstring names.
+ *
+ * It had no caller, which is the only reason that never happened, and it was a
+ * second door besides: `Station.roomOf(name)` answers the same question
+ * correctly, returning null until `prepareStation()` has AWAITED every room
+ * into `_rooms`. The right answer was already exported from the right file.
+ *
+ * Deleted rather than fixed. A corrected version would have to settle the
+ * promise to know, so it would be async, so it would be `loadRoom` again — and
+ * `roomOf` is the synchronous answer a dresser actually needs. */
 
 /** Drop everything. Only a check calls this; the game keeps its five rooms. */
 export function forgetRooms() {

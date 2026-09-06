@@ -333,5 +333,10 @@ export const UNBOUND = [
     text: 'Force compel loses its cooldown entirely. Every cast then costs half again as much Force and 6% of your maximum health, which cannot kill you — it stops at 1.' },
 ];
 
-/** The row for a power, or null — the one lookup, so nothing greps the list. */
-export function unboundOf(key) { return UNBOUND.find((u) => u.key === key) || null; }
+/* `unboundOf(key)` stood here — "the one lookup, so nothing greps the list" —
+ * and nothing ever used it, including the file it was written for: `Waves.js`
+ * imports `UNBOUND`, `UNLEASH_TOLL` and `unboundId` and finds what it needs
+ * with those. A lookup written to stop a grep that nobody was doing is a
+ * lookup with no user, and `UNBOUND_OF` (six lines up, a different thing with
+ * a confusingly similar name) is the entry the rest of this file actually
+ * reaches for. */

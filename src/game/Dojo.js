@@ -107,19 +107,17 @@ export function buildRemote(opts = {}) {
 }
 
 /* ── training dummy ──────────────────────────────────────────────────── */
-
-export function buildDummy() {
-  const g = new THREE.Group();
-  const M = propMaterials();
-  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 1.1, 10), M.wood);
-  post.position.y = 0.55;
-  g.add(post);
-  const base = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.42, 0.14, 14), M.darkSteel);
-  base.position.y = 0.07;
-  g.add(base);
-  g.traverse(o => { o.castShadow = true; o.receiveShadow = true; });
-  return g;
-}
+/* `buildDummy()` stood here — a post on a base, exported, never called.
+ *
+ * The dojo DOES have dummies: `DOJO_MIX` is `['remote', 'dummy', 'sparring']`
+ * and `this.dummies.push(this._post('dummy', anchor, a))` puts them out. They
+ * are bodies, posted like every other partner in the room, and they were never
+ * this Group. So the lesson a player takes is not missing anything — what was
+ * missing was any route from here to the floor.
+ *
+ * Deleted rather than wired, because wiring it would mean REPLACING a posted
+ * body with a wooden post, which is a design change and not a repair. The
+ * geometry is four lines if the room ever wants a prop that is not a partner. */
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Lessons                                                               */

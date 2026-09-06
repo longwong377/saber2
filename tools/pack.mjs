@@ -28,6 +28,34 @@ import { dirname, resolve, relative, extname } from 'node:path';
 const ROOT = new URL('../', import.meta.url).pathname.replace(/\/$/, '');
 const OUT = process.argv[2] || `${ROOT}/borz-play.html`;
 const MIN = process.argv.includes('--min');
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  THE SIZE BOUND, AND THE ONE PLACE IT IS WRITTEN DOWN
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * SHARK §5.3 and §12.2 both bound the packed build at 34 MB. Until this line
+ * existed, NOTHING ANYWHERE HELD IT. `tools/checks/packed.mjs` asserted only
+ * `size > 2e6` — "that is not the whole game", a floor and not a ceiling —
+ * and `grep -rn '34 MB\|34e6' tools/checks/` found nothing at all. The bound
+ * was prose in a design document and a sentence in the comment a hundred and
+ * seventy lines below this one, which records it having been blown ONCE
+ * ALREADY, by the station's five rooms, and repaired by hand.
+ *
+ * It had drifted through again. Measured the day this was written: 34.64 MB,
+ * over by 640 KB, green everywhere, and nobody could have known — a bound
+ * that is only written in prose is a bound that is checked by whoever
+ * happens to run `ls -l`.
+ *
+ * SO IT IS A NUMBER IN CODE, DECLARED HERE AND NOWHERE ELSE. The packer
+ * refuses to finish over it, and `packed.mjs` reads it back off the `bound:`
+ * line this prints rather than typing `34e6` a second time — because a bound
+ * written twice is a bound that disagrees with itself the first time one copy
+ * moves. The env override exists so a check can prove the refusal actually
+ * bites by asking for a bound the real build cannot meet; it is not a way
+ * out, and lowering the constant is the only way the bound ever falls.
+ */
+const MAX_BYTES = Number(process.env.PACK_MAX_BYTES || 34e6);
 const rel = (p) => relative(ROOT, p);
 const exists = async (p) => { try { return (await stat(p)).isFile(); } catch { return false; } };
 
@@ -191,19 +219,79 @@ async function inlineAsset(relPath, forMap = false) {
   return uri;
 }
 
-/* The paths named with no interpolation in them: every one is resolved here
- * and substituted in place, in the HTML and in the module sources alike. */
-const STATIC_ASSET = /(?:\.\/)?(assets\/[A-Za-z0-9_\-./]+\.(?:png|webp|jpe?g|gif|svg|smesh))/g;
+/**
+ * The paths named with no interpolation in them: every one is resolved here
+ * and substituted in place, in the HTML and in the module sources alike.
+ *
+ * ══ AND A COMMENT THAT NAMES A FILE IS NOT A REQUEST FOR IT ═══════════════
+ *
+ * This scan used to read the raw source, so every `assets/…` path a COMMENT
+ * mentioned was inlined and — worse — `replaceAll` rewrote the mention into a
+ * multi-megabyte `data:` URI sitting inside a comment nobody would ever read
+ * in a build nobody would ever read. Six pictures were in the shipped build
+ * for that reason and no other, none of them reachable by any code path:
+ *
+ *   assets/flagship/colosseum-on-a-generated-ground.png   630 KB, named once
+ *                                 in Levels.js's prose about how the plate was
+ *                                 made — the level draws its own ground.
+ *   assets/reference/units/creatures/Rancor.png           407 KB \
+ *   assets/reference/units/creatures/Reek.jpeg            172 KB  |  the
+ *   assets/reference/units/creatures/wampa.jpg             71 KB  |  concept
+ *   assets/reference/maps/drowned-wood/dagobah.jpeg       192 KB  |  plates
+ *   assets/reference/maps/alpine/hoth.jpeg                112 KB /
+ *
+ * `assets/reference/` is the brief the models were built FROM. It is read by
+ * a person, not by the game; `REFERENCES.md` says so and no module fetches
+ * any of it. Bodies.js and Props.js cite the plates by filename the way a
+ * paper cites a source, which is exactly right and is not a dependency.
+ *
+ * WHAT IT COST, because the multiplier is the part that is easy to miss. An
+ * asset substituted into module source is base64'd twice — once as the
+ * `data:` URI, once with the module — for 1.78× its bytes, and it is carried
+ * ONCE PER MODULE THAT NAMES IT. `dagobah.jpeg` is cited in five files, so
+ * the build carried five copies of a picture the game never draws. Measured:
+ * 6.77 MB of `data:` text substituted into modules, of which 4.06 MB was
+ * comments — **5.41 MB of the finished page**, on a 34 MB bound (§12.2) the
+ * build had already gone through.
+ *
+ * So the scan is comment-blind, the same way `tools/checks/reachable.mjs` and
+ * `flightops.mjs` strip comments before counting callers and for the same
+ * reason: prose may name anything, and only code is a claim on the build.
+ * A path in a comment is left exactly as written, which is what a reader of
+ * that comment wanted in the first place.
+ */
+const ASSET_PATH = '(?:\\./)?(assets/[A-Za-z0-9_\\-./]+\\.(?:png|webp|jpe?g|gif|svg|smesh))';
+/* Block comment, line comment (`://` guarded exactly as `code()` guards it in
+ * reachable.mjs, so a URL in a string is not read as a comment), then the
+ * path. Alternation is left-to-right at each position, so a path INSIDE a
+ * comment is consumed by the comment and never reaches the capture group. */
+const CODE_ASSET = new RegExp(`/\\*[\\s\\S]*?\\*/|(?:^|[^:])//[^\\n]*|${ASSET_PATH}`, 'gm');
+/* …and the page's own comments, which are a different syntax and the same
+ * mistake waiting to happen. */
+const HTML_ASSET = new RegExp(`<!--[\\s\\S]*?-->|${ASSET_PATH}`, 'g');
+
+/** Walk `src`, handing `fn` only the paths that are code. Comments come back
+ *  untouched, which is how they stay the size they were written. */
+const eachCodeAsset = (src, re, fn) =>
+  src.replace(re, (m, path) => (path === undefined ? m : fn(m, path)));
+
+/** Discovery is async and `String.replace` is not, so every path is resolved
+ *  first and the rewrite is a second, synchronous pass over the same regex. */
+async function inlineCodeAssets(text, re) {
+  const uris = new Map();
+  eachCodeAsset(text, re, (m, path) => { uris.set(path, null); return m; });
+  for (const path of uris.keys()) uris.set(path, await inlineAsset(path));
+  return eachCodeAsset(text, re, (m, path) => uris.get(path) ?? m);
+}
+
 /* index.html names its own — the boot plate and the wordmarks — and they are
- * in no module, so the page is scanned alongside the graph. */
-for (const m of [...html.matchAll(STATIC_ASSET)]) await inlineAsset(m[1]);
+ * in no module, so the page is scanned alongside the graph. The page is not
+ * rewritten here: the `<img src=…>` substitution near the end does that from
+ * `assetData`, and this pass exists to fill it. */
+await inlineCodeAssets(html, HTML_ASSET);
 for (const [file, src] of mods) {
-  let out = src, hit = false;
-  for (const m of [...src.matchAll(STATIC_ASSET)]) {
-    const uri = await inlineAsset(m[1]);
-    if (uri) { out = out.replaceAll(m[0], uri); hit = true; }
-  }
-  if (hit) mods.set(file, out);
+  const out = await inlineCodeAssets(src, CODE_ASSET);
+  if (out !== src) mods.set(file, out);
 }
 
 /**
@@ -233,9 +321,12 @@ for (const [file, src] of mods) {
   mods.set(file, src.replace(TEMPLATE_ASSET, (m) => `__A(${m})`));
 }
 
+/* Comment-blind for the same reason the static scan is: a directory named
+ * only in prose would have every file in it inlined into the runtime map. */
 const dirs = new Set();
+const CODE_DIR = /\/\*[\s\S]*?\*\/|(?:^|[^:])\/\/[^\n]*|(?:\.\/)?(assets\/[A-Za-z0-9_\-./]*)\$\{/gm;
 for (const [, src] of mods) {
-  for (const m of src.matchAll(/(?:\.\/)?(assets\/[A-Za-z0-9_\-./]*)\$\{/g)) dirs.add(m[1]);
+  for (const m of src.matchAll(CODE_DIR)) if (m[1] !== undefined) dirs.add(m[1]);
 }
 for (const d of dirs) {
   const dir = `${ROOT}/${d}`.replace(/\/[^/]*$/, '');
@@ -496,3 +587,46 @@ console.log(`modules  : ${mods.size}`);
 console.log(`module b64: ${(bytes / 1e6).toFixed(2)} MB`);
 console.log(`assets   : ${assetData.size} inlined (${mapData.size} in the runtime map)`);
 console.log(`written  : ${OUT}  ${(size / 1e6).toFixed(2)} MB`);
+/* MACHINE-READABLE, because `packed.mjs` parses this line to learn the bound
+ * instead of carrying a second copy of the number. */
+console.log(`bound    : ${MAX_BYTES} (${(size / MAX_BYTES * 100).toFixed(1)}% used, `
+  + `${((MAX_BYTES - size) / 1e6).toFixed(2)} MB spare)`);
+
+/**
+ * ── AND WHEN IT IS OVER, IT SAYS WHERE THE BYTES WENT ────────────────────
+ *
+ * The three totals above are enough to know THAT a build is too big and
+ * useless for knowing WHY. The 640 KB overrun this bound was written for took
+ * a hand-instrumented copy of this file to diagnose, and the answer — six
+ * pictures pulled in by comments, one of them carried five times — was
+ * invisible in "module b64: 32.10 MB".
+ *
+ * So the failing build prints its own top ten of each. A module's size here is
+ * its BASE64 length, which is what the page actually pays, and the gap between
+ * a module's line and the size of its source on disk IS the asset weight
+ * inside it: `Station.js` reading 3.9 MB against a 212 KB file is the five
+ * `.smesh` rooms, and that subtraction is the whole diagnosis in one glance.
+ */
+function breakdown() {
+  const mod = [...mods].map(([f, src]) => [rel(f), Buffer.from(src, 'utf8').toString('base64').length]);
+  const ast = [...assetData].map(([k, v]) => [k, v.length]);
+  const top = (rows) => rows.sort((a, b) => b[1] - a[1]).slice(0, 10)
+    .map(([n, b]) => `    ${(b / 1e6).toFixed(2).padStart(6)} MB  ${n}`).join('\n');
+  return `\n  the ten heaviest modules (base64, asset URIs included):\n${top(mod)}`
+    + `\n  the ten heaviest assets (as data: URIs; one inside a module costs this again`
+    + ` x1.33, once per module naming it):\n${top(ast)}`;
+}
+
+/* THE FILE IS WRITTEN FIRST AND THE REFUSAL COMES AFTER, so an over-size
+ * build can be opened and measured rather than only complained about — the
+ * breakdown is the whole diagnosis and it is worth nothing if the artifact it
+ * describes was never produced. The exit code is what fails the gate. */
+if (size > MAX_BYTES) {
+  console.log(breakdown());
+  throw new Error(`pack: the build is ${(size / 1e6).toFixed(2)} MB against a bound of `
+    + `${(MAX_BYTES / 1e6).toFixed(2)} MB (SHARK §5.3, §12.2) — over by `
+    + `${((size - MAX_BYTES) / 1e6).toFixed(2)} MB. The breakdown above says where it went; an `
+    + 'asset substituted into module source costs 1.78x its bytes and is carried once per module '
+    + 'that names it, so that is the first place to look. Raise the constant in tools/pack.mjs '
+    + 'only with the argument written next to it.');
+}
