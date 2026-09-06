@@ -47,7 +47,8 @@ import {
   SPECIES_KEYS, SPECIES_BY, RHYTHMS, ROLE_BY, resident, speciesFor, roleFor,
   residents, frictionBetween, BORZ_BY_PLACE, borzArchetype, nameFor,
 } from './StationCast.js';
-import { barman } from './Bars.js';
+import { barman, isBar, seatsNear, seatTop, seatYaw, seatUpright, tableBefore, tableTop, holdSeat,
+  makeCup, cupInHand, cupDown } from './Bars.js';
 /* #44's tanks, read here so the men in them are bodies in the glass. */
 import { TANKS, tankLocal, wardOf, party, checkIn, inTank } from './Medbay.js';
 import { loadAll as loadAllCompany, nameOf as nameOfMan } from './Company.js';
@@ -3731,6 +3732,10 @@ const STAND = {
  * the room faces, and the first thing it is doing.
  */
 function standHere(body, place, at) {
+  /* A body sent back to its slot gets up first — `calm` calls this on a
+   * body an event pulled out of its room, and it may have been sitting. */
+  if (body.seat) seatRelease(body.world, body.world?._stationLife, body);
+  body.seatCool = 0;
   body.standX = at.x; body.standZ = at.z;
   body.standCx = at.x; body.standCz = at.z;
   body.standTx = at.x; body.standTz = at.z;
@@ -3746,16 +3751,179 @@ function standHere(body, place, at) {
 }
 
 /**
+ * ══ THE SIT VERB (V18 hole 4) ═════════════════════════════════════════════
+ *
+ * The note over `STAND` said sitting was *"the obvious third pose and it is
+ * NOT here"*, for a reason that has since gone: `Rig.poseSeated` is a solver
+ * for a body on a CHAIR, and `Enemy._poseSeated` applies it on the gait's own
+ * solve frame off one record on the body — `seat = { blend, y, tableY, cup }`
+ * — so this file never writes a bone. What it writes is the record, and the
+ * three things a person does around a chair: walks the last step to it,
+ * turns to face what is in front of it, and sits for a while.
+ *
+ *   `posture`  rolls the sit, off the same slot seed as the turn and the
+ *              shuffle — a standing body within `SEAT.reach` of a free,
+ *              upright chair, stool or bench claims it (one body per seat,
+ *              `life.seats`) and is given the walk to it; a man on leave in
+ *              a bar (`Bars.soldierIn`'s rows: role `trooper`, or the
+ *              garrison's `security`) looks further for one and takes it
+ *              every time. The hold is 30–90 s, seeded.
+ *   `stepStanding` runs the record: the last step, the blend up over
+ *              `SEAT.ease`, the chair pinned under him (`Bars.holdSeat`), the
+ *              cup in his hand in a bar or a food room, the blend down when
+ *              the hold ends, the cup set down on the table, the seat let go.
+ *
+ * WHERE THE FEET GO. `poseSeated`'s frame puts the seat's centre 0.10 m
+ * BEHIND the feet origin, so the walk's target is the chair's centre plus a
+ * tenth of a metre along its facing. A chair faces the way its back is not
+ * (`Bars.seatYaw`); a stool or a bench faces the nearest table, or failing
+ * that the room's centre.
+ *
+ * WHAT IT COSTS. `seatsNear` is one pass over `world.props` (~175 on deck
+ * 40), paid once per posture roll — every 2–6 s per body — and never per
+ * frame. Per frame a seated body costs a chair pin and a cup placement, both
+ * a few vector writes.
+ */
+const SEAT = {
+  /** A standing body claims a seat this close. */
+  reach: 1.2,
+  /** In a room that serves — the verb is "sit and drink", "eat" — a body
+   *  came to sit, and looks across the room for a chair. */
+  roomReach: 3.5,
+  /** A man on leave in a bar will cross the whole room for one. */
+  barReach: 6.0,
+  /** How long a hold lasts, seconds. */
+  hold: { min: 30, span: 60 },
+  /** Seconds to sit down, and to stand back up. */
+  ease: 0.8, rise: 0.6,
+  /** How many posture rolls after standing before a seat is tried again. */
+  cool: { min: 2, span: 3 },
+  /** Shoulders come round to the seat's bearing at this rate. */
+  turn: 4.0,
+};
+
+/** Is this a body a bar would seat first — a soldier, on leave or on the garrison? */
+function soldierAt(body) {
+  return body.stationRole === 'trooper' || body.stationRole === 'security';
+}
+
+/** Does this room hand its sitters a drink? Bars and food rooms, off the gazetteer. */
+function servesHere(place) {
+  return !!place && (isBar(place.id) || /\b(eat|drink)\b/i.test(place.verb || ''));
+}
+
+/**
+ * Let go of the seat: the claim, the chair's pin, the cup (set down on the
+ * table in front, or gone when there is none), and `Enemy`'s record.
+ */
+function seatRelease(world, life, body) {
+  const S = body?.seat;
+  if (!S) return;
+  body.seat = null;
+  if (life?.seats?.get(S.prop) === body) life.seats.delete(S.prop);
+  if (S.cupObj) cupDown(S.cupObj, S.table, S.pos.x, S.pos.z);
+  if (S.prop?.body && !S.prop.dead) S.prop.body.wake?.();
+}
+
+/**
+ * A claim on a seat for `body`, or null when there is none to be had. The
+ * choice is the nearest free upright seat, which is a function of the world
+ * and not of the clock.
+ */
+function seatClaim(world, life, body, reach) {
+  const p = body.position;
+  if (!p || !world?.props?.length) return null;
+  if (!life.seats) life.seats = new Map();
+  /* Claims held by bodies the pool has since put away. */
+  for (const [prop, b] of life.seats) {
+    if (!b || b.disposed || b.dead || b.alive === false || b.seat?.prop !== prop) life.seats.delete(prop);
+  }
+  const place = PLACE.get(body.stationPlace);
+  let near = seatsNear(world, body.standCx, p.y, body.standCz, reach, life.seats);
+  /* IN THIS ROOM. The Pit is "a lower room off the cantina" and a man in it
+   * can be six metres from the cantina's chairs — through a wall. A seat is
+   * one inside the body's own place, read in the place's frame the way
+   * `slotIn` writes it; a body stopped on a walkway keeps the bare reach. */
+  if (place && !place.way && place.w && place.d) {
+    const c = Math.cos(place.yaw || 0), s = Math.sin(place.yaw || 0);
+    near = near.filter((q) => {
+      const dx = q.body.position.x - place.x, dz = q.body.position.z - place.z;
+      const lx = dx * c - dz * s, lz = dx * s + dz * c;
+      return Math.abs(lx) <= place.w / 2 && Math.abs(lz) <= place.d / 2;
+    });
+  }
+  if (!near.length) return null;
+  const prop = near[0];
+  const q = prop.body.position;
+  let yaw = seatYaw(prop), table = null;
+  if (yaw === null) {
+    /* No back to read: face the nearest table, or the middle of the room. */
+    let bd = 1.6;
+    for (const t of world.props) {
+      if (t.kind !== 'table' || t.dead) continue;
+      const d = Math.hypot(t.body.position.x - q.x, t.body.position.z - q.z);
+      if (d < bd) { bd = d; table = t; }
+    }
+    const tx = table ? table.body.position.x : (place?.x ?? q.x + 1);
+    const tz = table ? table.body.position.z : (place?.z ?? q.z);
+    yaw = Math.atan2(tx - q.x, tz - q.z);
+  } else table = tableBefore(world, q.x, q.z, yaw);
+  const claim = {
+    prop, table, yaw, state: 'walk', blend: 0,
+    pos: q.clone(), quat: prop.body.quaternion.clone(),
+    y: q.y + seatTop(prop),
+    tableY: table ? tableTop(table) : null,
+    cup: false, cupObj: null, hold: 0,
+    serves: servesHere(place),
+  };
+  life.seats.set(prop, body);
+  return claim;
+}
+
+/**
  * The next thing this body is doing, seeded on its slot and on how many poses
  * it has already held — never on the clock and never on `Math.random`, so two
  * machines watching the same room see the same person do the same thing.
  */
-function posture(body) {
+function posture(body, world = body.world, life = world?._stationLife) {
   const a = (body.stationPlace | 0) * 97 + (body.stationSlot | 0) * 7 + 11;
   const n = body.standN = (body.standN | 0) + 1;
   const roll = h2(a, n * 5 + 1);
   body.standIn = STAND.hold.min + h2(a, n * 5 + 2) * STAND.hold.span;
   body.standPace = 0.7 + h2(a, n * 5 + 3) * 0.6;
+  /* ── SEATED: the hold is over, so get up — and roll again once standing. */
+  const S = body.seat;
+  if (S) {
+    if (S.state === 'sit') { S.state = 'rise'; body.standIn = SEAT.rise + 0.2; return; }
+    /* A walk that never arrived, or a rise that has finished: the seat is
+     * let go and the body is a standing body again, for a few rolls. */
+    seatRelease(world, life, body);
+    body.seatCool = SEAT.cool.min + Math.floor(h2(a, n * 5 + 8) * SEAT.cool.span);
+  }
+  /* ── SIT: a chair in reach, and the roll says so. A soldier in a bar does
+   * not roll — he came here to sit down. */
+  if (!body.standStill && world && (body.seatCool | 0) <= 0 && body.position) {
+    const place = PLACE.get(body.stationPlace);
+    const bar = !!place && isBar(place.id);
+    const soldier = bar && soldierAt(body);
+    const want = soldier ? 1 : servesHere(place) ? 0.6 : 0.35;
+    if (h2(a, n * 5 + 7) < want) {
+      const claim = seatClaim(world, life, body, soldier ? SEAT.barReach : servesHere(place) ? SEAT.roomReach : SEAT.reach);
+      if (claim) {
+        claim.hold = SEAT.hold.min + h2(a, n * 5 + 9) * SEAT.hold.span;
+        body.seat = claim;
+        body.standTx = claim.pos.x + Math.sin(claim.yaw) * 0.10;
+        body.standTz = claim.pos.z + Math.cos(claim.yaw) * 0.10;
+        body.standFace = claim.yaw;
+        /* The walk's budget: the distance at the shuffle's pace, and a margin.
+         * A body that has not arrived by then lets the seat go. */
+        const d = Math.hypot(body.standTx - body.standCx, body.standTz - body.standCz);
+        body.standIn = d / (STAND.pace * body.standPace) + 2.0;
+        return;
+      }
+    }
+  }
+  if (body.seatCool > 0) body.seatCool--;
   if (roll < 0.44 || body.standStill) {
     /* TURN — the commonest thing anybody standing in a room does, and the one
      * that costs no ground at all. About the ROOM's axis, so a hall of people
@@ -3786,21 +3954,56 @@ function posture(body) {
  */
 function stepStanding(world, life, dt) {
   for (const body of life.live.values()) {
+    if (!body) continue;
+    /* A body that has stopped being a standing body — pulled onto a route by
+     * an event, hurt, or dead — gives its chair back before anything else. */
+    if (body.seat && (body.wayR || body.__stationTouched || body.alive === false || body.dead)) {
+      seatRelease(world, life, body);
+    }
     /* A walker has `stepWalkers`; a body the player has hurt is a ragdoll, a
      * corpse or a witness and is not shuffling at a counter. */
-    if (!body || body.wayR || body.standX === undefined) continue;
+    if (body.wayR || body.standX === undefined) continue;
     if (body.__stationTouched || body.alive === false || body.dead) continue;
     const p = body.position;
     if (!p) continue;
     body.standIn -= dt;
-    if (body.standIn <= 0) posture(body);
+    if (body.standIn <= 0) posture(body, world, life);
+    const S = body.seat;
+    /* The chair went — thrown, cut, or another body's claim. Up. */
+    if (S && (S.prop.dead || life.seats?.get(S.prop) !== body)) { seatRelease(world, life, body); body.standIn = 0; continue; }
     let mx = 0, mz = 0;
-    const dx = body.standTx - body.standCx, dz = body.standTz - body.standCz;
-    const d = Math.hypot(dx, dz);
-    if (d > 0.01) {
-      const step = Math.min(d, STAND.pace * (body.standPace || 1) * dt);
-      mx = dx / d * step; mz = dz / d * step;
-      body.standCx += mx; body.standCz += mz;
+    const seated = S && S.state !== 'walk';
+    if (!seated) {
+      const dx = body.standTx - body.standCx, dz = body.standTz - body.standCz;
+      const d = Math.hypot(dx, dz);
+      if (d > 0.01) {
+        const step = Math.min(d, STAND.pace * (body.standPace || 1) * dt);
+        mx = dx / d * step; mz = dz / d * step;
+        body.standCx += mx; body.standCz += mz;
+      } else if (S) {
+        /* ARRIVED at the chair: sit, for the hold. A chair knocked over on the
+         * way is not sat on. */
+        if (!seatUpright(S.prop)) { seatRelease(world, life, body); body.standIn = 0; continue; }
+        S.state = 'sit';
+        body.standIn = S.hold;
+        body.standFace = S.yaw;
+        if (S.serves) {
+          S.cupObj = S.prop.seatCup || (S.prop.seatCup = makeCup());
+          S.cup = true;
+        }
+      }
+    }
+    if (seated) {
+      if (S.state === 'sit') S.blend = Math.min(1, S.blend + dt / SEAT.ease);
+      else {
+        S.blend = Math.max(0, S.blend - dt / SEAT.rise);
+        /* Down: `posture` lets the seat go and sets the cooldown. */
+        if (S.blend <= 0) body.standIn = 0;
+      }
+      if (body.seat) {
+        holdSeat(S);
+        if (S.cupObj && S.blend > 0.5) cupInHand(S.cupObj, body.rig, 'R');
+      }
     }
     p.x = body.standCx; p.z = body.standCz;
     body.body?.setTransform?.(p, null);
@@ -3811,7 +4014,7 @@ function stepStanding(world, life, dt) {
      * there is not. `Enemy._pose` leaves a resident's `facing` alone — its
      * `want` is the body's own — so this is the one writer. */
     const want = (mx * mx + mz * mz) > 1e-9 ? Math.atan2(mx, mz) : body.standFace;
-    body.facing += wrapPi(want - body.facing) * Math.min(1, dt * STAND.turn);
+    body.facing += wrapPi(want - body.facing) * Math.min(1, dt * (seated ? SEAT.turn : STAND.turn));
   }
 }
 

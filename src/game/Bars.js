@@ -144,6 +144,7 @@
  * priced rather than described — see `BARS` and `admits`.
  */
 
+import * as THREE from '../../vendor/three/three.module.js';
 import { PLACE } from './StationPlan.js';
 import { resident, BORZ_BY_PLACE } from './StationCast.js';
 import { kindOfArmy } from './Attributes.js';
@@ -865,4 +866,204 @@ export function stepLeave(world, dt) {
     if (r.mended.length) out.push({ army, mended: r.mended });
   }
   return out.length ? out : null;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE SEATS (V18 hole 4)                                                    */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * *"residents do not sit, eat, drink or hold anything."*
+ *
+ * Every social room on the station has real chairs in it — `StationKit`'s
+ * `chairBody` and the stools and benches its kits put down are `Props.Prop`s
+ * with a `kind` — and the cantina's own gazetteer verb is *"sit and drink"*.
+ * Nobody sat, because nothing in the pool ever asked where the chairs were.
+ *
+ * This section is that question, and it lives HERE and not in `StationLife`
+ * for one reason: the men who most want a seat are the ones this file already
+ * owns. `soldierIn` fills a bar's first slots with troops on leave, and a
+ * trooper who has walked down from the barracks to drink is not going to
+ * stand at a counter for two hours. So the pool's sit verb reads its seats
+ * off this file, and this file gets to say that a bar is a place where a man
+ * sits. It is the one section of this file that touches the world; the roll
+ * and the rooms above it stay pure.
+ *
+ * ── WHAT A SEAT IS ──────────────────────────────────────────────────────
+ *
+ * A prop with a seat kind, standing UPRIGHT. The furniture is dynamic — a
+ * chair can be thrown, cut, or knocked over by a body walking through it —
+ * and a chair on its side is not a seat, so the test is the prop's own up
+ * vector and not a list. `seatTop` is where the seat surface is: a chair's
+ * slab is at 0.45 with a 0.06 slab on it, a stool or a bench is a box and its
+ * top IS the seat. A body with `hips` 7 cm above that number is sitting on
+ * it (`Rig.poseSeated`).
+ *
+ * ── AND IT IS HELD ──────────────────────────────────────────────────────
+ *
+ * A seated body's capsule stands where the chair is, and a kinematic capsule
+ * inside a 7 kg dynamic box shoves it across the room — measured on the
+ * probe before this: chairs from the cantina's well 14 m away on the
+ * concourse. So a claimed chair is PINNED for as long as it is sat on: its
+ * pose is put back and the body put to sleep every frame, the same way
+ * `StationKit.CookSet.poseKeeper` pins the keeper. Nothing is disabled, and
+ * the chair is a chair again the frame the body stands.
+ */
+export const SEAT_KINDS = new Set(['chair', 'stool', 'bench']);
+const _up = new THREE.Vector3(), _fw = new THREE.Vector3();
+
+/** The seat surface's height above the prop's own ground point, metres. */
+export function seatTop(prop) {
+  if (prop.kind === 'chair') return 0.48;
+  const bb = prop.mesh?.geometry?.boundingBox;
+  return bb ? Math.min(0.8, Math.max(0.3, bb.max.y)) : 0.45;
+}
+
+/** Standing on its legs, not on its side — and not being thrown. */
+export function seatUpright(prop) {
+  const b = prop?.body;
+  if (!b || prop.dead) return false;
+  _up.set(0, 1, 0).applyQuaternion(b.quaternion);
+  return _up.y > 0.9 && b.velocity.lengthSq() < 0.25;
+}
+
+/**
+ * The way a seat faces, or null for one that has no front. A chair's back
+ * is at its local +z (`chairBody`), so it faces −z.
+ */
+export function seatYaw(prop) {
+  if (prop.kind !== 'chair') return null;
+  _fw.set(0, 0, -1).applyQuaternion(prop.body.quaternion);
+  return Math.atan2(_fw.x, _fw.z);
+}
+
+/**
+ * Every free, upright seat within `r` of a point on the same floor, nearest
+ * first — so the choice is a function of the world and not of iteration
+ * order. `taken` is the pool's claim table (`Map<prop, body>`).
+ */
+export function seatsNear(world, x, y, z, r, taken) {
+  const out = [];
+  const props = world?.props;
+  if (!props) return out;
+  for (const p of props) {
+    if (!SEAT_KINDS.has(p.kind) || (taken && taken.has(p))) continue;
+    const q = p.body?.position;
+    if (!q || Math.abs(q.y - y) > 0.6) continue;
+    const d = Math.hypot(q.x - x, q.z - z);
+    if (d > r || !seatUpright(p)) continue;
+    out.push({ prop: p, d });
+  }
+  out.sort((a, b) => a.d - b.d || (a.prop.id < b.prop.id ? -1 : 1));
+  return out.map((o) => o.prop);
+}
+
+/** The nearest table top in front of a seat facing `yaw`, or null. */
+export function tableBefore(world, x, z, yaw, reach = 1.3) {
+  let best = null, bd = reach;
+  const fx = Math.sin(yaw), fz = Math.cos(yaw);
+  for (const p of world?.props || []) {
+    if (p.kind !== 'table' || p.dead) continue;
+    const q = p.body.position;
+    const dx = q.x - x, dz = q.z - z;
+    const d = Math.hypot(dx, dz);
+    if (d >= bd || d < 1e-3) continue;
+    /* In front, not behind: a table at your back is not one you eat off. */
+    if ((dx * fx + dz * fz) / d < 0.4) continue;
+    best = p; bd = d;
+  }
+  return best;
+}
+
+/** A table's top, world height. */
+export function tableTop(prop) {
+  const bb = prop.mesh?.geometry?.boundingBox;
+  return prop.body.position.y + (bb ? bb.max.y : 0.74);
+}
+
+/** Put a claimed seat back where it was claimed, and keep it asleep. */
+export function holdSeat(claim) {
+  const b = claim?.prop?.body;
+  if (!b || claim.prop.dead) return;
+  if (b.position.distanceToSquared(claim.pos) > 1e-6 || Math.abs(b.quaternion.dot(claim.quat)) < 0.9999) {
+    b.position.copy(claim.pos);
+    b.quaternion.copy(claim.quat);
+    claim.prop.mesh?.position.copy(claim.pos);
+    claim.prop.mesh?.quaternion.copy(claim.quat);
+  }
+  b.sleep();
+}
+
+/* ── the cup ──────────────────────────────────────────────────────────── */
+
+/**
+ * A drink: a short cylinder with a lit rim, one per seat, built the first
+ * time somebody sits there and left on the table when they stand — the next
+ * drinker picks the same one up. Nothing accumulates: a seat has at most one
+ * cup, and it goes with the table it is set down on (it is the table mesh's
+ * child), so a thrown table takes its glasses with it.
+ *
+ * `prop-` is the material prefix `station.mjs` accepts as the engine's own
+ * inside a room.
+ */
+let _cupMat = null, _rimMat = null, _cupGeo = null, _rimGeo = null;
+function cupParts() {
+  if (_cupMat) return;
+  _cupMat = new THREE.MeshStandardMaterial({ color: 0x2a2e36, roughness: 0.35, metalness: 0.5 });
+  _cupMat.name = 'prop-cup';
+  _rimMat = new THREE.MeshStandardMaterial({ color: 0x66d8ff, emissive: 0x3fb8ff, emissiveIntensity: 1.6, roughness: 0.4 });
+  _rimMat.name = 'prop-cup-rim';
+  _cupGeo = new THREE.CylinderGeometry(0.034, 0.028, 0.095, 10, 1);
+  _cupGeo.translate(0, 0.0475, 0);
+  _rimGeo = new THREE.TorusGeometry(0.034, 0.006, 6, 12);
+  _rimGeo.rotateX(Math.PI / 2);
+  _rimGeo.translate(0, 0.092, 0);
+}
+
+export function makeCup() {
+  cupParts();
+  const g = new THREE.Group();
+  g.name = 'cup';
+  g.add(new THREE.Mesh(_cupGeo, _cupMat), new THREE.Mesh(_rimGeo, _rimMat));
+  return g;
+}
+
+const _cq = new THREE.Quaternion(), _cv = new THREE.Vector3(), _co = new THREE.Vector3();
+
+/** The cup in a hand: at the hand bone's tip, mouth up, turned with the hand. */
+export function cupInHand(cup, rig, side = 'R') {
+  const b = rig?.get?.('hand' + side);
+  if (!b || !cup) return;
+  const scene = rig.root.parent;
+  if (scene && cup.parent !== scene) scene.add(cup);
+  b.obj.updateWorldMatrix(true, false);
+  _cv.set(0, b.length * 0.9, 0).applyMatrix4(b.obj.matrixWorld);
+  cup.position.copy(_cv);
+  cup.position.y -= 0.02;
+  /* Level, and turned the way the hand points: nobody holds a glass tipped. */
+  b.obj.getWorldQuaternion(_cq);
+  _co.set(0, 1, 0).applyQuaternion(_cq);
+  const yaw = Math.atan2(_co.x, _co.z);
+  cup.quaternion.setFromAxisAngle(_up.set(0, 1, 0), Number.isFinite(yaw) ? yaw : 0);
+}
+
+/** Set the cup down on a table, in front of the seat. Without a table it goes away. */
+export function cupDown(cup, table, seatX, seatZ) {
+  if (!cup) return;
+  if (!table || table.dead || !table.mesh) { cup.parent?.remove(cup); return; }
+  const mesh = table.mesh;
+  const top = tableTop(table);
+  const q = table.body.position;
+  /* Between the seat and the table's centre, a hand's breadth in from the edge. */
+  const dx = seatX - q.x, dz = seatZ - q.z;
+  const d = Math.hypot(dx, dz) || 1;
+  const bb = mesh.geometry?.boundingBox;
+  const half = bb ? Math.min(bb.max.x, bb.max.z) : 0.5;
+  const k = Math.max(0.12, half - 0.16) / d;
+  _cv.set(q.x + dx * k, top, q.z + dz * k);
+  mesh.updateWorldMatrix(true, false);
+  mesh.worldToLocal(_cv);
+  mesh.add(cup);
+  cup.position.copy(_cv);
+  cup.quaternion.identity();
 }
