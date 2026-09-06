@@ -49,7 +49,10 @@ import {
 } from './StationCast.js';
 import { barman } from './Bars.js';
 /* #44's tanks, read here so the men in them are bodies in the glass. */
-import { TANKS, tankLocal, wardOf } from './Medbay.js';
+import { TANKS, tankLocal, wardOf, party, checkIn, inTank } from './Medbay.js';
+import { loadAll as loadAllCompany, nameOf as nameOfMan } from './Company.js';
+import { lookFor } from './StationCast.js';
+import { hasSeen, markSeen } from './StationSave.js';
 const TANK_WARD = 44;
 import { companyOf } from './StationBoards.js';
 /**
@@ -2308,6 +2311,9 @@ function reseat(world, st, life, px, pz) {
   }
   /* And put back everything that fell out of it. */
   for (const [key, body] of life.live) {
+    /* A body on a MISSION — the guide, your wounded — is not the pool's to
+     * seat or drop; it leaves when it arrives. See `startGuide`. */
+    if (body.wayMission) continue;
     /**
      * A WALKER IS CULLED ON WHERE IT IS, NOT ON WHERE IT STARTED.
      *
@@ -3798,6 +3804,11 @@ function stepWalkers(world, life, dt) {
       continue;
     }
     if (!body.wayLegs) { setOut(deck, hour, body); continue; }
+    /* A mission walker can be told to WAIT — the guide waits for you. */
+    if (body.wayMission?.wait && body.wayMission.wait(body, world)) {
+      if (body.velocity) body.velocity.set(0, 0, 0);
+      continue;
+    }
     const wasX = body.position ? body.position.x : 0;
     const wasZ = body.position ? body.position.z : 0;
 
@@ -3848,7 +3859,15 @@ function stepWalkers(world, life, dt) {
       body.wayLegs = null;
       body.wayTrips = (body.wayTrips | 0) + 1;
       body.wayDwell = DWELL.min + h2(body.waySeedA, body.waySeedB + body.wayTrips) * DWELL.span;
+      /* A mission ends where it was going. The hook may remove the body. */
+      if (body.wayMission?.arrive) {
+        const M = body.wayMission;
+        body.wayMission = null;
+        M.arrive(body, world);
+        if (body.dead || body.alive === false || !body.position) continue;
+      }
     }
+    if (body.wayMission?.along) body.wayMission.along(body, world, legs);
 
     const x = body.wayR * Math.sin(body.wayAngle);
     const z = body.wayR * Math.cos(body.wayAngle);
@@ -3864,6 +3883,214 @@ function stepWalkers(world, life, dt) {
   }
 }
 
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE GUIDE, AND YOUR WOUNDED — V17                                         */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/** Spawn a body that walks a mission: from `at` (world x,z) to `dest`, then
+ * `arrive`. It is in `life.live` under `key` so teardown finds it, and
+ * `wayMission` keeps the pool's hands off it. */
+function missionWalker(world, st, life, key, type, at, dest, mission, look = null, opts = {}) {
+  const deck = st.deck;
+  _v.set(at.x, (DECK_Y[deck] ?? 0) + 0.1, at.z);
+  let body = null;
+  try {
+    body = world.spawnEnemy(type, _v.clone(), { team: world.player?.team ?? 0, person: look });
+  } catch { return null; }
+  if (!body) return null;
+  body.team = world.player?.team ?? 0;
+  body.stationResident = true;
+  body.noAmbientHarm = true;
+  body.stationName = opts.name || body.stationName || key;
+  body.stationRole = opts.role || 'visitor';
+  body.stationSpecies = opts.species || 'human';
+  body.stationPlace = dest.id;
+  body.stationSlot = 0;
+  body.wayAngle = Math.atan2(at.x, at.z);
+  body.wayR = Math.hypot(at.x, at.z);
+  body.wayPace = opts.pace ?? 0.95;
+  body.waySeedA = 977; body.waySeedB = (life.live.size | 0) * 3 + 1;
+  body.wayAt = 0; body.wayT = 0; body.wayTo = dest.id; body.wayTrips = 0; body.wayDwell = 0;
+  /* THE LEGS ARE LAID HERE, NOT PLANNED: a spine to the walk the door is on,
+   * the walk round to the door's bearing, and in. `planRoute` starts a walker
+   * on whichever annulus is nearer and had nothing to say from a lift lobby
+   * (legs 0 from the atrium's, the long way round from Arrivals'). A lobby is
+   * on a spine by construction, so the radial is always there. */
+  const lvl = dest.on === 'ring' ? RING_WALK : BALC_WALK;
+  const legs = [];
+  radLeg(legs, body.wayAngle, body.wayR, lvl);
+  const a1 = arcLeg(legs, lvl, body.wayAngle, dest.a);
+  radLeg(legs, a1, lvl, dest.r);
+  body.wayLegs = legs;
+  if (!legs.length) { removeBody(world, body); return null; }
+  body.wayMission = mission;
+  life.live.set(key, body);
+  return body;
+}
+
+/** The lift lobby the player arrived in, as a point just off its doors. */
+function lobbyPoint(world, st) {
+  const id = world._stationShaft || 'arrivals';
+  const S = SHAFTS.find((x) => x.id === id) || SHAFTS[0];
+  const a = Math.atan2(S.x, S.z);
+  const rs = Math.hypot(S.x, S.z);
+  const r = rs + (rs > DRUM.balcony ? -5 : 5);
+  return { x: r * Math.sin(a), z: r * Math.cos(a) };
+}
+
+/** The destination row for a place on this deck, or null. */
+function destFor(deck, id) {
+  return destsOn(deck).find((d) => d.id === id) || null;
+}
+
+/**
+ * ══ THE FIRST VISIT (SHARK §14) ═══════════════════════════════════════════
+ * *"A fresh player arrives at Arrivals by the lift, and a guide (a protocol
+ * droid) walks them the spine to the concourse once, naming the decks. After
+ * that, never again."* `hasSeen`/`markSeen` were written for this and had one
+ * caller, for a text notice. The guide is a reprogrammed B1 — the station's
+ * own service droid — that sets off from the lift doors for the Concourse's
+ * mouth on the atrium rim, waits when you fall more than ten metres behind,
+ * names each deck as it passes a third of the way, and at the mouth hands you
+ * the station and becomes an ordinary walker.
+ */
+const GUIDE_SEEN = 'station:guide';
+const GUIDE_LINES = [
+  'Welcome aboard. This way to the Concourse — I will name the decks as we go.',
+  'This is deck 40, the Concourse deck: the market, the cantina, the Standing.',
+  'Above us is 44, where people live. 48 is the working deck: Command, the medbay, the reactor.',
+  'The Concourse. The lift takes you anywhere else. Good day.',
+];
+function startGuide(world, st, life) {
+  if (st.deck !== 40 || world.netMode === 'client' || hasSeen(GUIDE_SEEN)) return;
+  const dests = destsOn(40).filter((d) => d.on === 'balcony');
+  if (!dests.length) return;
+  const dest = dests.reduce((a, b) => (Math.abs(b.a) < Math.abs(a.a) ? b : a));
+  const at = lobbyPoint(world, st);
+  let said = 0;
+  const say = (i) => {
+    if (i < said) return;
+    said = i + 1;
+    world.notify?.('THE GUIDE', GUIDE_LINES[i]);
+  };
+  const body = missionWalker(world, st, life, 'guide', 'b1c', at, dest, {
+    wait: (b, w) => {
+      const p = w.player?.position;
+      if (!p) return false;
+      return Math.hypot(p.x - b.position.x, p.z - b.position.z) > 10;
+    },
+    along: (b, w, legs) => {
+      let total = 0, done = 0;
+      for (let i = 0; i < legs.length; i++) { total += legs[i].len; if (i < b.wayAt) done += legs[i].len; }
+      done += b.wayT;
+      const f = total > 0 ? done / total : 1;
+      if (f > 0.35) say(1);
+      if (f > 0.7) say(2);
+    },
+    arrive: () => { say(3); markSeen(GUIDE_SEEN); },
+  }, null, { name: 'the guide', role: 'service', species: 'droid', pace: 0.8 });
+  if (!body) return null;
+  say(0);
+  return body;
+}
+
+/**
+ * ══ YOUR WOUNDED WALK TO THE MEDBAY (V16 §C1) ═════════════════════════════
+ * *"they walk off the transport with you … walking wounded walk; the badly
+ * hurt go on a repulsor stretcher carried by two who are not."*
+ * `Medbay.party` had computed exactly that for nobody. On the working deck,
+ * every man on the roll who is hurt and not yet in a tank comes out of the
+ * lift with you: the walking wounded at a limp, the litter cases on a
+ * stretcher between two fit men, all of them walking the ring to #43, and
+ * each one CHECKS IN on arrival — into a tank if one is free, else onto the
+ * waiting list — which is what the room's own panel then shows.
+ */
+function bringWounded(world, st, life) {
+  if (st.deck !== 48 || world.netMode === 'client') return 0;
+  const c = companyOf();
+  if (!c) return 0;
+  const all = loadAllCompany();
+  /* Which roll this is, by its first man: `companyOf` hands back a fresh
+   * load, so identity is not the test. */
+  const first = c.men?.[0]?.designation;
+  const army = all ? Object.keys(all).find((k) => all[k]?.men?.[0]?.designation === first) : null;
+  const P = party(c);
+  const ward = wardOf(c);
+  const dest = destFor(48, 43);
+  if (!dest) return 0;
+  const lobby = lobbyPoint(world, st);
+  const a0 = Math.atan2(lobby.x, lobby.z), r0 = Math.hypot(lobby.x, lobby.z);
+  let k = 0, n = 0;
+  const drop = (w, b) => { removeBody(w, b); for (const [key, v] of life.live) if (v === b) life.live.delete(key); };
+  const arrive = (m) => (b, w) => {
+    try { if (army) checkIn(army, m.designation); } catch {}
+    w.notify?.('MEDBAY', `${nameOfMan(m)} is in — ${inTank(companyOf(), m.designation) ? 'a tank' : 'the waiting list'}`);
+    drop(w, b);
+  };
+  for (const m of P.walking) {
+    if (ward.tanks.includes(m.designation)) continue;
+    const a = a0 + (k * 0.035 - 0.05), r = r0 + (k % 2) * 1.4;
+    k++;
+    if (missionWalker(world, st, life, `wounded:${m.designation}`, 'res_borz_crew',
+      { x: r * Math.sin(a), z: r * Math.cos(a) }, dest, { arrive: arrive(m) },
+      lookFor(`w:${m.designation}`, 'human', 1), { name: nameOfMan(m), role: 'trooper', pace: 0.55 })) n++;
+  }
+  for (const L of P.litters) {
+    const m = L.man;
+    if (ward.tanks.includes(m.designation)) continue;
+    const a = a0 + (k * 0.035 - 0.05), r = r0 + 0.7;
+    k += 2;
+    const front = missionWalker(world, st, life, `litter:${m.designation}:a`, 'res_borz_crew',
+      { x: r * Math.sin(a), z: r * Math.cos(a) }, dest, { arrive: arrive(m) },
+      lookFor(`b:${L.bearers[0]?.designation || m.designation}`, 'human', 1),
+      { name: nameOfMan(L.bearers[0] || m), role: 'trooper', pace: 0.7 });
+    const back = missionWalker(world, st, life, `litter:${m.designation}:b`, 'res_borz_crew',
+      { x: (r + 1.8) * Math.sin(a), z: (r + 1.8) * Math.cos(a) }, dest, { arrive: (b, w) => drop(w, b) },
+      lookFor(`b:${L.bearers[1]?.designation || m.designation}`, 'human', 1),
+      { name: nameOfMan(L.bearers[1] || m), role: 'trooper', pace: 0.7 });
+    if (front && back) {
+      n++;
+      back.wayPace = front.wayPace;
+      (life.litters || (life.litters = [])).push({ front, back, mesh: buildLitter(world, m), man: m });
+    }
+  }
+  if (n) world.notify?.('MEDBAY', `${n} of your wounded are on the ring, bound for the medbay`);
+  return n;
+}
+
+/** A repulsor stretcher with a man on it: a slab, two rails, a covered figure. */
+function buildLitter(world, m) {
+  const g = new THREE.Group();
+  const M = world._station?.mats;
+  const dark = M?.dark || new THREE.MeshStandardMaterial({ color: 0x33383e });
+  const wing = M?.wing || new THREE.MeshStandardMaterial({ color: 0x7b838c });
+  const strip = M?.strip || new THREE.MeshStandardMaterial({ color: 0xffa053 });
+  const bed = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.08, 2.0), dark); g.add(bed);
+  for (const s of [-1, 1]) { const rail = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 2.1), wing); rail.position.set(s * 0.36, 0.08, 0); g.add(rail); }
+  const man = new THREE.Mesh(new THREE.CapsuleGeometry(0.22, 1.3, 4, 8), wing); man.rotation.x = Math.PI / 2; man.position.y = 0.26; g.add(man);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 6), dark); head.position.set(0, 0.28, -0.95); g.add(head);
+  const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.04, 0.06), strip); lamp.position.set(0, -0.06, 0.98); g.add(lamp);
+  g.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  g.name = `litter-${m.designation}`;
+  world.scene.add(g);
+  return g;
+}
+
+/** Keep each stretcher slung between its two bearers at hip height. */
+function stepLitters(life) {
+  const L = life.litters;
+  if (!L || !L.length) return;
+  for (let i = L.length - 1; i >= 0; i--) {
+    const { front, back, mesh } = L[i];
+    let alive = false;
+    for (const v of life.live.values()) if (v === front) { alive = true; break; }
+    const ok = alive && front?.position && back?.position && !front.dead && !back.dead;
+    if (!ok) { mesh.parent?.remove(mesh); L.splice(i, 1); continue; }
+    mesh.position.set((front.position.x + back.position.x) / 2, front.position.y + 0.95, (front.position.z + back.position.z) / 2);
+    mesh.rotation.y = Math.atan2(front.position.x - back.position.x, front.position.z - back.position.z);
+  }
+}
+
 export function stepStationLife(world, dt) {
   const st = world._station;
   const life = world._stationLife;
@@ -3874,6 +4101,7 @@ export function stepStationLife(world, dt) {
   const cam = world.player?.position;
   const px = cam ? cam.x : 0, pz = cam ? cam.z : 0;
 
+  stepLitters(life);
   /* The cell's field, counting down while you stand behind it — see
    * `deliverToBrig`. */
   if (life.cellBox) {
@@ -3905,6 +4133,11 @@ export function stepStationLife(world, dt) {
      * being drained, which play never is and a check might be.
      */
     if (!world._station?.pending?.some((j) => j.prime)) life.priming = false;
+    if (!life.priming && !life.partyOut) {
+      life.partyOut = true;
+      startGuide(world, st, life);
+      bringWounded(world, st, life);
+    }
   }
   witness(world, st, life, dt);
   const built = stepHandlers(world, life);
@@ -3955,6 +4188,8 @@ export function undressStationLife(world) {
   life.dip = 0;
   for (const b of life.live.values()) removeBody(world, b);
   for (const g of life.guards) removeBody(world, g);
+  for (const L of life.litters || []) L.mesh?.parent?.remove(L.mesh);
+  if (life.litters) life.litters.length = 0;
   life.live.clear();
   life.wantPets.length = 0;
   life.guards.length = 0;
