@@ -118,6 +118,7 @@ import { dressMusic, stepMusic, undressMusic, musicKey } from './Music.js'; // V
 import { dressFormBoards, stepFormBoards, undressFormBoards, printedTicket } from './Form.js';
 import { sitKey, releaseSeat } from './StationSit.js';
 import { dressMorning, stepMorning, undressMorning } from './Morning.js';
+import { dressStationMotion, stepStationMotion, undressStationMotion } from './StationMotion.js'; // V20 lane 2
 import { stepSleep, endSleep } from './Sleep.js';
 import { stepDomeSeat } from './DomeSeat.js';
 import { dressShuttle, stepShuttle, shuttleKey, undressShuttle } from './Shuttle.js';
@@ -879,12 +880,15 @@ function buildChandelier(kit, M, y) {
   for (let i = 0; i < rings; i++) {
     const ry = bottom + (top - bottom) * ((i + 0.5) / rings);
     const r = 2.4 + 2.2 * Math.sin(Math.PI * ((i + 0.5) / rings)) + (i % 2 ? 0.7 : 0);
-    kit.post(M.strip, r, r, 0.22, cx, ry, cz, { radial: 28, open: true });
-    kit.post(M.dark, r + 0.14, r + 0.14, 0.12, cx, ry + 0.17, cz, { radial: 28, open: true });
-    for (let k = 0; k < 6; k++) {
-      const a = TAU * (k / 6) + i * 0.3;
-      kit.post(M.wing, 0.04, 0.04, r - 0.5, cx + (r / 2) * Math.sin(a), ry, cz + (r / 2) * Math.cos(a), { radial: 4, ry: a, rz: Math.PI / 2 });
-    }
+    /* ── THE RINGS ARE NOT MERGED INTO THE SHELL ANY MORE (V20 lane 2) ──
+     *
+     * *"the chandelier's rings turn slowly"*, and a vertex in the drum's one
+     * merged mesh cannot turn. So the hoop, its cap and its six spokes are
+     * DECLARED here — the same numbers, in the same loop, off the same seed —
+     * and `StationMotion.dressStationMotion` builds them as two meshes a
+     * parity that counter-turn. The column, the arm and the light below stay
+     * in the shell, because none of them moves. */
+    (kit.chandelier || (kit.chandelier = [])).push({ i, y: ry, r, cx, cz });
     if (i === 2) {
       kit.slab(M.dark, 7.5, 0.3, 0.3, cx + 3.6, ry + 0.6, cz + 1.2, { collide: false, bevel: 0, ry: 0.5 });
       kit.post(M.strip, 0.9, 0.9, 0.16, cx + 6.7, ry + 0.2, cz + 3.4, { radial: 14, open: true });
@@ -1509,6 +1513,7 @@ export function dressStation(world) {
    * draws so `station.mjs` can raster the drum without the crowd in it.
    */
   st.shell = shellOut.meshes;
+  st.chandelier = shell.chandelier || null; // V20 lane 2: the rings, for `StationMotion` to turn
   st.shellDraws = shellOut.meshes.length;
   st.shellTris = shellOut.triangles;
   st.draws += shellOut.meshes.length;
@@ -1672,6 +1677,7 @@ export function dressStation(world) {
   st.keeperCount = dressKeepers(world, st);
   dressHealing(world, st); // V18 hole 5: the medic, the monitors, the fluid — see Healing.js
   dressRemoteTest(world, st, M);
+  dressStationMotion(world, st); // V20 lane 2: the doors, the fans, the flicker, the steam, the litter
 
 
   /* ── AND THE ONE ROOM THAT IS YOURS (V15 §1.3) ─────────────────────────
@@ -1838,6 +1844,7 @@ export function undressStation(world) {
   leaveHome(world);
   undressHome(world);
   undressHealing(world); undressMusic(world); undressStationSound(world); undressFormBoards(world); // V18 holes 5, 7, 10; V19 add 5
+  undressStationMotion(world); // V20 lane 2
   for (const rec of st.places.values()) {
     rec.group.parent?.remove(rec.group);
     rec.group.traverse((o) => { if (o.isMesh) o.geometry?.dispose?.(); });
@@ -5122,6 +5129,7 @@ export function stepStation(world, dt) {
   stepDomeSeat(world, dt);
   stepStationSound(world, st, dt); // V18 hole 7: crossfade the bed under the player
   stepMusic(world, st, dt); // V19 add 5: the band's set, the busker, the Drum's theme
+  stepStationMotion(world, st, dt); // V20 lane 2: see StationMotion.js
 
   stepShuttle(world, dt); stepGreetings(world, world._stationLife, dt); stepRemoteTest(world, dt);
   stepCoopGames(world, dt); // V19 addition 4: the shared hand, the side bet, the crate
