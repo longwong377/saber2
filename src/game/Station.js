@@ -124,6 +124,7 @@ import { dressShuttle, stepShuttle, shuttleKey, undressShuttle } from './Shuttle
 import { seatedOnTram } from './TramCabin.js';
 import { stepGreetings, undressGreetings } from './Greetings.js';
 import { dressRemoteTest, stepRemoteTest, remoteTestKey, undressRemoteTest } from './RemoteTest.js';
+import { dressVerbs, stepVerbs, verbKey, undressVerbs } from './Verbs.js'; // V20 lane 6: the ten things to do with your hands
 import { stepCoopGames, coopGamesKey, coopGuest } from './CoopGames.js'; // V19 addition 4: the two-player things
 
 import * as Food from './Food.js';
@@ -1672,6 +1673,10 @@ export function dressStation(world) {
   st.keeperCount = dressKeepers(world, st);
   dressHealing(world, st); // V18 hole 5: the medic, the monitors, the fluid — see Healing.js
   dressRemoteTest(world, st, M);
+  /* V20 lane 6: the crate, the lever, the tap, the bones, the bell, the fan,
+   * the washer, the bowl, the elbow and the remote — see `Verbs.js`. Each is a
+   * no-op on every deck its room is not on. */
+  dressVerbs(world, st);
 
 
   /* ── AND THE ONE ROOM THAT IS YOURS (V15 §1.3) ─────────────────────────
@@ -1822,6 +1827,7 @@ export function undressStation(world) {
   endSleep(world, false);
   undressMorning(world);
   undressShuttle(world); undressGreetings(world); undressRemoteTest(world);
+  undressVerbs(world); // V20 lane 6
 
   disposeLiveFeeds(world?._station);
   const st = world._station;
@@ -3108,6 +3114,22 @@ export function stationKey(world) {
    */
   if (coopGamesKey(world)) return true; // V19 addition 4: a shared table or tote window with the other human within 3 m — before the chair beside you
   if (sitKey(world)) return true;
+  /**
+   * ── A THING TO PUT YOUR HANDS ON — V20 lane 6 ──────────────────────────
+   *
+   * *"the verbs are still mostly 'read a panel' or 'watch a thing'. Only a
+   * handful put your hands on something."* Ten of them, one line, and it sits
+   * exactly here: below the person and the chair, which are more specific
+   * than any fixture, and ABOVE every panel branch, because a crate you are
+   * standing over is more specific than the room it is in — the sentence
+   * `counterHere` makes about a desk, made about a lever, a tap and a bell.
+   *
+   * It claims a press only when a spot is in reach, on your floor and inside
+   * the cone, so `station.mjs`'s sweep of every place's centre is untouched
+   * and #14's bar panel still opens everywhere but with your hands on the
+   * back-bar column. See `Verbs.verbKey`.
+   */
+  if (verbKey(world)) return true;
   /**
    * ── AND THE PLACE TEST IS *BELOW* THE TALK BRANCH, WHICH IS THE POINT ───
    *
@@ -5124,6 +5146,7 @@ export function stepStation(world, dt) {
   stepMusic(world, st, dt); // V19 add 5: the band's set, the busker, the Drum's theme
 
   stepShuttle(world, dt); stepGreetings(world, world._stationLife, dt); stepRemoteTest(world, dt);
+  stepVerbs(world, st, dt); // V20 lane 6: the ten verbs, after the bodies — see `Verbs.js`
   stepCoopGames(world, dt); // V19 addition 4: the shared hand, the side bet, the crate
 
 

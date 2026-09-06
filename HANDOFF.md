@@ -54,6 +54,38 @@ words in it' all right now. I want a living breathing station."* Lanes:
 5. **THE STAGE** — the drum's symmetry broken: deck 48 gets a dark abandoned quarter (sealed rooms, flickering strips, a warren of service corridors you can get lost in), deck 44 the rich deck, deck 40 the workers' street; some rooms huge, some tiny. `StationPlan.js`, `StationKit.js`.
 6. **HANDS** — ten verbs that put your hands on something: carry a crate to a shelf, pull the compactor's lever, pour at the cantina bar, throw the Drazi dice, ring the chapel bell, fix a fan (hold), wash at the laundry, feed the kennel, arm-wrestle at the Pit, spar the gym's remote. `Verbs.js`.
 
+**Lane 6 is built.** `src/game/Verbs.js`, one hook line in `Station.stationKey`
+after the seat branch, `dressVerbs`/`stepVerbs`/`undressVerbs` beside the
+remote test's three, a `verbs` fold in `StationSave`, and
+`tools/checks/verbs.mjs` (12/12) which drives the REAL key for every one.
+
+    #52  carry the marked crate to the marked shelf   15 credits
+    #53  throw the compactor's lever, 4 drums crushed 10
+    #14  pour at the back-bar column, a drinker tips   2
+    #35  throw two real dice against a seeded house    5 staked, 10 back
+    #22  ring the chapel bell, the room turns          once an hour
+    #39  hold the key 3 s on the seized extractor      8, out again tomorrow
+    #39  a 2 s wash clears the soot off your outfit    a fold and a line
+    #28  scoop the feed bin, the animals eat           5
+    #18  arm-wrestle a seeded opponent, 6 s of mash   10 staked, 20 back
+    #21  a 30 s round with the gym's remote            best saved
+
+Two traps this lane paid for and the next one should not pay again:
+
+  · **The interact key IS the focus key.** `World.update` reads
+    `act('focus')` for the deep Focus dip, so HOLDING it dilates the world —
+    a three-second hold advanced the world's clock by 0.94 s. `stepVerbs`
+    divides `timeScale * focus.scale` back out for the two verbs that are
+    gestures rather than events.
+  · **A seated player's `_readInput` RETURNS.** The seat branch handles the
+    key itself ("get up") and nothing below it is read, so anything a sitting
+    player does with that key has to be published above that branch. The
+    arm-wrestle counted one shove in a hundred and eighty before this moved.
+  · Clauses in a suite are drained CONCURRENTLY. Twelve verbs paying into one
+    `Credits` purse went 6/12 red together and 12/12 green apart;
+    `tools/checks/verbs.mjs` wraps `check` in a queue rather than loosening
+    the numbers.
+
 ## 0. V19 — TWENTY MORE, ACROSS THE WHOLE GAME
 
 The player asked for more holes and additions "anything in the game, not

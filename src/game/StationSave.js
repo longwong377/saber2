@@ -200,6 +200,15 @@ function blank() {
     forgeTest: null,
     /** V19 addition 4: SIDE BETS struck against a co-op guest, `CoopGames.js` owns the shape. */
     sidebets: [],
+    /**
+     * V20 lane 6: THE TEN VERBS — what your hands have actually done on this
+     * station. `Verbs.js` owns the shape; it is a bag of small counters and
+     * three per-day stamps (the fan you fixed today, the hour the bell last
+     * rang, the day's best against the gym's remote), because that is exactly
+     * what a verb needs to remember and nothing more. Empty until the first
+     * thing you pick up.
+     */
+    verbs: {},
 
     /**
      * V19 addition 2: THE JOURNAL — `{ v, days: { [day]: [{ h, k, t }] } }`,
@@ -406,6 +415,9 @@ export function setRegularsState(v) { const s = read(); s.regulars = v && typeof
 /** The busker's ledger — see `Music.js`. Always an object. */
 export function buskerState() { const r = read().busker; return r && typeof r === 'object' ? r : {}; }
 export function setBuskerState(v) { const s = read(); s.busker = v && typeof v === 'object' ? v : {}; return write(s).busker; }
+/** V20 lane 6: what your hands have done — see `Verbs.js` for the shape. */
+export function verbsState() { const v = read().verbs; return v && typeof v === 'object' ? v : {}; }
+export function setVerbsState(v) { const s = read(); s.verbs = v && typeof v === 'object' ? v : {}; return write(s).verbs; }
 /** The Forge's remote-test fold — see `RemoteTest.js`. */
 export function forgeTest() { const f = read().forgeTest; return f && typeof f === 'object' ? f : null; }
 export function setForgeTest(v) { const s = read(); s.forgeTest = v; return write(s).forgeTest; }
