@@ -708,7 +708,37 @@ export function resident(seed, opts = {}) {
     rhythm: RHYTHMS[key],
     faction: factionFor(key, role),
     home: homeFor(key, role),
+    partner: partnerFor(seed, key, role),
   };
+}
+
+/**
+ * ══ WHO THEY LIVE WITH — V17 ══════════════════════════════════════════════
+ *
+ * The player's bar: *"each of them an individual person with a home, job,
+ * task, partner."* Home, job and task were rows; a partner was not, and a
+ * person nobody lives with is a slot with a name. So about half the station
+ * has somebody — drawn off the same seed as everything else about them, so
+ * it is the same somebody every day — of their own species nearly always,
+ * living in the same quarter, with a job of their own. The Vorlon lives with
+ * nobody, and a refugee or a lurker in the hostel has not got anyone yet.
+ *
+ * It is a small object and not a `resident()`, on purpose: a resident with a
+ * partner who is a resident with a partner is a recursion, and the partner is
+ * only ever SPOKEN OF — `BARK_TOPICS`'s `home` topic — never spawned.
+ */
+export function partnerFor(seed, species, role) {
+  if (species === 'vorlon' || role === 'refugee' || role === 'lurker') return null;
+  if (hashF(seed, 'partner') > 0.52) return null;
+  const pseed = `${seed}~p`;
+  /* One in six lives across a species line — the hostel's tail mixes, the
+   * concourse mixes, and a station where nobody ever did would be a lie. */
+  let pk = species;
+  if (hashF(seed, 'partner-x') < 0.16) {
+    const k = speciesFor(pseed);
+    if (k !== 'vorlon' && (RHYTHMS[k]?.atmos || null) === (RHYTHMS[species]?.atmos || null)) pk = k;
+  }
+  return { seed: pseed, species: pk, name: nameFor(pk, pseed), role: roleFor(pk, pseed) };
 }
 
 /** Which species, drawn from the census shares. */
@@ -1200,6 +1230,19 @@ export function residentLine(who) {
  * table's length.
  */
 export const BARK_TOPICS = [
+  {
+    id: 'home',
+    say(who) {
+      const P = who.partner;
+      const home = placeName(who.home);
+      if (!P) return home ? `I live alone, at ${home.toLowerCase()}. It suits me.` : null;
+      const R = ROLE_BY.get(P.role);
+      const job = String(P.role || 'visitor').replace(/_/g, ' ');
+      const off = R && R.hours > 0 ? `, off at ${hhmm(R.start + R.hours)}` : '';
+      return `I live with ${P.name}${P.species !== who.species ? `, a ${P.species}` : ''}`
+        + `${home ? ` at ${home.toLowerCase()}` : ''} — a ${job}${off}. Ask after them.`;
+    },
+  },
   {
     id: 'shift',
     say(who) {

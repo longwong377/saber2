@@ -656,6 +656,31 @@ function buildRing(kit, M, deck) {
      */
     const S = sectorAt(deck, i * 360 / n) || { rib: 2, channel: 'centre', coffer: 0, pilaster: 4 };
     const rib = i % S.rib === 0;
+    /* WHAT HANGS UNDER THE RING'S LID. The soffit over the walk was the one
+     * flat annulus left after the rooms and the spines were dressed: on 40 a
+     * hanging amber lamp every third bay, on 44 a pendant disc, on 48 a duct
+     * run round the whole turn at head-and-a-half height with a caged status
+     * lamp at every rib. The frame is the bay's own (`ry: a`), so a chord of
+     * duct meets its neighbours the way the plate's own segments do. */
+    const lidY = y + DRUM.storey;
+    if (type === 'transit' && i % 3 === 1) {
+      const lx = (DRUM.ringR + 1.2) * sx, lz = (DRUM.ringR + 1.2) * sz;
+      kit.post(M.dark, 0.03, 0.03, 1.3, lx, lidY - 0.65, lz, { radial: 4 });
+      kit.post(M.dark, 0.5, 0.16, 0.34, lx, lidY - 1.45, lz, { radial: 8 });
+      kit.post(M.strip, 0.36, 0.36, 0.06, lx, lidY - 1.65, lz, { radial: 8 });
+    } else if (type === 'promenade' && i % 4 === 2) {
+      const lx = (DRUM.ringR - 1.0) * sx, lz = (DRUM.ringR - 1.0) * sz;
+      kit.post(M.dark, 0.025, 0.025, 0.9, lx, lidY - 0.45, lz, { radial: 4 });
+      kit.post(M.wing, 0.55, 0.55, 0.05, lx, lidY - 0.92, lz, { radial: 10 });
+      kit.post(M.strip, 0.4, 0.4, 0.04, lx, lidY - 0.96, lz, { radial: 10 });
+    } else if (type === 'serviceway') {
+      const dr = DRUM.ringR + 2.6;
+      kit.post(M.dark, 0.42, 0.42, wide * 1.02, dr * sx, lidY - 1.0, dr * sz, { radial: 8, ry: a, rz: Math.PI / 2 });
+      if (rib) {
+        kit.slab(M.status, 0.2, 0.2, 0.16, (DRUM.ringR - 1.5) * sx, lidY - 0.9, (DRUM.ringR - 1.5) * sz, { ry: a, collide: false, bevel: 0 });
+        kit.post(M.deep, 0.5, 0.5, 0.2, dr * sx, lidY - 1.0, dr * sz, { radial: 8, ry: a, rz: Math.PI / 2 });
+      }
+    }
     if (type === 'transit') {
       /* DECK 40 — the imported ribbed corridor's language: a rib every two
        * bays, signage frames between them, and the lit floor channel. The
