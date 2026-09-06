@@ -199,6 +199,15 @@ const SEAMS = new Map(Object.entries({
    * it just booted without stepping it. Play never calls this: play steps."
    * A declared seam that was filed as residue by mistake. */
   'Station.js::finishStationBuild': 'the whole build at once, for a check that asserts on a world it has not stepped — play steps',
+  /* V19 addition 4, `coopgames.mjs`: the four readings its assertions are made
+   * on. The guest's cards against the host's deal (`tableView`), the showdown each
+   * machine saw (`lastHand`),
+   * the crate on each machine and where it is on its journey (`crateOf`,
+   * `carryState`). Every one is a reading; the key and the wire are the play. */
+  'CoopGames.js::tableView': 'what seat 1 was dealt, on the host — coopgames.mjs compares it to the guest\'s hand',
+  'CoopGames.js::lastHand': 'the showdown this machine saw — coopgames.mjs settles the two purses against it',
+  'CoopGames.js::crateOf': 'the crate body on this machine — coopgames.mjs lifts it and watches it go',
+  'CoopGames.js::carryState': 'hold / aboard, and whose hands are on — coopgames.mjs drives the journey by it',
 
   /* ══ AND TWELVE MORE, ON THE SAME BAR AND ONE ARGUMENT EACH ════════════
    *

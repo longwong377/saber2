@@ -196,6 +196,8 @@ function blank() {
     pick: null,
     /** The Forge's remote test (V18 cool 19): `{ best, last, day, n }` or null. `RemoteTest.js` owns the shape. */
     forgeTest: null,
+    /** V19 addition 4: SIDE BETS struck against a co-op guest, `CoopGames.js` owns the shape. */
+    sidebets: [],
 
   };
 }
@@ -213,6 +215,7 @@ function read() {
   if (typeof _cache.name !== 'string' || !_cache.name.trim()) _cache.name = DEFAULT_NAME;
   if (!Array.isArray(_cache.seen)) _cache.seen = [];
   if (!Array.isArray(_cache.funerals)) _cache.funerals = [];
+  if (!Array.isArray(_cache.sidebets)) _cache.sidebets = [];
   return _cache;
 }
 
@@ -411,6 +414,9 @@ export function markFuneral(designation, bunk, day = 0) {
 
 /** Today's pickpocket record, or null — see `Pickpocket.js` for its shape. */
 export function pickpocketState() { const p = read().pick; return p && typeof p === 'object' ? p : null; }
+/** The side bets fold (V19 addition 4) — see `CoopGames.js`. */
+export function sideBets() { return read().sidebets.slice(); }
+export function setSideBets(v) { const s = read(); s.sidebets = Array.isArray(v) ? v : []; return write(s).sidebets; }
 export function setPickpocketState(v) { const s = read(); s.pick = v; return write(s).pick; }
 
 /** Start again. Only a check calls this. */

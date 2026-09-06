@@ -195,7 +195,30 @@ export const SHAPES = [
       + `Get ${job.n > 1 ? `${job.n} of them` : 'him'} back on ${job.n > 1 ? 'their' : 'his'} feet.`,
   },
 ];
-const SHAPE_BY = new Map(SHAPES.map((s) => [s.id, s]));
+
+/**
+ * ══ THE TWO-CARRIER CRATE — V19 addition 4 ═══════════════════════════════
+ *
+ * NOT IN `SHAPES`, on purpose: `offersAt` rolls a shape off that list by
+ * index, so a seventh entry would re-deal every board on every day the game
+ * has ever shown. This one is appended to #52's board only while a guest is
+ * connected (`ctx.guest`, set by `Station.questContext` off `CoopGames`), and
+ * it is judged on `carried` — the job ids `CoopGames` hands `settleRun` when
+ * the crate stands in Arrivals — which no run ending reports, so a run can
+ * neither finish it nor be left waiting on it (`settleRun`'s `judged`).
+ */
+export const CARRY_JOB = {
+  id: 'two-carrier', name: 'a crate', from: 52, to: 7, pay: 160,
+  needs: () => ['carried'],
+  roll: () => ({ from: 52, to: 7, pay: 160 }),
+  test: (run, job) => Array.isArray(run.carried) && run.carried.includes(job.id),
+  line: () => 'Two tonnes of crate for the Arrivals hall, deck 40. It takes two of you — the lift is the Arrivals shaft.',
+};
+export function carryOffer(placeId, day = 0) {
+  return { id: `${placeId}-${day | 0}-c`, shape: CARRY_JOB.id, place: placeId,
+    giver: hashOf(`giver:${placeId}:${day | 0}:c`), line: CARRY_JOB.line(), ...CARRY_JOB.roll() };
+}
+const SHAPE_BY = new Map([...SHAPES, CARRY_JOB].map((s) => [s.id, s])); // V19: the two-carrier crate is a job the ledger knows
 
 /* ══════════════════════════════════════════════════════════════════════════
  *  THE BOARD — who is offering what today
@@ -252,6 +275,7 @@ export function offersAt(placeId, day = 0, ctx = null) {
       ...rolled,
     });
   }
+  if (ctx?.guest && placeId === CARRY_JOB.from) out.push(carryOffer(placeId, day)); // V19: the two-carrier crate, only with a guest connected
   return out;
 }
 
