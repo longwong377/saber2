@@ -25,6 +25,7 @@ import * as THREE from '../../vendor/three/three.module.js';
 import { buildRemote } from './Dojo.js';
 import { signPanel } from './StationKit.js';
 import { forgeTest, setForgeTest, stationDay } from './StationSave.js';
+import { note } from './Journal.js';
 import { clamp, damp } from '../engine/MathUtil.js';
 
 export const TEST = { secs: 45, shots: 8, first: 3.0, speed: 20, damage: 3, hover: 4.2, high: 1.45 };
@@ -197,6 +198,7 @@ function endTest(world, R, why) {
   const prev = forgeTest();
   const rec = { best: Math.max(prev?.best | 0, met), last: met, day, n, stopped: why !== 'done' };
   try { setForgeTest(rec); } catch { /* the fold refused; the plaque still says it */ }
+  note('test', `the Forge's remote — ${met} of ${n} met, ${rating(met, n)}${why !== 'done' ? ` (${why})` : ''}`, world); // V19: the journal
   R.plaque?.draw(plaqueRows());
   R.tests++;
   R.last = { met, n, why, t: T.t, fired: T.shots };

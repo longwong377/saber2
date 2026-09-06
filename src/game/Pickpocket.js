@@ -33,6 +33,7 @@ import { resident } from './StationCast.js';
 import { purse, spend, pay } from './Credits.js';
 import { pickpocketState, setPickpocketState } from './StationSave.js';
 import { stationDiff } from './StationDifficulty.js';
+import { note } from './Journal.js';
 
 export const PICK = Object.freeze({
   /** The cut he takes: 5–15 % of the purse, seeded off the day. */
@@ -151,6 +152,7 @@ function lift(world, st, life, T, body) {
     },
   };
   setPickpocketState({ day, taken: amount, caught: false, gone: false, bounty: P.bounty, name: P.name });
+  note('pickpocket', `${P.name} lifted ${amount} credits off you on the ring`, world); // V19: the journal
   world.notify?.('PICKPOCKET', `${P.name} brushed past you — ${amount} credits lighter, and he is running for ${dest.p?.name || 'cover'}`);
   return true;
 }

@@ -2208,6 +2208,16 @@ export const SHAPES = {
      * room §3.2 names, and rule 4 reads this room from its door. */
     kit.slab(M.deep, 2.1, 0.5, 1.0, w / 2 - 2.4, 0.42, d / 2 - 1.2, { collide: true, bevel: 0 });
     kit.slab(M.wing, 2.0, 0.18, 0.9, w / 2 - 2.4, 0.75, d / 2 - 1.2, { collide: false, bevel: 0 });
+    /* THE DESK, WITH THE JOURNAL OPEN ON IT (V19 addition 2): a small slab
+     * against the right wall between the saber stand and the bunk, and an
+     * open book on it — two thin leaves, angled like a spine. `Home.js`
+     * reads `desk` off this record for the key's reach; `Journal.js` is
+     * what opens. */
+    const deskX = w / 2 - 0.55, deskZ = -d / 2 + 3.4;
+    kit.slab(M.deep, 0.7, 0.76, 1.3, deskX, 0.38, deskZ, { collide: true, bevel: 0 });
+    kit.slab(M.mark, 0.30, 0.02, 0.22, deskX - 0.16, 0.775, deskZ - 0.13, { collide: false, bevel: 0 });
+    kit.slab(M.mark, 0.30, 0.02, 0.22, deskX - 0.16, 0.775, deskZ + 0.13, { collide: false, bevel: 0 });
+    kit.slab(M.wing, 0.30, 0.04, 0.03, deskX - 0.16, 0.78, deskZ, { collide: false, bevel: 0 });
     ctx.home = {
       id: p.id, deck: p.deck, x: p.x, z: p.z, yaw: p.yaw, y: floorOf(p), w, d, h,
       /* Where a placed piece may not stand, in the room's own frame. */
@@ -2216,7 +2226,10 @@ export const SHAPES = {
         { x: -w / 2 + 2.4, z: -d / 2 + 0.4, w: 4.2, d: 0.7 },         // the trophy rack
         { x: w / 2 - 1.4, z: -d / 2 + 1.0, w: 0.6, d: 0.6 },          // the saber stand
         { x: w / 2 - 2.4, z: d / 2 - 1.2, w: 2.1, d: 1.0 },           // the bunk
+        { x: deskX, z: deskZ, w: 0.7, d: 1.3 },                       // the desk
       ],
+      /** Where the journal lies, in the room's own frame. */
+      desk: { x: deskX, z: deskZ },
     };
   },
 

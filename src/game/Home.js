@@ -65,6 +65,7 @@ import { homeState, setHomeState } from './StationSave.js';
 import { signPanel } from './StationKit.js';
 import { floorOf } from './StationPlan.js';
 import { atBed, beginSleep } from './Sleep.js';
+import { openJournal, journalKey, journalOpen, flipJournal, stepJournal } from './Journal.js';
 import * as Food from './Food.js';
 /**
  * ── AND THE ONE SMALL COMPANION — V15 §1.3's last clause ──────────────────
@@ -1059,7 +1060,7 @@ export function dressHome(world, st, M, opts = {}) {
      * A guest's arrives on their home packet and is clamped by `cleanPet`.
      */
     pet: mine ? null : cleanPet(opts.pet),
-    surfaces: null, mirror: null, galley: null, panel: null, sign: null, wheel: null, draws: 0,
+    surfaces: null, mirror: null, galley: null, desk: null, panel: null, sign: null, wheel: null, draws: 0,
     /** Every mesh this dressing put in the room's group — see `undressOne`. */
     built: [],
   };
@@ -1077,6 +1078,9 @@ export function dressHome(world, st, M, opts = {}) {
   dressSurfaces(world, h);
   dressMirror(world, h);
   dressGalley(world, h);
+  /* THE DESK is the shape's own (`StationKit.twinroom`); only its reach is
+   * kept here. A home dressed in a room without one has no journal to read. */
+  h.desk = h.spot.desk ? { lx: h.spot.desk.x, lz: h.spot.desk.z, at: toWorld(h, h.spot.desk.x, h.spot.desk.z).clone() } : null;
   dressPanel(world, h);
   /* …and the one fixture that may not be there at all. AFTER the panel and
    * before the sign for no reason but the order they stand in the room. */
@@ -2139,6 +2143,8 @@ function undressMirror(h) {
  * kitchen in it whether or not anything is in the kitchen today.
  */
 const GALLEY_REACH = 2.4;
+/** How near the desk the key opens the journal. */
+const DESK_REACH = 2.0;
 
 function dressGalley(world, h) {
   const { w, d } = h.spot;
@@ -2786,6 +2792,7 @@ function aimOnFloor(world, h, opts = {}) {
 export function homeKey(world, opts = {}) {
   const h = world?._home;
   if (!h) return false;
+  if (journalKey(world)) return true;
   if (h.held) { dropPiece(world); return true; }
   /**
    * ══ AND IN SOMEBODY ELSE'S APARTMENT IT SPENDS THE PRESS ON A SENTENCE ══
@@ -2842,6 +2849,9 @@ export function homeKey(world, opts = {}) {
     return true;
   }
 
+  /* THE JOURNAL, at the desk (V19 addition 2). */
+  if (p && h.desk && p.distanceTo(h.desk.at) < DESK_REACH) return openJournal(world, h.desk.at);
+
   /**
    * AND A PARTITION. §1.3.3's *"let a third be unlocked"* — the key is the
    * toggle for whether there is a third room and the wheel slides the wall you
@@ -2897,6 +2907,7 @@ export function homeKey(world, opts = {}) {
 export function homeWheel(world, notches) {
   const h = world?._home;
   if (!h || !notches) return false;
+  if (journalOpen(world)) { flipJournal(world, notches > 0 ? 1 : -1); return true; }
   if (h.held) { rotatePiece(world, notches); return true; }
   if (!inHome(world)) return false;
   /* AT THE PANEL THE WHEEL PAINTS. Ahead of the catalogue, because a player
@@ -2952,6 +2963,7 @@ function attachWheel(world, h) {
  */
 export function stepHome(world, dt) {
   const h = world?._home;
+  stepJournal(world);
   if (!h?.held) return;
   const aim = aimOnFloor(world, h);
   if (aim) movePiece(world, aim.x, aim.z);
@@ -3085,7 +3097,7 @@ function undressOne(world, h) {
     m.geometry?.dispose?.();
   }
   if (h.built) h.built.length = 0;
-  h.surfaces = h.mirror = h.galley = h.sign = h.panel = h.pad = null;
+  h.surfaces = h.mirror = h.galley = h.desk = h.sign = h.panel = h.pad = null;
   const at = (world?._homes || []).indexOf(h);
   if (at >= 0) world._homes.splice(at, 1);
   if (world && world._home === h) world._home = null;

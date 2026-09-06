@@ -81,6 +81,7 @@
  */
 
 import { makeRng } from '../engine/MathUtil.js';
+import { note } from './Journal.js';
 import {
   SKINS, groundById, dressGround, makeCard, priceCard, favouriteOf,
   runSpectacle, recordResult, readForm, announce, MOMENTS,
@@ -770,6 +771,7 @@ export function settleTickets(tickets = [], result = null) {
     returned += back;
     lines.push({ ...t, won, returned: back });
   }
+  if (result && lines.length) note('bet', `the tote — ${staked} staked, ${returned} back; ${lines.filter((l) => l.won).length} of ${lines.length} ticket${lines.length === 1 ? '' : 's'} won`); // V19: the journal
   return { staked, returned, net: returned - staked, lines };
 }
 

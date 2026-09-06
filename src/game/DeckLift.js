@@ -138,6 +138,7 @@ import { deckMats, insigniaPanel } from './DeckKit.js';
  * so at evaluation time both are in the temporal dead zone. See the note over
  * `frame()` in DeckLife.js for the trap. */
 import { DECK, LIFT } from './Hangar.js';
+import { note } from './Journal.js';
 
 const _v = new THREE.Vector3();
 const _m = new THREE.Matrix4();
@@ -2201,6 +2202,7 @@ export function stepDeckLift(world, dt) {
          * with the switch off there is only one floor and only the second can
          * ever fire, which is today's behaviour exactly. */
         const f = floorTarget(st);
+        if (f && f.level) note('lift', `the lift — to ${f.label || `deck ${f.deck ?? f.n}`}`, world); // V19: the journal
         if (f && f.level) world.onDeckLift?.(f);
         else world.onDeckLeave?.();
       }

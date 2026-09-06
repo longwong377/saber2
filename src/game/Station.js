@@ -93,6 +93,7 @@ import { pitAtPlace } from './Pits.js';
 import { audio } from '../engine/Audio.js';
 import { venueAtPlace, settleTickets, crowdAt } from './Tote.js';
 import { openWheelhouse, wheelhouseLine, drumQuote, WHEELHOUSE } from './Casino.js';
+import { note } from './Journal.js';
 /* THE JOB BOARD'S DOOR. `takeJob` is NOT here: a panel takes a job straight
  * off `Quests.js`, and a pass-through in this file would be a second name for
  * the same call and one more thing to keep true. What this file owns is the
@@ -2655,6 +2656,7 @@ export function talkTo(world, body) {
     notice: noticeFor(day, (body.stationSlot | 0) + (body.stationPlace | 0)),
     companion: body._stationAnimal?.stationRole?.split(' —')[0] || null,
     standing: standing(),
+    refusal: body.stationRefusal || null, // V19 addition 3: a refuser's reason
   });
   if (!said) {
     world.notify?.(residentLine(who).toUpperCase(), 'nothing to say to you today');
@@ -3726,6 +3728,7 @@ export function stakeAtDrum(bet) {
 /** What the wheel owed, and what the wallet actually handed over. */
 export function payAtDrum(ticket, at) {
   const owed = drumQuote(ticket, at);
+  note('bet', `the Drum — ${ticket?.stake | 0} on ${ticket?.label || 'the wheel'}, stopped on ${at}: ${owed > 0 ? `paid ${owed}` : 'lost'}`); // V19: the journal
   const paid = owed > 0 ? pay(owed, 'drum') : 0;
   return { owed, paid, capped: paid < owed, won: owed > 0 };
 }

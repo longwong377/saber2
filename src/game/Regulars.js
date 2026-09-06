@@ -23,6 +23,7 @@
  */
 
 import { regularsState, setRegularsState, standing, stationDay } from './StationSave.js';
+import { note } from './Journal.js';
 import { openJobs, owedJobs } from './Quests.js';
 import { PLACE } from './StationPlan.js';
 import { barkFor, homeFor, RHYTHMS } from './StationCast.js';
@@ -229,6 +230,7 @@ export function talkHook(world, body) {
   if (!talkable(body)) return false;
   const rec = recordTalk(body);
   if (!rec) return false;
+  note('talk', `talked to ${body.stationName} — the ${ordinal(rec.n)} time`, world); // V19: the journal
   if (rec.n < REGULAR_AT) return false;
   plate(body, true);
   const [head, line] = regularTalkLine(body, world, rec);

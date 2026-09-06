@@ -81,6 +81,7 @@ import { disarmKinetic } from './Impact.js';
  * weather below. See the EVENTS section and `StationEvents.js`'s header. */
 import { beginStationEvents, calmStationEvents, stepStationEvents, blackoutDip } from './StationEvents.js';
 import { stepVigil } from './Vigil.js';
+import { stepMuster } from './Promotion.js';
 import { stepPickpocket } from './Pickpocket.js';
 import { stepStationWar, undressStationWar } from './StationWar.js';
 import { stationDiff } from './StationDifficulty.js';
@@ -4423,6 +4424,7 @@ export function stepStationLife(world, dt) {
   stepVigil(world, st, life, dt, eventTools());
   stepPickpocket(world, st, life, dt, eventTools());
   stepStationWar(world, st, life, dt, eventTools()); // V19 add 1: the war outside, on the station
+  stepMuster(world, st, life, dt, eventTools()); // V19 addition 3: the 08:00 muster in #29, and the refusers by the bunks
   /* The reactor's dip, decaying once the surge is over — one number, and
    * `stepDip` below is the reader it did not have. */
   if (!life.event && life.dip > 0) life.dip = Math.max(0, life.dip - dt * 0.9);
