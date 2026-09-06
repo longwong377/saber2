@@ -118,22 +118,22 @@ at deck height) and `seated.mjs` sits the player.
 1. A holonet anchor with a face you recognise, gossiping about what you did. **BUILT** (`Holonet.js`, the anchor is a resident; `holonet.mjs`).
 2. A market day: the concourse doubles its stalls, the tram runs full. **BUILT** (`StationEvents.js` `marketFill`, 10:00; Concourse 124→204).
 3. A blackout: a reactor surge drops a deck's lights for thirty seconds and the guards come out with lamps. **BUILT** (`StationEvents.js` `surge`).
-4. A shuttle at the docking throat that takes you to the flight deck the long way, outside.
-5. A pickpocket to chase across the concourse, and a bounty board that pays for him.
+4. A shuttle at the docking throat that takes you to the flight deck the long way, outside. **BUILT** (`Shuttle.js`: 843 m in 32 s round the drum, into the flight deck's mouth, the lift's own door at the end).
+5. A pickpocket to chase across the concourse, and a bounty board that pays for him. **BUILT** (`Pickpocket.js`, a `BOUNTY` row on #25; `vigil.mjs`).
 6. Rain in the arboretum on a schedule, with residents going to stand in it. **BUILT** (`StationEvents.js` `rain`, 19:00).
-7. Your company's names on the memorial wall read aloud at the chapel vigil.
+7. Your company's names on the memorial wall read aloud at the chapel vigil. **BUILT** (`Vigil.js`, 20:00 in #22; the same names on #45's wall).
 8. A morning: shutters going up, the ranges lit one by one, the first tram. **BUILT** (`Morning.js`: shutters 23:00/06:00, strips sector by sector 06:00–07:00, the 06:00 tannoy).
 9. Drazi-quarter fights that spill onto the ring and get broken up. **BUILT** (`StationEvents.js` `drazifight`, 15:00).
 10. Regulars: people you talk to three times remember you and greet you first. **BUILT** (`Regulars.js`, `regulars` fold; `regulars.mjs`).
 11. Sleeping in the cabin plays the night as a time-lapse through the window. **BUILT** (`Sleep.js`: the bunk, 0.5 s a station-hour, the planet's terminator on the cabin screen).
 12. A window seat in the dome: sitting swaps to a cinematic camera of the battle. **BUILT** (`DomeSeat.js`, on the dome's or a promenade window seat).
 13. A resident who follows you asking about your saber, and can be told to go away. **BUILT** (`Follower.js`: one per deck visit, four questions naming the real colour, the key dismisses).
-14. A funeral you can attend, with the man's bunk stripped after.
+14. A funeral you can attend, with the man's bunk stripped after. **BUILT** (`Vigil.js`: the litter, the reading, the row of his company; #29's bunk bare with an effects box; `funerals` fold).
 15. A late-night channel: the Drum spin live on every screen with the hour. **BUILT** (`Holonet.js` drum programme).
 16. Weather on the planet below, visible from the dome, changing the news. **HALF** — `StationEvents.weatherAt` is in the news and on the orbit chart; nothing in the dome yet.
-17. A tram interior you can sit in, with residents across from you.
-18. Companions greeting each other; two massiffs meeting on the concourse.
-19. The Mandalorian tests your saber against a remote in the Forge.
+17. A tram interior you can sit in, with residents across from you. **BUILT** (`TramCabin.js`: benches, poles, route map, 2–4 riders who get off at their stops; the seat moves with the car).
+18. Companions greeting each other; two massiffs meeting on the concourse. **BUILT** (`Greetings.js`: animals circle nose-to-tail, owners bark; same-quarter walkers raise a hand).
+19. The Mandalorian tests your saber against a remote in the Forge. **BUILT** (`RemoteTest.js`: eight bolts, Bo calls the count, the rating on a plaque; `forgeTest` fold).
 20. Curved ring rooms that follow the drum, with windows onto the promenade glass. **HALF** — `StationKit.arcFront`: every outer room's front is a chord of the ring with glass beside the door on public rooms; the side and back walls are still straight.
 
 **Ten holes:**
@@ -142,7 +142,7 @@ at deck height) and `seated.mjs` sits the player.
 3. No windows between rooms (rule 5 is a wall with a door). **HALF** — glazed fronts onto the ring on public rooms; nothing room-to-room yet.
 4. Residents do not sit, eat, drink or hold anything. **CLOSED** — `Rig.poseSeated`, the pool's sit verb with a cup (`seated.mjs`), and the player's own (`StationSit.js`: the key beside a chair sits you, a move key stands you up).
 5. The medbay has no visible healing beyond occupied tanks. **CLOSED** — `Healing.js`: a medic on a seeded round of the lit tanks, bubbling fluid, a heart-rate monitor over each tank, a healed man sitting up and walking out to the ring, the count falling (`healing.mjs`).
-6. Co-op on the station is apartments only; population and clock unproven with a guest.
+6. Co-op on the station is apartments only; population and clock unproven with a guest. **CLOSED** — `coop.mjs` holds clock, census, no ghosts and the plate height on decks 40 and 44 with a guest.
 7. Sound is levels, not beds; the PA has three lines. **CLOSED** — `StationSound.js`: seven synthesised beds crossfaded by `placeUnder` in 1.5 s, the tram on a distance law, and a 24-line seeded PA with a chime, one per 45 station-min (`healing.mjs`).
 8. Human, Brakiri, Llort and Other share one face; the Vree wears the Kel Dor mask. **CLOSED** — `Bodies.SPECIES_HEADS` brakiri/llort/vree/other.
 9. Every screen but the feeds was static text — the holonet is the answer, and it is new. **CLOSED** — `Holonet.js`, 24/7 procedural, on every kit TV.
