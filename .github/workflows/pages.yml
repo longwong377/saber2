@@ -54,10 +54,20 @@ jobs:
         with:
           # create the Pages site on first run so no manual switch is needed
           enablement: true
+      - name: Stage the site under its play path
+        # THE LINK HAS A NAME, AND THE OLD ONE STAYS DARK. The game is served
+        # from `/saber2/<PLAY_PATH>/` and nothing at all from `/saber2/`: the
+        # site root has no index, so the previous link answers GitHub's 404
+        # while the new one plays. Change PLAY_PATH to move the link again.
+        env:
+          PLAY_PATH: borz-station
+        run: |
+          rm -rf _site && mkdir -p "_site/$PLAY_PATH"
+          tar --exclude=./_site --exclude=./.git --exclude=./node_modules -cf - . | tar -xf - -C "_site/$PLAY_PATH"
+          test -f "_site/$PLAY_PATH/index.html"
       - name: Upload site
         uses: actions/upload-pages-artifact@v3
         with:
-          # the repository is the site; there is nothing to build
-          path: '.'
+          path: '_site'
       - id: deployment
         uses: actions/deploy-pages@v4
