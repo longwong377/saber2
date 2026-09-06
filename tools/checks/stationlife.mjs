@@ -451,6 +451,12 @@ export async function run({ check, assert }) {
         /* The scheduler may pick another row for this hour; wind it until it
          * picks this one, the same way the clause above does. */
         for (let i = 0; i < 200 && life.event?.id !== e.id; i++) {
+          /* A WRONG ROW IS WOUND OUT, NOT DROPPED. Clearing `life.event` by
+           * hand skips `calm`, and a `'deck'` row that fired first (the tram
+           * fault, on 48) would leave its ten walkers flagged `stationStir` —
+           * which this clause then reads as people the named row moved out of
+           * a corridor it never named. */
+          if (life.event) { life.eventFor = 0.01; world.update(1 / 60, idle); }
           life.event = null; life.eventFor = 0; life.eventIn = 0; life.spawned++;
           st.hour = HOUR + 0.5;
           world.update(1 / 60, idle);
@@ -526,6 +532,222 @@ export async function run({ check, assert }) {
       const trips = [...life.live.values()].reduce((a, b) => a + (b.wayTrips | 0), 0);
       assert(trips > 0, 'no walker reached a destination in 57 s — a route that never ends is a pace, not a walk');
       return `${walkers.length} walkers, ${legs} on a planned route, ${trips} arrivals in 57 s`;
+    } finally { world.dispose?.(); }
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════
+   *  V18 — EVENTS THAT ARE SEEN, NOT ANNOUNCED
+   * ════════════════════════════════════════════════════════════════════════ */
+
+  /** Wind the clock to `HOUR` until the scheduler picks row `id`; a wrong row
+   *  is wound out through its own countdown so `calm` puts its people back. */
+  const fireRow = (world, idle, life, st, id, HOUR) => {
+    for (let i = 0; i < 200; i++) {
+      if (life.event) { life.eventFor = 0.01; world.update(1 / 60, idle); }
+      life.event = null; life.eventFor = 0; life.eventIn = 0; life.dip = 0; life.spawned++;
+      st.hour = HOUR + 0.5;
+      world.update(1 / 60, idle);
+      if (life.event?.id === id) return true;
+    }
+    return false;
+  };
+  /** Is `x,z` inside a place's footprint (yaw included)? */
+  const inRoom = (p, x, z) => {
+    const dx = x - p.x, dz = z - p.z;
+    const c = Math.cos(-p.yaw), sn = Math.sin(-p.yaw);
+    const lx = dx * c + dz * sn, lz = -dx * sn + dz * c;
+    return Math.abs(lx) <= p.w / 2 && Math.abs(lz) <= p.d / 2;
+  };
+  const wrapPi = (a) => ((a + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+  const TIMED_HOURS = new Set(L.EVENTS.filter((x) => x.at !== null).map((x) => x.at));
+  const openHour = (from) => { let h = from; for (let i = 0; i < 24 && TIMED_HOURS.has(h); i++) h = (h + 1) % 24; return h; };
+
+  check('stationlife: market day — the Concourse, the Narn quarter, every platform and every desk hold double heads', () => {
+    const e = L.EVENTS.find((x) => x.id === 'market');
+    assert(e, 'no market row');
+    const ids = [9, 32, 40, 40.2, 40.3, 40.4, ...P.PLACES.filter((p) => p.kiosk && p.heads).map((p) => p.id)];
+    const said = [];
+    for (const id of ids) {
+      const p = P.PLACE.get(id);
+      assert(p, `#${id} is not in the gazetteer`);
+      const plain = L.headcount(p, p.peak ?? 13, null), on = L.headcount(p, p.peak ?? 13, e);
+      assert(on - plain === p.heads, `#${id} ${p.name}: market day adds ${on - plain}, not its ${p.heads} heads`);
+      assert(on >= 2 * p.heads, `#${id} ${p.name}: ${plain} → ${on} on market day is under twice its ${p.heads} heads`);
+      said.push(`#${id} ${plain}→${on}`);
+    }
+    return `${ids.length} places at their own peak: ${said.join(', ')}`;
+  });
+
+  check('stationlife: the weather below is one word a day, the same all day and not the same every day', async () => {
+    const E = await import('../../src/game/StationEvents.js');
+    const words = new Set(E.WEATHER.map((w) => w.word));
+    const seen = new Set();
+    for (let d = 0; d < 8; d++) {
+      const a = E.weatherAt(d, 'Kessel'), b = E.weatherAt(d, 'Kessel');
+      assert(a.word === b.word && a.value === b.value, `day ${d} answered twice differently: ${a.line} / ${b.line}`);
+      assert(words.has(a.word), `day ${d}: '${a.word}' is not a weather word`);
+      assert(Number.isFinite(a.value), `day ${d}: value ${a.value}`);
+      seen.add(a.word);
+    }
+    assert(seen.size >= 2, `eight days of Kessel were all '${[...seen][0]}'`);
+    const other = [...Array(8).keys()].some((d) => E.weatherAt(d, 'Kessel').line !== E.weatherAt(d, 'Hoth').line);
+    assert(other, 'two theatres had the same eight days of weather');
+    return `8 days over Kessel: ${[...Array(8).keys()].map((d) => E.weatherAt(d, 'Kessel').line).join(' | ')}`;
+  });
+
+  check('stationlife: a blackout — near-black, everybody stops and turns to the void, two lamps walk the ring, and it comes back', async () => {
+    const { world, idle } = await station(40);
+    try {
+      const { run: step } = await import('./_coop.mjs');
+      const E = await import('../../src/game/StationEvents.js');
+      const st = world._station, life = world._stationLife;
+      step(world, 10, idle);
+      assert(st.rig, 'no light rig');
+      assert(st.weather?.word && st.weather.line === E.weatherAt(st.day | 0, st.theatre).line,
+        `st.weather is ${JSON.stringify(st.weather)} against weatherAt(${st.day | 0}, ${st.theatre})`);
+      const e = L.EVENTS.find((x) => x.id === 'surge');
+      assert(e?.black > 0, 'the surge row declares no blackout');
+      assert(fireRow(world, idle, life, st, 'surge', openHour(3)), 'the surge would not fire');
+      step(world, 3, idle);
+      const base = st.rig.base[0];
+      assert(st.rig.key.intensity < base * 0.02, `key light at ${st.rig.key.intensity.toFixed(3)} of ${base} — not near-black`);
+      assert(st.rig.amb.intensity < st.rig.base[1] * 0.1, `ambient at ${st.rig.amb.intensity.toFixed(3)} of ${st.rig.base[1]} — the floor did not drop`);
+      /* THE LAMPS: two guards on the ring, a lit slab in hand, walking. */
+      const lamps = life.ev?.lamps || [];
+      assert(lamps.length === 2, `${lamps.length} lamps on the ring, not 2`);
+      for (const Lp of lamps) {
+        assert(life.live.get(Lp.key) === Lp.body, `${Lp.key} is not in the pool`);
+        const r = Math.hypot(Lp.body.position.x, Lp.body.position.z);
+        assert(Math.abs(r - P.DRUM.ringR) < 2, `${Lp.key} is at r=${r.toFixed(1)}, not on the ring (${P.DRUM.ringR})`);
+        assert(Lp.mesh.parent === world.scene, `${Lp.key}'s lamp is not in the scene`);
+        assert(Math.abs(Lp.mesh.position.y - (Lp.body.position.y + 0.95)) < 0.05, `${Lp.key}'s lamp is at y=${Lp.mesh.position.y.toFixed(2)}, body ${Lp.body.position.y.toFixed(2)} — not hand height`);
+        assert(Lp.mesh.material.emissive || Lp.mesh.material.isMeshBasicMaterial, `${Lp.key}'s lamp is not lit`);
+        assert(Math.hypot(Lp.mesh.position.x - Lp.body.position.x, Lp.mesh.position.z - Lp.body.position.z) < 0.6, 'the lamp is not in hand');
+      }
+      const at0 = lamps.map((Lp) => [Lp.body.position.x, Lp.body.position.z]);
+      /* EVERYBODY ELSE STOPS AND LOOKS AT THE VOID. */
+      let stood = 0, held = 0, turned = 0;
+      for (const b of life.live.values()) {
+        if (!b?.position || b.wayMission || b.__stationTouched) continue;
+        const toVoid = Math.atan2(-b.position.x, -b.position.z);
+        if (b.wayR) { held++; assert(b.wayDwell > 0, 'a walker is still walking in the dark'); }
+        else if (b.standX !== undefined) {
+          stood++;
+          assert(b.standTx === b.standCx && b.standTz === b.standCz, 'a stander still has a step to take in the dark');
+          if (Math.abs(wrapPi(b.facing - toVoid)) < 0.08) turned++;
+        }
+      }
+      assert(stood > 5, `${stood} standing bodies — not enough of a room to measure`);
+      assert(turned >= stood * 0.8, `${turned} of ${stood} standers face the void`);
+      step(world, 2, idle);
+      const walked = lamps.map((Lp, i) => Math.hypot(Lp.body.position.x - at0[i][0], Lp.body.position.z - at0[i][1]));
+      assert(walked.every((d) => d > 1.5), `the lamps walked ${walked.map((d) => d.toFixed(1)).join('/')} m in 2 s`);
+      /* AND IT COMES BACK: the black runs out, the lamps go, the surge's own
+       * brown-out is what is left, and the end of the row restores the rig. */
+      step(world, e.black, idle);
+      assert(!(life.ev.black > 0), 'the blackout is still on after its own seconds');
+      assert(life.ev.lamps.length === 0, `${life.ev.lamps.length} lamps still out after the black`);
+      assert(!life.live.has('lamp:0') && !life.live.has('lamp:1'), 'the watch is still on the ring');
+      assert(st.rig.key.intensity > base * 0.3, `key light at ${st.rig.key.intensity.toFixed(2)} of ${base} after the black — never ramped back`);
+      assert(Math.abs(st.rig.amb.intensity - st.rig.base[1]) < st.rig.base[1] * 0.75, 'the ambient floor did not come back up');
+      life.eventFor = 0.01;
+      step(world, 3, idle);
+      assert(Math.abs(st.rig.key.intensity - base) < 1e-6, `key light came back at ${st.rig.key.intensity} of ${base}`);
+      assert(Math.abs(st.rig.amb.intensity - st.rig.base[1]) < 1e-6, 'ambient came back wrong');
+      return `key ${base}→0.00→${(base).toFixed(2)}, ${stood} stood and ${turned} faced the void, ${held} walkers held, 2 lamps walked ${walked.map((d) => d.toFixed(1)).join('/')} m, black ${e.black} s`;
+    } finally { world.dispose?.(); }
+  });
+
+  check('stationlife: rain in the arboretum — 200 falling slabs inside #23 and people who walk there to stand in it', async () => {
+    const room = P.PLACE.get(23);
+    const e = L.EVENTS.find((x) => x.id === 'rain');
+    assert(e?.rain && e.place === 23 && e.at !== null, 'no rain row on the Arboretum');
+    const { world, idle } = await station(room.deck);
+    try {
+      const { run: step } = await import('./_coop.mjs');
+      const st = world._station, life = world._stationLife;
+      world.player.position.set(room.door[0], P.floorOf(room) + 1, room.door[1]);
+      st.hour = e.at;
+      step(world, 12, idle);
+      assert(fireRow(world, idle, life, st, 'rain', e.at), 'the rain would not fire');
+      const R = life.ev?.rain;
+      assert(R?.mesh?.parent === world.scene, 'no rain sheet in the scene');
+      assert(R.mesh.count === 200, `${R.mesh.count} slabs, not 200`);
+      assert(Math.hypot(R.mesh.position.x - room.x, R.mesh.position.z - room.z) < 0.01, 'the sheet is not over the Arboretum');
+      /* INSIDE THE WALLS, FALLING, RECYCLED. */
+      const ys0 = Float32Array.from(R.ys);
+      step(world, 1, idle);
+      let moved = 0, out = 0;
+      for (let i = 0; i < 200; i++) {
+        if (R.ys[i] !== ys0[i]) moved++;
+        if (R.ys[i] < 0 || R.ys[i] > R.H || Math.abs(R.xs[i]) > room.w / 2 || Math.abs(R.zs[i]) > room.d / 2) out++;
+      }
+      assert(moved === 200, `${moved} of 200 slabs moved in a second`);
+      assert(out === 0, `${out} slabs are outside the room or the cut`);
+      const wrapped = R.ys.reduce((n, y, i) => n + (y > ys0[i] ? 1 : 0), 0);
+      assert(wrapped > 0, 'no slab reached the floor and went back to the top in a second');
+      /* AND PEOPLE WALK THERE. */
+      const keys = [...life.live.keys()].filter((k) => k.startsWith('rain:'));
+      assert(keys.length >= 4 && keys.length <= 6, `${keys.length} people set out for the rain; the row says ${e.visit}`);
+      const onRing = keys.filter((k) => life.live.get(k).wayR > 0 && life.live.get(k).wayLegs?.length).length;
+      assert(onRing >= 4, `${onRing} of them are on a route`);
+      step(world, 40, idle);
+      const inside = keys.map((k) => life.live.get(k)).filter((b) => b?.position && inRoom(room, b.position.x, b.position.z));
+      assert(inside.length >= 4, `${inside.length} of ${keys.length} are standing in the Arboretum after 40 s`);
+      for (const b of inside) assert(!b.wayR && b.standX !== undefined, 'a visitor in the rain is still a walker');
+      /* AND IT STOPS. */
+      life.eventFor = 0.01;
+      step(world, 2, idle);
+      assert(!life.ev.rain && R.mesh.parent === null, 'the rain is still falling after the row ended');
+      assert(![...life.live.keys()].some((k) => k.startsWith('rain:')), 'the visitors are still in the pool after the row ended');
+      return `200 slabs over ${R.H} m, ${wrapped} recycled in 1 s; ${keys.length} set out, ${inside.length} standing inside #23 after 40 s`;
+    } finally { world.dispose?.(); }
+  });
+
+  check('stationlife: a Drazi fight spills — two out onto the ring, shoving along it until the watch reaches them', async () => {
+    const room = P.PLACE.get(35);
+    const e = L.EVENTS.find((x) => x.id === 'drazifight');
+    assert(e?.spill === 2, 'the Drazi row does not spill');
+    const { world, idle } = await station(room.deck);
+    try {
+      const { run: step } = await import('./_coop.mjs');
+      const st = world._station, life = world._stationLife;
+      world.player.position.set(room.door[0], P.floorOf(room) + 1, room.door[1]);
+      st.hour = e.at;
+      step(world, 12, idle);
+      assert(fireRow(world, idle, life, st, 'drazifight', e.at), 'the fight would not fire');
+      step(world, 2, idle);
+      const B = life.ev?.brawl;
+      assert(B && B.keys.length === 2, `${B?.keys?.length ?? 0} Drazi came out`);
+      const two = B.keys.map((k) => life.live.get(k));
+      for (const b of two) {
+        assert(b?.position, 'a brawler is not a body');
+        assert(b.stationSpecies === 'drazi', `a brawler is ${b.stationSpecies}`);
+        const r = Math.hypot(b.position.x, b.position.z);
+        assert(Math.abs(r - P.DRUM.ringR) < 2.5, `a brawler is at r=${r.toFixed(1)}, not on the ring`);
+        assert(!inRoom(room, b.position.x, b.position.z), 'a brawler is still inside the quarter');
+      }
+      const gap = Math.hypot(two[0].position.x - two[1].position.x, two[0].position.z - two[1].position.z);
+      assert(gap < 2.5, `the two are ${gap.toFixed(1)} m apart — not a shoving match`);
+      assert(!B.down, 'they stood down before the watch arrived');
+      const a0 = B.a;
+      step(world, 4, idle);
+      const along = Math.abs(wrapPi(B.a - a0)) * P.DRUM.ringR;
+      assert(along > 0.8, `the fight moved ${along.toFixed(2)} m along the ring in 4 s`);
+      assert(B.guards.length === 2, `${B.guards.length} in the patrol`);
+      step(world, 10, idle);
+      assert(B.down, 'the watch never reached them');
+      for (const g of B.guards) {
+        const gb = life.live.get(g.key);
+        assert(gb?.position, 'a guard is not a body');
+        const d = Math.min(...two.map((b) => Math.hypot(b.position.x - gb.position.x, b.position.z - gb.position.z)));
+        assert(d < 4, `a guard stood down ${d.toFixed(1)} m from the fight`);
+      }
+      life.eventFor = 0.01;
+      step(world, 2, idle);
+      assert(!life.ev.brawl, 'the brawl is still up after the row ended');
+      assert(![...life.live.keys()].some((k) => k.startsWith('brawl')), 'the Drazi or the watch are still on the ring after the row ended');
+      return `two Drazi ${gap.toFixed(1)} m apart on the ring outside #35, ${along.toFixed(1)} m along it in 4 s, stood down when the watch closed`;
     } finally { world.dispose?.(); }
   });
 

@@ -75,6 +75,9 @@ import { handlerOf, handlersOn } from './Pits.js';
  * MathUtil and Audio and nothing that reaches back here, so this one is a
  * plain edge rather than a cycle. */
 import { disarmKinetic } from './Impact.js';
+/* V18: the four rows that are SEEN — blackout, rain, the Drazi spill and the
+ * weather below. See the EVENTS section and `StationEvents.js`'s header. */
+import { beginStationEvents, calmStationEvents, stepStationEvents, blackoutDip } from './StationEvents.js';
 /* THE ONE EXEMPTION FROM THE DAILY REROLL — see `occupant`. `Quests.js` holds
  * the ledger and answers in SEEDS, so this file still decides who stands where
  * and `StationCast.resident` still decides what a person looks like. */
@@ -3214,7 +3217,11 @@ export const EVENTS = [
      * cast is seen at once"*. Twenty-six more is a third again on the fullest
      * room on the station, and the ring outside it fills with the walk to it
      * through `pickDest`, which weights a destination by its headcount. */
-    fill: { 9: 26, 7: 6 }, stir: 4, stirIn: 'deck',
+    /* V18: MARKET DAY IS DOUBLE HEADS — the Concourse, the Narn quarter's own
+     * market, every tram platform and every kiosk desk hold their whole
+     * gazetteer count AGAIN on top of the curve, so at the peak hour each is
+     * at twice its declared `heads`. `marketFill` reads the gazetteer. */
+    fill: marketFill(), stir: 4, stirIn: 'deck',
     say: ['MARKET DAY', 'the Concourse is at its fullest'],
   },
   {
@@ -3230,9 +3237,12 @@ export const EVENTS = [
     say: ['FIRE DRILL', 'every deck, ten minutes — the halls empty into the corridors'],
   },
   {
-    id: 'surge', at: null, place: 48, mins: 6,
-    dim: 0.55,
-    say: ['REACTOR SURGE', 'the lights dip across the drum'],
+    id: 'surge', at: null, place: 48, mins: 20,
+    /* V18 BLACKOUT: `black` real seconds at near-black before the brown-out
+     * below, everybody stops and turns to the void, and the watch walks the
+     * ring with lamps. `StationEvents.stepBlackout` is the reader. */
+    dim: 0.55, black: 30,
+    say: ['REACTOR SURGE', 'the deck goes dark — stand still; the watch has lamps'],
   },
   {
     id: 'tramfault', at: null, place: 40.2, mins: 30,
@@ -3241,7 +3251,9 @@ export const EVENTS = [
   },
   {
     id: 'drazifight', at: 15, place: 35, mins: 20,
-    fill: { 35: 8 }, stir: 4, stirIn: [35],
+    /* V18: `spill` — two Drazi come out onto the ring and shove each other
+     * along it until a patrol reaches them. `StationEvents.stepBrawl`. */
+    fill: { 35: 8 }, stir: 4, stirIn: [35], spill: 2,
     say: ['THE DRAZI QUARTER', 'green and purple, again — the quarter is out watching'],
   },
   {
@@ -3258,7 +3270,37 @@ export const EVENTS = [
     fill: { 5: 4, 2: 4, 3: 6 }, stir: 6, stirIn: 'deck',
     say: ['LAUNCH CYCLE', 'the Cobra bay, the tower and the ready room all move at once'],
   },
+  {
+    id: 'rain', at: 19, place: 23, mins: 40,
+    /* V18 RAIN: a sheet of falling slabs inside #23's walls and `visit`
+     * residents who walk the ring to stand in it. `StationEvents.beginRain`. */
+    fill: { 23: 6 }, rain: true, visit: 5,
+    say: ['THE ARBORETUM', 'rain on the hour — the benches are filling'],
+  },
 ];
+
+/** V18 MARKET DAY: every place the market touches holds its `heads` again. */
+function marketFill() {
+  const fill = { 7: 6 };
+  for (const p of PLACES) {
+    if (p.external || !p.heads) continue;
+    if (p.id === 9 || p.id === 32 || p.stop || p.kiosk) fill[p.id] = p.heads;
+  }
+  return fill;
+}
+
+/**
+ * V18: what `StationEvents.js` borrows from this file. Built once, on first
+ * use, because `WALK_PACE` and the guards' constants are declared further
+ * down and a module-scope literal here would read them in their TDZ.
+ */
+let _tools = null;
+function eventTools() {
+  return _tools || (_tools = {
+    h2, setOut, removeBody, standHere, slotIn, destsOn, missionWalker, inRoom, wrapPi, arcLeg, radLeg,
+    GUARD_KIT, RING_WALK, GUARD_PACE, WALK_PACE,
+  });
+}
 
 /**
  * ══ WHAT IS HAPPENING ON THE STATION RIGHT NOW ════════════════════════════
@@ -3318,20 +3360,22 @@ function stepDip(st, life) {
   const rig = st.rig;
   if (!rig) return;
   const k = 1 - Math.max(0, Math.min(1, life.dip));
-  if (rig.lit === k) return;
-  rig.lit = k;
+  /* V18: a BLACKOUT drops the floor too — near-black is the point of it. */
+  const floor = life.ev?.black > 0 ? 0.04 : 0.3;
+  if (rig.lit === k && rig.floor === floor) return;
+  rig.lit = k; rig.floor = floor;
   rig.key.intensity = rig.base[0] * k;
   /* The ambient and the fill keep a floor: a drum at a dead stop with no
    * ambient at all is a black screen, and §3.4 asks for a dip. */
-  rig.amb.intensity = rig.base[1] * (0.3 + 0.7 * k);
-  rig.fill.intensity = rig.base[2] * (0.3 + 0.7 * k);
+  rig.amb.intensity = rig.base[1] * (floor + (1 - floor) * k);
+  rig.fill.intensity = rig.base[2] * (floor + (1 - floor) * k);
   const M = st.mats;
   if (!M) return;
   for (let i = 0; i < DIP_MATS.length; i++) {
     const m = M[DIP_MATS[i]];
     if (!m) continue;
     if (m.userData.dip0 === undefined) m.userData.dip0 = m.emissiveIntensity;
-    m.emissiveIntensity = m.userData.dip0 * (0.2 + 0.8 * k);
+    m.emissiveIntensity = m.userData.dip0 * (floor * 0.67 + (1 - floor * 0.67) * k);
   }
 }
 
@@ -3395,10 +3439,11 @@ function stir(st, life, e) {
  * is only where the body IS, so a man who walked forty metres walks back
  * rather than snapping to his slot on the frame the drill ends.
  */
-function calm(life) {
+function calm(life, world = null) {
   const was = _event;
   life.event = null;
   life.eventFor = 0;
+  if (world) calmStationEvents(world, life, eventTools());
   if (!was?.stir) return;
   for (const body of life.live.values()) {
     if (!body?.stationStir) continue;
@@ -3417,6 +3462,9 @@ function calm(life) {
 }
 
 function stepEvents(world, st, life, dt) {
+  /* V18: the seen rows and the day's weather, every frame, before the clock
+   * — so an effect whose row was cleared by hand is put down this frame. */
+  stepStationEvents(world, st, life, dt, eventTools());
   /* ── THE ONE THAT IS RUNNING, AND THE MINUTE IT STOPS ─────────────────── */
   if (life.eventFor > 0) {
     life.eventFor -= dt;
@@ -3425,8 +3473,8 @@ function stepEvents(world, st, life, dt) {
      * which `determinism.mjs` forbids in `src/` and which would put two
      * machines in a co-op session in two different rooms. */
     const dim = _event?.dim;
-    if (dim) life.dip = dim * (0.72 + 0.28 * Math.sin(life.eventFor * 7.3));
-    if (life.eventFor <= 0) calm(life);
+    if (dim) life.dip = blackoutDip(life, dim) ?? dim * (0.72 + 0.28 * Math.sin(life.eventFor * 7.3));
+    if (life.eventFor <= 0) calm(life, world);
     return;
   }
   life.eventIn -= dt;
@@ -3442,6 +3490,7 @@ function stepEvents(world, st, life, dt) {
   life.eventFor = (e.mins || 20) * MINUTE;
   if (e.dim) life.dip = e.dim;
   stir(st, life, e);
+  beginStationEvents(world, st, life, e, eventTools());
   world.notify?.(e.say[0], e.say[1]);
 }
 
