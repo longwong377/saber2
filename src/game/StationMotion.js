@@ -572,6 +572,15 @@ function dressLamps(mo, M, y0) {
 function dressRings(st, mo, M) {
   const specs = st.chandelier;
   if (!specs || !specs.length) return;
+  /* ── AND THEY STAY ON `st.shell` ──────────────────────────────────────
+   *
+   * `st.shell` is not a draw count; it is the answer to "which meshes ARE the
+   * between-space", and `station.mjs`'s walkway rule rasters exactly that
+   * array. The chandelier is the void's landmark and it is what makes the
+   * view down one spine different from the view down the opposite one:
+   * measured with the rings taken out of the merge and not put back here,
+   * deck 44's spine90 and spine270 read 0.854 against a bound of 0.85. Moving
+   * a mesh out of the merge must not move it out of the between-space. */
   for (const parity of [0, 1]) {
     const hoops = [], frames = [];
     for (const s of specs) {
@@ -606,6 +615,7 @@ function dressRings(st, mo, M) {
       mesh.position.set(cx, 0, cz);
       mo.group.add(mesh);
       mo.rings.push({ mesh, geo, rate: parity ? -0.055 : 0.075 });
+      if (Array.isArray(st.shell)) st.shell.push(mesh);
       mo.draws++;
     }
   }
