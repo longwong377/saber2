@@ -52,9 +52,9 @@ built in lanes, marked as they land.
 3. Sound is text plus tones: no music tied to place. → `src/game/Music.js`: a seeded tune engine on `musicBus`, the cantina band, a busker, the Drum's theme (`music.mjs`). **BUILT**
 4. The station never feels the war outside.
 5. Company men have names and fates but no arc.
-6. Co-op guests get the station but nothing on it is a two-player thing.
+6. Co-op guests get the station but nothing on it is a two-player thing. **CLOSED** — `CoopGames.js`: sabacc against your guest, a side bet on a race, a two-carrier crate job; `coopgames.mjs`.
 7. Saving is a bag of folds; no readable "what changed".
-8. The battlefields have had none of the station's "living" standard.
+8. The battlefields have had none of the station's "living" standard. **DROPPED** — the player questioned it; the lane was stopped.
 9. The menus and settings read as a different product.
 10. Difficulty is a slider; the station ignores it.
 
@@ -62,11 +62,11 @@ built in lanes, marked as they land.
 1. The war reaches the station: casualties off the front's real state, a klaxon and a Command order closing a deck, the briefing from the real map.
 2. A journal in the cabin: one line per system per day, read back as pages.
 3. Promotions at the muster in front of the company; a man with a bad fate refuses the next sortie.
-4. Two-player things: sabacc against your guest, a race bet against each other, a two-carrier cargo job.
+4. Two-player things: sabacc against your guest, a race bet against each other, a two-carrier cargo job. **BUILT** (`CoopGames.js`).
 5. Music as place: a band that plays seeded tunes, a busker on the ring, a Drum theme. **BUILT** — `Music.js`: seven styles (six peoples and the Drum), A A B A over eight bars, 2–4 voices, drums off the noise buffer; three musicians on #14's dais 20:00–02:00 with a set list a tune per three minutes and a break every fourth, the murmur ducked under them; the busker by kiosk 9420 on deck 40's ring 10:00–18:00, a credit through the interact key buys a named request and the `busker` fold counts it; the Drum's theme within 6 m of a screen. Hooks are one line each in `Station.js`.
 6. The frame-time overlay and the auto-tune (hole 2). **BUILT**
 7. The walk-the-world gate (hole 1). **BUILT**
-8. The battlefields get patrols, wildlife, weather, a camp with people in it.
+8. The battlefields get patrols, wildlife, weather, a camp with people in it. **DROPPED** at the player's word; say "do the battlefields" to revive it.
 9. The station's cel look on the menus, settings and deck cards.
 10. Difficulty that changes the station: prices, the brig, the guards' patience, the pickpocket's odds.
 
