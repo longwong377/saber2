@@ -1261,3 +1261,146 @@ export function announce(ev, card) {
 /** Every moment a screen would be worth cutting to, in order. */
 export const MOMENTS = Object.freeze(['lead', 'overtake', 'wall', 'mechanical', 'retire', 'knockdown', 'refusal', 'beaten', 'result']);
 export const momentsOf = (result) => result.events.filter((e) => MOMENTS.includes(e.type));
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  THE WINDOW, PART TWO — the moments cut onto a screen in a room
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * V16 Lane D's fifth element is *"A WINDOW — the sim rendered as moments on a
+ * screen in a room"*, and until this block `MOMENTS` and `momentsOf` had no
+ * caller that showed anything to a player. `StationKit`'s `fanauditorium`
+ * stood #19's holo volume as `kit.post(M.screen, …)` — a cylinder with a lit
+ * material on it — and the room's whole feed was a DOM panel you had to open
+ * a board to read.
+ *
+ * ── WHAT A SCREEN IN A ROOM IS ALLOWED TO KNOW ───────────────────────────
+ *
+ * Exactly what the rail knows, which is `Tote.watch()`'s reading and nothing
+ * else: the gate under way, the moment the feed has cut to, and the running
+ * order. It is handed a reading and the result's own event stream and it
+ * reads NO distances, NO hidden form and NOTHING past `segment` — a screen
+ * that printed the call before the field reached the line is the same defect
+ * `standingsAt` carries its own note about, one surface further out.
+ *
+ * ── AND IT IS ROWS, NOT PIXELS ───────────────────────────────────────────
+ *
+ * The output is the row list `StationKit.signPanel` prints, so the model is
+ * pure, runs headless, and is the same rows whether the panel behind it is a
+ * canvas texture or a check counting how many times it changed. `key` is the
+ * rows joined: two readings with the same key are the same picture, which is
+ * what makes "the screen CHANGED during the race" a number a check can take
+ * rather than a flag a caller sets.
+ */
+
+/** The caption a cut carries — the moment, in the words a screen has room for. */
+export const CUT_WORD = Object.freeze({
+  off: 'AND THEY ARE AWAY', lead: 'THE LEAD', overtake: 'OVERTAKE', wall: 'INTO THE WALL',
+  mechanical: 'MECHANICAL', retire: 'RETIRED', knockdown: 'DOWN', refusal: 'REFUSAL',
+  wound: 'CUT', beaten: 'BEATEN', result: 'THE RESULT',
+});
+
+/** How many rows a feed panel prints, and how wide one is. See `signPanel`. */
+export const SCREEN_ROWS = 6;
+export const SCREEN_COLS = 26;
+
+/** The two states a screen does not bother saying — see `screenOf`. */
+const QUIET_STATUS = new Set(['running', 'finished', '', null, undefined]);
+
+/** A row with something on the left and something on the right of it. */
+function span(left, right, cols) {
+  const l = String(left ?? '').toUpperCase(), r = String(right ?? '').toUpperCase();
+  const room = Math.max(1, cols - r.length - 1);
+  const cut = l.length > room ? l.slice(0, room) : l;
+  return r ? `${cut}${' '.repeat(Math.max(1, cols - r.length - cut.length))}${r}` : cut.slice(0, cols);
+}
+
+/**
+ * THE MOMENT THE FEED IS ON — the latest one at or before this gate.
+ *
+ * `runSpectacle` pushes in gate order, so this walks forward and stops at the
+ * first event past the cut rather than scanning the whole stream; and it takes
+ * `types` so the Pit can hand its own longer list (`Pits.PIT_MOMENTS`) without
+ * this file learning what a bout is.
+ */
+export function cutAt(events, segment, types = MOMENTS, skip = null) {
+  if (!events || !events.length) return null;
+  let best = null;
+  for (const ev of events) {
+    if ((ev.t || 0) > segment) break;
+    if (ev.type === skip) continue;
+    if (ev.type === 'off' || types.includes(ev.type)) best = ev;
+  }
+  return best;
+}
+
+/**
+ * WHAT THE SCREEN IN THE ROOM IS SHOWING, AS ROWS.
+ *
+ * `reading` is `Tote.watch()`'s shape and `events` is the result's own stream
+ * — handed IN rather than reached for, because this file has no idea which
+ * race is on at which venue and must not grow one.
+ *
+ * The result line is gated on `phase === 'called'` and not on the cut being
+ * available: `cutAt` will happily return the `result` event on the last gate
+ * of the stream, and printing it while the field is still running is a screen
+ * that knows the answer early.
+ */
+export function screenOf(reading, events = null, opts = {}) {
+  const cols = opts.cols || SCREEN_COLS;
+  const rows = opts.rows || SCREEN_ROWS;
+  const word = opts.word || CUT_WORD;
+  const moments = opts.moments || MOMENTS;
+  const title = String(reading?.name || reading?.venue || 'the feed').toUpperCase();
+  const phase = reading?.phase || 'dark';
+  const of = reading?.segments || 0;
+  const gate = Math.min(of, reading?.segment || 0);
+  const out = { rows: [], cut: null, caption: '', gate, of, phase, key: '' };
+  const entrants = reading?.race?.card?.entrants || [];
+  const nameOf = (id) => entrants.find((e) => e.id === id)?.name
+    || reading?.standings?.find((s) => s.id === id)?.name || 'the field';
+
+  /* The head: the room, and how far into the race it is. */
+  const head = phase === 'running' || phase === 'called'
+    ? span(title, `${gate}/${of}`, cols) : span(title, '', cols);
+
+  if (phase === 'dark' || phase === 'closed' || phase === 'over') {
+    const h = reading?.next?.hour;
+    const next = h === undefined || h === null ? ''
+      : `NEXT ${Math.floor(h)}:${String(Math.round((h % 1) * 60)).padStart(2, '0')}`;
+    out.caption = phase === 'dark' ? 'NO CARD TONIGHT' : 'BETWEEN RACES';
+    out.rows = [head, out.caption, next];
+  } else if (phase === 'parading') {
+    out.caption = 'THE FIELD IS OUT';
+    out.rows = [head, out.caption].concat(
+      entrants.slice(0, rows - 2).map((e, i) => span(`${i + 1} ${e.name}`, '', cols)));
+  } else {
+    /* THE CUT. The moment the feed is on, in the words a caption has room
+     * for; the caller's `word` table is what makes the Pit's screen speak the
+     * Pit's language and not a podrace's. */
+    /* THE CALL IS THE ONE EVENT A SCREEN MAY NOT CUT TO EARLY. It is emitted
+     * on the same gate as the last blow, so a feed that simply took the
+     * latest moment would print the winner while the field was still on the
+     * track — and dropping it without a fallback left the screen saying
+     * RUNNING for the last three gates of every race, which is what the first
+     * cut of this did. `skip` walks back to the last thing that DID happen. */
+    const cut = cutAt(events, gate, moments, phase === 'called' ? null : 'result');
+    const shown = cut || null;
+    out.cut = shown;
+    out.caption = shown
+      ? span(word[shown.type] || String(shown.type).toUpperCase(),
+        shown.who ? nameOf(shown.who) : '', cols)
+      : 'RUNNING';
+    /* THE RUNNING ORDER, AND A NOTE ONLY WHERE THERE IS ONE TO MAKE.
+     * `standingsAt` hands back `running` for everybody still on the track and
+     * `finished` for everybody home, so printing the status verbatim put
+     * "RUN" on every row of every screen — a column of noise. Only the
+     * states a spectator would look up at are said: out, refused, beaten. */
+    const order = (reading?.standings || []).slice(0, rows - 2);
+    out.rows = [head, out.caption].concat(order.map((s) => span(
+      `${s.position} ${s.name}`, QUIET_STATUS.has(s.status) ? '' : String(s.status || ''), cols)));
+  }
+  while (out.rows.length < rows) out.rows.push('');
+  out.rows = out.rows.slice(0, rows);
+  out.key = out.rows.join('|');
+  return out;
+}

@@ -1240,4 +1240,152 @@ export async function run({ check, assert }) {
       + `(${WHEEL_EXTRAS.map((x) => x.id).join(', ')}), geometry shared with the emote wheel`;
   });
 
+
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  6. THE WINDOW — the sim rendered as moments on a screen in a room */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('spectacle: #19 has the race ON it, and the picture changes as the race does', async () => {
+    /**
+     * ══ THE FIFTH ELEMENT OF LANE D, AND IT DID NOT EXIST ═══════════════
+     *
+     * *"A WINDOW — the sim rendered as moments on a screen in a room."*
+     * `Spectacle.MOMENTS` and `Pits.PIT_MOMENTS` name sixteen of them and
+     * neither had a caller that showed a player anything; #19's holo volume
+     * was `kit.post(M.screen, …)`, a lit cone on a stage, and the sixty
+     * people in the seats were roaring at a race nobody in the room could
+     * see.
+     *
+     * ── WHAT THIS MEASURES, AND WHY IT IS A DELTA AND NOT A FLAG ────────
+     *
+     * A screen is not proved by a field called `screen`. It is proved by the
+     * PICTURE CHANGING while the race runs and by the change being the
+     * race's — so this counts DISTINCT `key`s (the rows joined) over a real
+     * card at #19, driven through the shipped `stepStation`, and then holds
+     * three things about what was on them:
+     *
+     *   the gate on the screen only ever goes FORWARD and reaches the last
+     *   one;
+     *   every name printed is a name on the card — a screen that invented a
+     *   runner would pass a change count and fail here;
+     *   THE CALL IS NOT ON IT UNTIL THE FIELD IS HOME. `runSpectacle` emits
+     *   `result` on the same gate as the last blow, so a feed that simply
+     *   took the latest moment would print the winner while they were still
+     *   running, which is the one thing a screen beside an open book must
+     *   never do.
+     *
+     * DRIVEN THROUGH `stepStation` AND NOT THROUGH A COPY OF IT: the beat,
+     * the door cull, the `watch()` reading and the redraw are all the shipped
+     * ones, and the only thing this file does is stand somebody in the room.
+     * `flightops.mjs` drives the station's half of a frame the same way.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const root = new URL('../../', import.meta.url);
+    if (!globalThis.__stationFetch) {
+      globalThis.__stationFetch = true;
+      globalThis.fetch = async (url) => {
+        const buf = await readFile(new URL(String(url), root));
+        return { ok: true, arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) };
+      };
+    }
+    const { prepareStation, stepStation, finishStationBuild } = await import('../../src/game/Station.js');
+    const { watch, resultOf } = await import('../../src/game/Tote.js');
+    const { PLACE } = await import('../../src/game/StationPlan.js');
+    await prepareStation();
+    const { world } = await bootWorld({
+      level: 'station',
+      settings: { mode: 'station', level: 'station', allies: 0 },
+      onWorld: (w) => { w._stationFloor = 40; },
+    });
+    finishStationBuild(world);
+    const st = world._station;
+
+    /* THE THREE ROOMS WITH A CARD ON, and only those three. */
+    const ids = (st.feeds || []).map((f) => f.id).sort((a, b) => a - b);
+    assert(ids.join(',') === '18,19,20',
+      `the screens are on places [${ids}] and the three rooms with a book in them are 18, 19, 20`);
+    const feed = st.feeds.find((f) => f.id === 19);
+    assert(feed.panel && feed.mesh, '#19 recorded a screen and nothing hung one');
+
+    /* Stand in it. `stepStation`'s last block is §12.3's door cull and
+     * `stepFeeds` will not read a room that is not drawn. */
+    const p19 = PLACE.get(19);
+    world.player.position.set(p19.x, world.floorAt(p19.x, p19.z), p19.z);
+    world.player.camera?.obj?.position.copy(world.player.position);
+
+    /* Wind to the first gate of a real card at #19 — the same derivation the
+     * room itself reads, so the check cannot pick an hour the game would
+     * not. */
+    let at = null;
+    for (let d = 0; d < 8 && !at; d++) {
+      for (let h = 10; h < 23; h += 0.005) {
+        const r = watch('holo-theatre', d, h);
+        if (r.phase === 'running' && r.progress <= 0.02) { at = { d, h }; break; }
+      }
+    }
+    assert(at, 'no card at #19 in the station\'s first eight days — there is nothing to watch');
+    st.hour = at.h; st.day = at.d; st._savedHour = at.h | 0;
+
+    const race = watch('holo-theatre', at.d, at.h).race;
+    const names = new Set(race.card.entrants.map((e) => e.name.toUpperCase()));
+    /* WHO WINS IT, off the race's own memoised result — `watch()` an hour on
+     * is a DIFFERENT race, which is how this line was first written and what
+     * it cost. Read here only to check what the screen printed; nothing in
+     * the room has been told. */
+    const winner = race.card.entrants.find((e) => e.id === resultOf(race).winner);
+
+    const pics = new Set();
+    const gates = [];
+    let earlyCall = 0, alien = null, called = 0;
+    const DT = 1 / 60;
+    /* FORTY-THREE REAL SECONDS, which is §3.4's 0.36 station hours: past the
+     * 0.3 h a Holo-theatre race lasts, and short of the 0.5 h to the next one
+     * off — so the window is exactly one race, from the first gate to the
+     * call, with nothing else on the screen at either end. */
+    for (let i = 0; i < 60 * 43; i++) {
+      stepStation(world, DT);
+      if (!feed.rows) continue;
+      pics.add(feed.key);
+      gates.push(feed.gate);
+      if (feed.phase === 'called') called++;
+      /* THE CALL, EARLY. Nothing but the winner's own name may appear beside
+       * a RESULT caption, and no result caption at all before the phase says
+       * the field is home. */
+      if (feed.cut?.type === 'result' && feed.phase !== 'called') earlyCall++;
+      for (const row of feed.rows) {
+        const word = row.trim().replace(/^\d+\s+/, '').replace(/\s{2,}.*$/, '');
+        if (!word || /^(HOLO-THEATRE|RUNNING|THE RESULT|OVERTAKE|THE LEAD|INTO THE WALL|MECHANICAL|RETIRED|DOWN|REFUSAL|CUT|BEATEN|AND THEY ARE AWAY|THE FIELD IS OUT|BETWEEN RACES|NO CARD TONIGHT|NEXT)/.test(word)) continue;
+        if (!names.has(word)) alien = word;
+      }
+    }
+    assert(!alien, `the screen printed "${alien}", who is not on #19's card`);
+    assert(earlyCall === 0,
+      `the screen cut to the result on ${earlyCall} frames while the field was still running`);
+    assert(called > 0, 'twenty seconds never reached the call — the clock is not moving');
+
+    /* ── THE DELTA. A screen that never changes is a poster. ─────────── */
+    assert(pics.size >= 8,
+      `the screen showed ${pics.size} distinct pictures over a whole race — a feed that cuts to `
+      + `the moments would show one a gate, and ${race.ground.segments} gates ran`);
+    assert(feed.draws >= 8, `${feed.draws} redraws for ${pics.size} pictures`);
+    /* Forward only, and it got to the end. */
+    for (let i = 1; i < gates.length; i++) {
+      assert(gates[i] >= gates[i - 1],
+        `the gate on the screen went ${gates[i - 1]} → ${gates[i]} — a feed does not run backwards`);
+    }
+    assert(gates[gates.length - 1] === race.ground.segments,
+      `the screen stopped at gate ${gates[gates.length - 1]} of ${race.ground.segments}`);
+    /* AND THE LAST PICTURE IS THE RESULT, with the winner's name on it. */
+    const last = feed.rows.map((r) => r.trim()).filter(Boolean);
+    assert(/THE RESULT/.test(last[1] || ''),
+      `the screen ended on "${last[1]}" and the race has been called`);
+    assert(winner && last[1].includes(winner.name.toUpperCase()),
+      `the call on the screen is "${last[1]}" and the winner is ${winner?.name}`);
+
+    return `#19's holo volume is the feed: ${pics.size} distinct pictures and ${feed.draws} redraws `
+      + `over ${race.ground.segments} gates of a real card, gate 1 → ${gates[gates.length - 1]}, `
+      + `0 early calls, every name off the card, ending "${last[1].replace(/\s+/g, ' ')}"; `
+      + `screens on places ${ids.join(', ')}`;
+  });
+
 }

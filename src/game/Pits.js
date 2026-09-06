@@ -1405,3 +1405,102 @@ export function pitCall(ev, card) {
 export const PIT_MOMENTS = Object.freeze([
   'bell', 'stake', 'order', 'corner', 'round', 'stoppage', 'decision', ...MOMENTS,
 ]);
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  9. WATCHING SOMEBODY ELSE'S BOUT — and a reveal is not a watch
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * *"you should be able to WATCH the entire battle, has a crowd."*
+ *
+ * ── WHAT THE BUTTON DID ──────────────────────────────────────────────────
+ *
+ * `main.js` ran the night's card, then printed `said.slice(-5)` — the last
+ * five announcer lines of a fight that had already finished, all at once, on
+ * the frame you pressed. The winner was on the board before the first line
+ * was. That is a REVEAL: it tells you who won and then reads you the ending.
+ *
+ * ── WHAT A WATCH IS, AND THE ONE THING IT MUST NOT CHANGE ────────────────
+ *
+ * The result is STILL run before the panel is shown — `runPitCard` is seeded
+ * off `(venue, day)` and `Spectacle` runs forward from the seed and never
+ * from the bet, which is the property `pits.mjs` already drives event for
+ * event. Watching does not re-run anything. This is a CURSOR over a finished
+ * stream: it holds a gate, and it hands back the lines whose gate has arrived
+ * and no others. So a ticket struck before the off settles against exactly
+ * the result that was going to happen, and a player who walks out halfway
+ * settles against the same one.
+ *
+ * ── THE CLOCK IS THE STATION'S OWN ───────────────────────────────────────
+ *
+ * §3.4 is one station hour per two real minutes, and `Tote.VENUES` runs a
+ * card's race over 0.3 of an hour — 36 real seconds — across the ground's
+ * segments. A Pit ground is 54 of them, so a gate is 0.67 s, and `WATCH_GATE`
+ * is that number rounded down. A bout that ends on gate 9 takes six seconds
+ * and one that goes the distance takes half a minute, because that is how
+ * long those two fights are; nothing here compresses a fight to fit a panel.
+ *
+ * ── AND IT IS DRIVEN IN SECONDS, NOT IN FRAMES ───────────────────────────
+ *
+ * `stepWatch(w, dt)` takes elapsed seconds, so the whole model runs headless
+ * in a node check with no timer and no `requestAnimationFrame` — which is the
+ * only way any of this could be measured, since rAF does not fire in the
+ * headless browser this tree tests in.
+ */
+
+/** How long one gate of a watched bout takes, in real seconds. See above. */
+export const WATCH_GATE = 0.66;
+
+/** How long the room holds on the call before the watch is over. */
+export const WATCH_HOLD = 1.5;
+
+/**
+ * OPEN A WATCH ON ONE BOUT OF A CARD THAT HAS ALREADY BEEN RUN.
+ *
+ * `gates` is the LAST GATE THE STREAM ACTUALLY REACHED and not the ground's
+ * segment count: `runSpectacle` breaks out of the gate loop the moment a bout
+ * is down to one on its feet, so a Pit result on a 54-segment ground routinely
+ * stops at nine. Counting to 54 would leave a watcher staring at a settled
+ * fight for three quarters of a minute.
+ */
+export function openWatch(run, i = 0) {
+  const race = run?.races?.[i];
+  if (!race) return null;
+  const events = race.result.events;
+  let gates = 0;
+  for (const ev of events) gates = Math.max(gates, ev.t | 0);
+  return {
+    card: run.card, race, events, gates,
+    of: race.ground.segments,
+    t: 0, gate: -1, said: [], cut: null, over: false,
+  };
+}
+
+/**
+ * ADVANCE A WATCH BY `dt` SECONDS, AND HAND BACK WHAT WAS JUST SAID.
+ *
+ * `fresh` is the lines that arrived on THIS call and `said` is everything so
+ * far, so a panel can print the stream as it grows and a check can prove it
+ * grew rather than landing whole. `placed` is skipped — the engine emits one
+ * per runner at the line and neither announcer has a word for it, so it would
+ * be eight silent events between the last blow and the call.
+ */
+export function stepWatch(w, dt) {
+  if (!w || w.over) return { fresh: [], gate: w?.gate ?? 0, over: true };
+  w.t += Math.max(0, dt || 0);
+  const want = Math.min(w.gates, Math.floor(w.t / WATCH_GATE));
+  const fresh = [];
+  while (w.gate < want) {
+    w.gate++;
+    for (const ev of w.events) {
+      if ((ev.t | 0) !== w.gate || ev.type === 'placed') continue;
+      if (PIT_MOMENTS.includes(ev.type) || ev.type === 'off') w.cut = ev;
+      const line = pitCall(ev, w.card);
+      if (line) { fresh.push(line); w.said.push(line); }
+    }
+  }
+  /* THE CALL IS THE END OF IT, and the room is given a breath to hold on it
+   * before the ledger lands — which is the difference between a result and a
+   * receipt. */
+  if (w.gate >= w.gates && w.t >= w.gates * WATCH_GATE + WATCH_HOLD) w.over = true;
+  return { fresh, gate: w.gate, over: w.over };
+}

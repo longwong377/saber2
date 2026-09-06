@@ -70,6 +70,9 @@ import {
   crowdOf, libertyAt,
 } from './game/Bars.js';
 import { headcount } from './game/StationLife.js';
+/* WHICH ROLL THE STATION IS SEATING — `spawnResident` hands `occupant` exactly
+ * this, so the bar panel reads it rather than adding up a crowd per army. */
+import { companyOf } from './game/StationBoards.js';
 import * as Food from './game/Food.js';
 import {
   openWheelhouse, sabaccTable, sabaccAnte, sabaccHand, sabaccAct, nextHand,
@@ -88,7 +91,7 @@ import { stakeAtTote, payAtTote, tickStationClock, stakeAtDrum, payAtDrum, payFo
 import {
   pitAtPlace, venueOpen, handlersOn, ROSTER_HOUR, offerBout, openBout, beginRound, callOrder,
   runRound, cornerAct, pitState, settleBout, foldPit, pitCall, pitCard,
-  runPitCard, settlePitCard, holdsOrder,
+  runPitCard, settlePitCard, holdsOrder, openWatch, stepWatch,
   PIT_ORDERS, ORDER_WINDOW, READ_WINDOW, CORNER_ACTS, ORDERS_PER_ROUND,
 } from './game/Pits.js';
 /* V16 Lane B's counters and Lane A3's bench — the two rooms that spend. */
@@ -1981,6 +1984,53 @@ const KIOSK_AT = {
 };
 
 /**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  AND THE FORGE SHOWS WHAT A FORGE MAKES — V16 §A4, re-opened
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * ── WHAT WAS ACTUALLY THERE, MEASURED ────────────────────────────────────
+ *
+ * `#10 The Forge` has carried `kiosk: 'hilt'` for some time, and driven with
+ * the real key — `Input.touchHitSet.add('focus')` through `Player._readInput`
+ * and `Station.stationKey`, standing in the room — it fires: `onKiosk(hilt)`
+ * at the middle of the room, a step inside the door, and at the far wall.
+ * The door exists and always did.
+ *
+ * WHAT IT OPENED IS THE DEFECT. `KIOSK_TAB.hilt` is `'saber'` and that panel
+ * is the CHARACTER CREATOR: thirty-seven controls, of which five are the
+ * saber. Standing at a Mandalorian smith's bench and being handed a page whose
+ * first four rows are order, species, face and build is not "the saber is
+ * built at the Forge" by any reading — `KIOSK_AT` scrolled to the crystal,
+ * which put the right row on screen with thirty-two wrong ones above it.
+ *
+ * ── SO THE ROOM NAMES ITS OWN ROWS ───────────────────────────────────────
+ *
+ * A counter in this table opens the panel with only its own controls on it
+ * (`Menu.showRows`, which derives the headings and hides the rest off the
+ * column itself). The five here are exactly the five the earlier note counted
+ * as the saber — crystal, Force lightning, hilt, blade length, core width —
+ * plus WHAT YOU CARRY, because how many blades you are walking out with is a
+ * question for the man who makes them.
+ *
+ * ── AND THE TAB STILL CARRIES ALL THIRTY-SEVEN ───────────────────────────
+ *
+ * Which is the half the earlier decline was right about and the reason
+ * nothing is deleted. `hangarFirst()` returns false for a CO-OP CLIENT and
+ * for `settings.instantSpawn`, so those two never walk a deck and #10 is not
+ * reachable for them at all; the front screen is the only place they can
+ * change a blade colour that crosses the wire. The bar is that door, it opens
+ * the same panel with the shelf off, and there is no second page anywhere to
+ * drift out of step with this one.
+ *
+ * `#46 Armoury` and `#27`'s mirror are deliberately NOT in this table. The
+ * Armoury keeps the loadout (§A4 says so) and the mirror IS the creator
+ * (V15 §1.3), and both of those rooms are for the whole page.
+ */
+const KIOSK_ROWS = {
+  hilt: ['color-list', 'lightning-list', 'hilt-list', 'opt-bladelen', 'opt-bladewidth', 'saberset-list'],
+};
+
+/**
  * ══ THE CARD MUST BE A NO-OP WHEN NO COUNTER IS UP ════════════════════════
  *
  * `Screens.clear()` runs EVERY registered card's hide, on every clear — and
@@ -2016,6 +2066,14 @@ function showKioskPanel(panelId) {
    * page. Guarded because the check harness's DOM double has neither. */
   const at = KIOSK_AT[panelId];
   if (at) document.getElementById(at)?.scrollIntoView?.({ block: 'start' });
+  /* ── AND THE ROOM SHOWS ONLY ITS OWN ROWS (V16 §A4) ───────────────────
+   *
+   * AFTER the click, and that is not a nicety: `Menu._buildTabs`' handler
+   * takes the shelf off on every hand-driven tab press, so a shelf applied
+   * before `tab.click()` would be swept away by the click that raises the
+   * page. See `KIOSK_ROWS` for which counters name rows and why the bar
+   * still opens the whole panel. */
+  menu.showRows?.(KIOSK_ROWS[panelId] || null);
 }
 
 /**
@@ -2416,14 +2474,35 @@ function pitCardHtml(window_ = true) {
     const home = pit.watched && pit.watched.result.winner === row.id;
     return `<div class="row"><b>${esc(row.name)}${home ? ' ◂' : ''}</b>`
       + `<span>${esc(row.odds)}${on ? ` · ${on} on` : ''}</span>`
-      + (pit.watched ? '' : `<button class="buy" data-back="${esc(row.id)}">back</button>`)
+      /* THE BOOK SHUTS WHEN THEY ARE AWAY. A `back` button beside a fight the
+       * player is already three gates into is a bet on a race in progress. */
+      + (pit.watched || pit.reel ? '' : `<button class="buy" data-back="${esc(row.id)}">back</button>`)
       + `<div class="sub">${esc(h ? `${h.who}, ${h.place}` : 'a stranger')}</div>`
       + '</div>';
   }).join('') + '</div>';
-  if (pit.watched) {
-    /* WHAT THE ROOM HEARD, in the pit's own voice — `pitCall` reads the same
-     * stream the crowd reacted to, and it calls a fight rather than a lap. */
-    const said = pit.watched.result.events.map((ev) => pitCall(ev, night.card)).filter(Boolean);
+  if (pit.reel && !pit.reel.over) {
+    /**
+     * ══ IT IS HAPPENING NOW, AND THAT IS THE WHOLE OF THE CHANGE ═════════
+     *
+     * *"you should be able to WATCH the entire battle."* This block used to
+     * be the `pit.watched` one below: the card was run, the winner was on the
+     * board, and the button printed the last five lines of a fight that was
+     * already over. `Pits.openWatch` is a cursor over that same finished
+     * stream and `pitReelArm` walks it at the station's own gate rate, so the
+     * lines arrive as the fight reaches them and the call is the last of
+     * them. Nothing is re-run and nothing is re-rolled — see `openWatch`.
+     */
+    html += `<p class="sub">Gate ${pit.reel.gate} of ${pit.reel.gates}.</p>`;
+    html += '<div class="rows">' + pit.reel.said.slice(-5).map((line) =>
+      `<div class="row"><span>${esc(line)}</span></div>`).join('') + '</div>';
+  } else if (pit.watched) {
+    /* AND WHAT THE ROOM HEARD AS IT ENDED, in the pit's own voice — the same
+     * stream the crowd reacted to, called as a fight and not as a lap. The
+     * reel has said all of it by now; this is the last of it, kept on the
+     * glass beside the ledger. */
+    const said = pit.reel?.said?.length
+      ? pit.reel.said
+      : pit.watched.result.events.map((ev) => pitCall(ev, night.card)).filter(Boolean);
     html += '<div class="rows">' + said.slice(-5).map((line) =>
       `<div class="row"><span>${esc(line)}</span></div>`).join('') + '</div>';
     if (pit.cardLed?.staked) {
@@ -2434,6 +2513,66 @@ function pitCardHtml(window_ = true) {
     html += '<div class="acts"><button class="care" data-do="watch">Watch it</button></div>';
   }
   return html;
+}
+
+/**
+ * ══ THE WATCH'S OWN CLOCK ═════════════════════════════════════════════════
+ *
+ * `pitBell`'s shape: one handle, cancelled by every exit, re-armed after every
+ * render. `showPit` clears the timer at the top — it has to, or a re-render
+ * would leave two of them running — so the arming is the LAST thing it does.
+ *
+ * IT STEPS ON REAL ELAPSED SECONDS off `performance.now()` rather than on the
+ * tick it asked for, so a browser that throttles a background tab does not
+ * make the fight longer; and it is clamped, so a tab that was asleep for a
+ * minute does not skip the whole bout in one frame.
+ */
+const WATCH_TICK = 0.125;
+
+/**
+ * SETTLE WHAT WAS BACKED, ONCE, AT THE END OF THE WATCH.
+ *
+ * `settlePitCard` reads the bout's OWN board — the one the prices above came
+ * off — through the engine's `settle`, and the credits move here and nowhere
+ * else. It is idempotent by `pit.watched`: the reel calls it when the call
+ * lands and `closePit` calls it for a player who walks out first, and a
+ * ticket must be paid exactly once either way.
+ */
+function pitSettleWatch() {
+  if (!pit || pit.watched) return;
+  /* THE WATCH IS OVER WHATEVER ENDED IT — the call arriving, the player
+   * walking out, or the player taking a bout of their own. One flag, so the
+   * panel, the timer and this function cannot disagree about whether there is
+   * still a fight on the glass. */
+  if (pit.reel) pit.reel.over = true;
+  const night = pitNight(pit.placeId);
+  pit.watched = night?.races?.[0] || null;
+  pit.cardLed = pit.watched ? settlePitCard(night, pit.tickets, 0) : null;
+  const back = Math.round(pit.cardLed?.returned || 0);
+  if (back) pay(back, 'pit');
+  if (pit.cardLed?.staked) {
+    const room = (pit.venue?.name || 'the pit').toUpperCase();
+    world?.notify?.(room, back ? `${back} credits at the rail` : 'nothing on that one');
+  }
+}
+
+function pitReelArm() {
+  clearPitTimer();
+  if (!pit?.reel || pit.reel.over) return;
+  pit.reelAt = performance.now();
+  pitTimer = setTimeout(() => {
+    pitTimer = null;
+    if (!pit?.reel || pit.reel.over) return;
+    const now = performance.now();
+    const dt = Math.min(0.5, (now - pit.reelAt) / 1000);
+    pit.reelAt = now;
+    const r = stepWatch(pit.reel, dt);
+    /* THE RESULT ARRIVES AT THE END. `stepWatch` says the call on the gate it
+     * was emitted on; the ledger lands on the frame the watch is over, which
+     * is `WATCH_HOLD` later — a beat for the room, then the money. */
+    if (r.over) pitSettleWatch();
+    showPit(pit.placeId);
+  }, WATCH_TICK * 1000);
 }
 
 function showPit(placeId) {
@@ -2450,6 +2589,8 @@ function showPit(placeId) {
       /* The one window, its default, and what has been put through it. */
       stake: 25, tickets: [], wager: 0, railed: null, cardLed: null,
       night: null, watched: null,
+      /* THE BOUT BEING WATCHED, and when it was last stepped — see `pitReelArm`. */
+      reel: null, reelAt: 0,
     };
   }
   const { offer, bout } = pit;
@@ -2570,15 +2711,18 @@ function showPit(placeId) {
       if (act === 'leave') { closePit(); return; }
       if (act === 'book') { closePit(); if (book) openTote(book.id); return; }
       if (act === 'watch') {
-        /* THE REVEAL, AND THE SETTLEMENT AFTER IT. `settlePitCard` reads the
-         * bout's own board — the one the prices above came off — through the
-         * engine's `settle`, and the credits move here and nowhere else. */
+        /**
+         * AND THEY ARE AWAY. This used to be the settlement itself — the card
+         * revealed, the ledger paid and the last five lines printed on the
+         * frame of the press. It opens a WATCH now: the same result, run
+         * before the panel was ever drawn and untouched by any of this, walked
+         * gate by gate by `pitReelArm`. `pitSettleWatch` is what runs when it
+         * gets to the end, and it is the only thing that moves a credit.
+         */
         const night = pitNight(placeId);
-        pit.watched = night?.races?.[0] || null;
-        pit.cardLed = pit.watched ? settlePitCard(night, pit.tickets, 0) : null;
-        const back = Math.round(pit.cardLed?.returned || 0);
-        if (back) pay(back, 'pit');
-        if (pit.cardLed?.staked) say(back ? `${back} credits at the rail` : 'nothing on that one');
+        pit.reel = night?.races?.length ? openWatch(night, 0) : null;
+        if (!pit.reel) pitSettleWatch();
+        else say('they are away');
         showPit(placeId);
         return;
       }
@@ -2593,6 +2737,11 @@ function showPit(placeId) {
           const paid = spend(amount, 'pit');
           if (!paid.ok) { say(paid.short ? `${paid.short} credits short` : paid.why); return; }
         }
+        /* ONE CLOCK IN THIS ROOM. `pitBell` owns the handle from here, so a
+         * watch still walking somebody else's bout is closed out first —
+         * settled honestly, on the same result — rather than left holding a
+         * ticket nothing will ever pay. */
+        if (pit.reel) pitSettleWatch();
         pit.wager = amount;
         pit.bout = openBout(pit.offer, {
           accept: act === 'mortal' ? pit.offer.stake.token : null,
@@ -2641,6 +2790,9 @@ function showPit(placeId) {
     });
   }
   el.classList.remove('hidden');
+  /* AND THE WATCH GOES BACK ON THE CLOCK. Last, because the first thing this
+   * function did was clear the handle — see `pitReelArm`. */
+  pitReelArm();
 }
 
 /**
@@ -2684,6 +2836,11 @@ function pitBell() {
 
 function closePit() {
   clearPitTimer();
+  /* A TICKET STRUCK BEFORE THE OFF IS STILL A TICKET. Walking out halfway
+   * through a watched bout does not eat it: the result was decided before the
+   * first line was said, so the ledger is the same ledger whether you saw the
+   * call or not. `pitSettleWatch` is idempotent — see its note. */
+  if (pit?.reel) pitSettleWatch();
   pit = null;
   closePane('pit');
   screens.clear();
@@ -3984,21 +4141,36 @@ function showBar(placeId) {
    * had no caller. */
   html += `<p class="sub">${esc(row?.line || '')}</p>`;
 
+  /**
+   * ── ONE ROLL, AND IT IS THE ROLL THE ROOM IS SEATING ─────────────────
+   *
+   * This walked `ARMY_IDS` and added up a `crowdOf` per army, and the room
+   * seats ONE company: `spawnResident` hands `occupant` whatever
+   * `StationBoards.companyOf` answers, which is the biggest roll and nothing
+   * else. So a player with two manifests read a panel that counted the same
+   * eleven seats twice and named men off a roll that has nobody in the room —
+   * the same defect as the two the cast displaced, arrived at from the other
+   * side. The panel asks the question the room answers.
+   */
+  const c = companyOf();
   let mine = 0, seats = 0;
-  for (const army of ARMY_IDS) {
-    const c = Company.load(army);
-    if (!(c.men || []).length) continue;
+  if (c && (c.men || []).length) {
     const crowd = crowdOf(placeId, hour, heads, { company: c, day: stationDay() });
-    seats += crowd.leave.length;
+    seats = crowd.leave.length;
     const named = crowd.leave.filter((x) => x && x.leave);
-    mine += named.length;
-    if (!named.length) continue;
-    html += `<p class="sub">${esc(String(army).toUpperCase())} — ${named.length} of yours in here</p>`;
-    html += '<div class="rows">' + named.map((x) => {
-      const man = (c.men || []).find((m) => m.designation === x.leave.designation);
-      const nerve = man && Number.isFinite(man.morale) ? `${Math.round(man.morale * 100)}% nerve` : 'off duty';
-      return `<div class="row"><b>${esc(x.name)}</b><span>${esc(nerve)}</span></div>`;
-    }).join('') + '</div>';
+    mine = named.length;
+    if (named.length) {
+      html += `<p class="sub">${esc(String(c.army || 'your company').toUpperCase())} — ${named.length} of yours in here</p>`;
+      html += '<div class="rows">' + named.map((x) => {
+        const man = (c.men || []).find((m) => m.designation === x.leave.designation);
+        const nerve = man && Number.isFinite(man.morale) ? `${Math.round(man.morale * 100)}% nerve` : 'off duty';
+        return `<div class="row"><b>${esc(x.name)}</b><span>${esc(nerve)}</span></div>`;
+      }).join('') + '</div>';
+    }
+  } else {
+    /* NO ROLL AT ALL is still a room full of the station's own garrison, and
+     * the count of them is the room's — see `Bars.soldierIn`'s fallback. */
+    seats = crowdOf(placeId, hour, heads, { day: stationDay() }).leave.length;
   }
   if (!seats) {
     html += `<p class="sub">${libertyAt(hour) > 0 ? 'Nobody in uniform tonight.'

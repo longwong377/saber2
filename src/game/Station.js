@@ -103,7 +103,7 @@ import { Sortie, canLaunch } from './Launch.js';
 import { sample as orbitSample, sightLine, CIRCUIT_LENGTH } from './Outside.js';
 import { CircuitPilot, PlayerPilot, TOP_SPEED } from './Pilot.js';
 import { dressCobraBay, drawCobraBay, undressCobraBay } from './CobraBay.js';
-import { GANTRY_Y, stepCook } from './StationKit.js';
+import { GANTRY_Y, stepCook, dressFeeds, stepFeeds } from './StationKit.js';
 import { flightState, setFlightState } from './StationSave.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -236,13 +236,16 @@ export function stationMats(deck) {
   return M;
 }
 
-/** Drop the cached sets. Only a check calls this. */
-export function forgetStationMats() {
-  for (const M of _stationMats.values()) {
-    for (const k of Object.keys(M)) if (M[k]?.isMaterial) M[k].dispose();
-  }
-  _stationMats.clear();
-}
+/* `forgetStationMats()` stood here saying "Only a check calls this", and no
+ * check did — no reference to it existed anywhere under `src/` or `tools/`.
+ * Its sibling `forgetRooms()`, fifty lines down, carries the same sentence and
+ * it is TRUE of that one, which is exactly why this was easy to believe.
+ *
+ * A reset door earns its keep by being the thing a suite calls to start from a
+ * clean store (`clearBench`, `clearCredits`, `clearStation` — the family named
+ * in `tools/checks/reachable.mjs`'s SEAMS). A reset nothing has ever called is
+ * not that; it is an untested dispose path over a session-lived cache, which
+ * is a thing that can be wrong for months without anyone finding out. */
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE ROOMS, LOADED BEFORE THE LEVEL IS                                     */
@@ -1201,6 +1204,9 @@ export function dressStation(world) {
    * until it is, so the seating is the same seating with the same budget
    * rather than the trickle a walk gets.
    */
+  /* AND NOT ON A FRAME THE STEP IS ALREADY SEATING ON — see `seatingThisFrame`
+   * beside the drain, which is where that rule lives because it is true of
+   * every job on this queue and not just of this one. */
   st.pending.push({ name: 'the people', prime: true, run: () => primeStationLife(world) });
   if (deck === 44) dressTram(world, st, M);
 
@@ -1215,6 +1221,12 @@ export function dressStation(world) {
    * verb is "read the notices". `Notices.js` reads the day's stores; nothing
    * here knows what a notice says. No-op on the two decks the room is not on. */
   dressNotices(world, st, M);
+  /* ── AND THE SCREENS IN THE THREE ROOMS WITH A CARD ON (V16 Lane D) ────
+   * #19's holo volume, #18's board and #20's screen over the ring. The rooms
+   * hand back where the face goes; `StationKit.dressFeeds` hangs it and
+   * `stepFeeds` below cuts it to the moments the sim is emitting. No-op on
+   * every deck the three rooms are not on. */
+  dressFeeds(world, st);
   /* ── AND THE PEOPLE BEHIND THE COUNTERS (V16 Lane B) ───────────────────
    *
    * AFTER `dressStationLife`, so the pool has already claimed its budget and
@@ -1606,16 +1618,20 @@ export class StationDirector {
  *        mirror and the galley already make in `Home.js`, one fixture further
  *        on, and it is why the reach is short.
  *
- * AND THE PA IS THE ONE §1.1 ASKS FOR THAT IS REFUSED, WITH A REASON. The
- * list ends *"…the Databank's station page, and the PA."* There IS a PA —
- * `DeckAudio`'s tannoy — and its own header spends a page arguing that it must
- * never say words: *"A PA that says a sentence is a NARRATOR. The player looks
- * up, listens, decodes it, finds it says nothing that matters, and never
- * listens again."* It is a formant synthesiser with the consonants left out,
- * on purpose, and it has no text input to give a name to. Making it say
- * `CROSSROADS` means giving it speech, which is the one thing that file is
- * built not to have. So four of the five places are built and the fifth is
- * declined here rather than faked with a caption nobody hears.
+ * AND THE FIFTH IS THE PA, WHICH IS BUILT NOW AND WAS DECLINED HERE. The
+ * list ends *"…the Databank's station page, and the PA."* What used to stand
+ * in this paragraph was a refusal, on the strength of `DeckAudio`'s header:
+ * *"A PA that says a sentence is a NARRATOR."* That rule is the flight deck's
+ * and it is right there; it was never the player's rule for their own drum,
+ * and a station tannoy that will not say where you are is the one PA in the
+ * world that does not do the job every real one is installed for.
+ *
+ * `Station.stepTannoy` is the fifth place. It says the name and one live fact
+ * on the station's own clock, through `Audio.radio` — the real speech path
+ * this tree already had and this note did not look for — with the same string
+ * on `world.notify` for a player with the sound off. It reads `stationName()`
+ * at the moment of the call, so renaming the drum at the register below
+ * changes what the next call says. See the chapter over `PA_EVERY`.
  *
  * The mechanism is `DeckEdit`'s, which is this game's own idiom for typing a
  * name in the world — a document keydown listener, a text buffer, the banner
@@ -4194,16 +4210,246 @@ function turnToWatch(world, place) {
   return n;
 }
 
-/**
- * How long one frame may spend finishing the build. One job runs per call
- * whatever it costs — the jobs are hundreds of milliseconds each and slicing
- * INSIDE one is a different piece of work — so this only decides whether a
- * second job joins it on the same frame, and the answer is no unless the
- * first was trivial.
+/* ══════════════════════════════════════════════════════════════════════════
+ *  THE TANNOY, AND IT SAYS THE STATION'S NAME — V15 §1.1's fifth place
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * ── THE ARGUMENT THAT USED TO STAND HERE, AND WHY IT NO LONGER DOES ──────
+ *
+ * §1.1 names five places the player's own name for the station must appear and
+ * the list ends *"…the Databank's station page, and the PA."* Four were built
+ * and the fifth was DECLINED, in a note over `beginStationName`, on the
+ * strength of `DeckAudio`'s own header: *"A PA that says a sentence is a
+ * NARRATOR… Twelve recorded announcements is twelve things a player can
+ * exhaust in ten minutes."*
+ *
+ * That rule is right about the HANGAR and it was never the player's rule. The
+ * player named their own station and asked to hear it, and a station tannoy
+ * that never says where you are is the one PA in the world that does not do
+ * the job every real one is installed for: a concourse announcer says the name
+ * of the place, over and over, all day, and nobody has ever exhausted one.
+ *
+ * `DeckAudio`'s tannoy is untouched — it is still the flight deck's wordless
+ * horn and it still must be. This is a SECOND machine on a different deck with
+ * a different job, and the three ways it avoids being a narrator are these:
+ *
+ *   IT SAYS ONE THING       the name, and one fact. Never a sentence about
+ *                           the player, never a sentence about the plot.
+ *   THE FACT IS LIVE        `FlightOps.boardAt` is the real movement board —
+ *                           the same rows #7's glass prints — so the call is
+ *                           different at 09:14 and at 09:20 because the
+ *                           traffic is. There is nothing to exhaust because
+ *                           nothing is recorded.
+ *   IT IS ON THE CLOCK      one call every `PA_EVERY` station minutes, which
+ *                           at §3.4's two-real-minutes-an-hour is 60 s — the
+ *                           middle of `DeckAudio.PA_GAP`'s own 26–74 s.
+ *
+ * ── AND IT IS A REAL VOICE, NOT A CAPTION ────────────────────────────────
+ *
+ * There IS a speech path in this tree and the decline did not look for it:
+ * `Audio.radio` — built for player note #31's stratagem codes — says an actual
+ * word through the platform's synthesiser, and where the platform has none it
+ * falls back to a squelch and the wordless larynx, so the RHYTHM of the call
+ * survives on a machine that cannot speak. That is exactly a tannoy: a word
+ * where there is a voice, a shaped noise where there is not.
+ *
+ * The caption goes up as well, through `world.notify`, because a name a player
+ * cannot hear with the sound off is a name that is not in the game for them.
+ * Both carry the same string, and the string is read from `stationName()` at
+ * the moment of the call — never cached, never copied into `st` — which is the
+ * whole of *"and it follows the name when the name changes"*: rename the drum
+ * at #13's register and the very next call says the new one.
+ *
+ * ── WHERE THE HORN IS ────────────────────────────────────────────────────
+ *
+ * Overhead. `DeckAudio.hornSites` bolts four horns to a 128 m room because a
+ * hangar has two ends; a 180 m drum with a ring walk the whole turn has them
+ * in the soffit everywhere, and the nearest one to you is the one above you.
+ * So the call is panned at the player's own (x, z) at soffit height, which is
+ * where a ceiling tannoy is, and it gets no quieter as you walk — which is
+ * also true of one.
  */
-const BUILD_SLICE = 4;
+
+/** Station minutes between calls. See the note above for why it is 30. */
+const PA_EVERY = 30;
+
+/**
+ * THE VOICE. Its own row rather than one of `Voice.PLAYER_VOICES`, because the
+ * announcer is not a Jedi and the five player larynxes are all somebody the
+ * player might BE. Level, unhurried and a little low: `Audio.radio` maps `f0`
+ * onto the synthesiser's pitch and `cadence` onto its rate, and those two
+ * fields are the whole of what it reads.
+ */
+const PA_SPEAKER = Object.freeze({
+  id: 'tannoy', name: 'Station control',
+  f0: 122, wave: 'sawtooth', formants: [560, 1180], q: [5.5, 4.6], mix: 0.5,
+  rasp: 0.12, raspFreq: 1900, cadence: 0.94, bend: 0.05, gain: 1.0,
+});
+
+/**
+ * WHAT THE CALL SAYS, and every branch of it is read off something the station
+ * already knows. `i` is the call number, so the three kinds come round in
+ * order rather than at random — a tannoy is a rota, not a dice roll, and this
+ * file may not call `Math.random` in any case (`determinism.mjs`).
+ *
+ * Returned as `[head, line]`: the head is the station's own name and is the
+ * point of the whole chapter; the line is the fact under it.
+ */
+function paCall(st, i) {
+  const name = String(stationName() || DEFAULT_NAME).toUpperCase();
+  const day = st.day | 0, hour = Number(st.hour) || 0;
+  const hh = String(Math.floor(hour)).padStart(2, '0');
+  const mm = String(Math.floor((hour % 1) * 60)).padStart(2, '0');
+  switch (i % 3) {
+    case 0: {
+      /* THE TRAFFIC, off the tower's own board. `boardAt` is what #7's glass
+       * prints, so the PA and the board can never disagree. */
+      let row = null;
+      try {
+        row = boardAt(day, hour).find((r) => r.kind === 'in' && (r.state === 'on final' || r.state === 'inbound'))
+          || boardAt(day, hour)[0] || null;
+      } catch { row = null; }
+      if (!row) return [name, `${hh}${mm} hours — the board is clear`];
+      return [name, `${String(row.craft).toLowerCase()} ${row.state} at ${row.gate}`];
+    }
+    case 1: {
+      /* THE HOUR AND THE SHIFT. §3.4's clock, said the way a shift board says
+       * it. Three watches over a 24-hour day. */
+      const watch = ['first watch', 'second watch', 'third watch'][Math.floor(hour / 8) % 3];
+      return [`${name} CONTROL`, `${hh}${mm} hours, ${watch}`];
+    }
+    default: {
+      /* WHERE YOU ARE. The deck you are standing on, by the name the lift's
+       * readout gives it — one string, from the one table that has it. */
+      const deck = st.deck | 0;
+      const label = DECK_NAME[deck] || `deck ${deck}`;
+      return [name, `${label} — mind the lift doors`];
+    }
+  }
+}
+
+/** What the lift calls each deck. Three rows, and #7's board is not one. */
+const DECK_NAME = Object.freeze({
+  12: 'the launch well', 32: 'flight operations', 40: 'the Concourse',
+  44: 'the Living deck', 48: 'the Working deck', 60: 'the Observation dome',
+});
+
+const _paAt = new THREE.Vector3();
+
+/**
+ * THE TANNOY, ONCE A FRAME AND ALMOST ALWAYS A NO-OP.
+ *
+ * `st.pa` is the observable a check drives the shipped loop against: `calls`
+ * counts what actually went out, `said` is the last full line, `name` is the
+ * name that call carried, and `at` is the station hour it went out at. A field
+ * nothing writes would be the defect this chapter exists to remove, so nothing
+ * here is written and not read.
+ */
+function stepTannoy(world, st, dt) {
+  if (!(dt > 0)) return;
+  const pa = st.pa || (st.pa = { calls: 0, at: -1, said: '', head: '', line: '', name: '', spoke: '' });
+  /* ON THE STATION CLOCK AND NOT ON A TIMER OF ITS OWN. `st.hour` is the one
+   * clock in this file; a PA on a real-seconds accumulator would drift out of
+   * step with the board it reads and would go on calling through a pause. */
+  const abs = (st.day | 0) * 24 + (Number(st.hour) || 0);
+  const slot = Math.floor(abs * 60 / PA_EVERY);
+  if (slot === pa.at) return;
+  /* The FIRST frame of a visit sets the slot and says nothing: a tannoy that
+   * fires as the deck fades in reads as a cutscene, which is `DeckAudio`'s own
+   * note about its first announcement and true here for the same reason. */
+  if (pa.at < 0) { pa.at = slot; return; }
+  pa.at = slot;
+  const [head, line] = paCall(st, pa.calls);
+  pa.calls++;
+  pa.head = head; pa.line = line; pa.said = `${head} — ${line}`;
+  pa.name = String(stationName() || DEFAULT_NAME);
+  /* IT IS HEARD. Overhead of the player, at the soffit — see the note above. */
+  const p = world.player?.position;
+  _paAt.set(p ? p.x : 0, (DECK_Y[st.deck] ?? 0) + DRUM.storey, p ? p.z : 0);
+  try { pa.spoke = audio.radio(PA_SPEAKER, pa.said, { pos: _paAt, gain: 0.8 }) || ''; }
+  catch { pa.spoke = ''; }
+  /* AND IT IS READ. */
+  world.notify?.(head, line);
+}
+
+/**
+ * ══ HOW LONG ONE FRAME MAY SPEND FINISHING THE BUILD ══════════════════════
+ *
+ * THE NUMBER WAS DECLARED AND NOT HONOURED. The loop below used to take
+ * `st.pending[0]` and run it whatever it cost, and the two jobs on the queue
+ * cost a hundred to seven hundred milliseconds a piece — so the first frames of
+ * a station arrival ran at four to ten frames a second while a 4 ms slice sat
+ * in the source saying they did not. A budget a caller cannot refuse is a
+ * comment.
+ *
+ * WHAT IT CAN AND CANNOT BUY. The atom on this queue is one humanoid body — a
+ * rig, sixty meshes and a `MergedSkin` chain, about 25 ms of CPU — and nothing
+ * this file does can make an indivisible 25 ms fit inside 4. So the slice buys
+ * the two things it CAN buy, and `station.mjs` holds both:
+ *
+ *   NO FRAME EVER RUNS TWO EXPENSIVE PIECES. A piece is started only while the
+ *     slice is unspent, so the drain's own cost on a frame is one piece plus
+ *     `BUILD_SLICE` and never a pile.
+ *   AND THE PIECE IT RUNS IS THE CHEAPEST ONE OFFERED. `pickBuildJob` measures
+ *     what each job's pieces actually cost and takes the smallest that fits, so
+ *     a trivial job never waits eight frames behind an expensive one, and the
+ *     frame that has to overrun overruns by as little as the queue can manage.
+ */
+export const BUILD_SLICE = 4;
 
 const _now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+/**
+ * WHICH JOB THIS FRAME CAN AFFORD — the cheapest piece that fits in what is
+ * left of the slice, and `-1` for "nothing this frame".
+ *
+ * `job.cost` is the worst piece of that job MEASURED, not declared: a job that
+ * has never run is free until it has been timed once, which is how a queue with
+ * no history still makes progress.
+ *
+ * `first` is the progress guarantee: when nothing fits, the frame still takes
+ * the cheapest piece on the queue rather than stalling for ever on a budget no
+ * atom on it can meet.
+ */
+function pickBuildJob(st, left, first) {
+  let k = -1, best = Infinity;
+  for (let i = 0; i < st.pending.length; i++) {
+    const cost = st.pending[i].cost ?? 0;
+    if (cost < best) { best = cost; k = i; }
+  }
+  if (k < 0) return -1;
+  return (best <= left || first) ? k : -1;
+}
+
+/**
+ * ══ THE FRAME THE POOL IS SEATED ON IS NOT THE QUEUE'S ════════════════════
+ *
+ * MEASURED, deck 40, the first stepped frames of an arrival: **eight bodies on
+ * the frame the doors start opening** and four on each of the three after it.
+ * The pool is thirty and it filled in four frames rather than the seven the
+ * slicing was written for — because `stepStationLife` re-seats on its own timer
+ * with the SAME cap (`reseat`'s cap is `life.priming ? PRIME_SLICE : 1`, and
+ * `priming` is true for exactly as long as the people's job is on this queue)
+ * and `life.reseatIn` starts at zero. So on the arrival frame the drain built
+ * four bodies at the top of `stepStation` and the step built four more at the
+ * bottom of it: two hands seating one pool, on the frame the player can least
+ * afford it.
+ *
+ * So the queue stands aside on the frames the step is doing the work itself.
+ * `reseatIn` is counted down by `dt` and tested against zero inside the step,
+ * which is why the drain is handed the `dt` its caller is about to step with:
+ * the frame the step will seat on is `reseatIn - dt <= 0`. Nothing is lost —
+ * the jobs stay on the queue, `priming` therefore stays true, and the pool is
+ * seated by one hand per frame instead of two.
+ *
+ * NOT IN `all` MODE: `finishStationBuild` is a caller that is not going to step
+ * the world at all, so there is no other hand and standing aside would hand it
+ * an empty station.
+ */
+function seatingThisFrame(world, dt) {
+  const life = world?._stationLife;
+  return !!life && life.reseatIn - dt <= 0;
+}
 
 /**
  * Finish what `dressStation` put off. See `pending`.
@@ -4211,22 +4457,45 @@ const _now = () => (typeof performance !== 'undefined' ? performance.now() : Dat
  * A failed job is reported and taken off the queue rather than retried: a
  * builder that throws on every frame for the rest of a visit is worse than the
  * thing it was going to build, and the throw is on the console either way.
+ *
+ * `dt` is the frame the caller is about to step. It is what `seatingThisFrame`
+ * needs to tell whether the pool is about to be seated below this line.
  */
-export function drainStationBuild(world, st = world?._station, all = false) {
+export function drainStationBuild(world, st = world?._station, all = false, dt = 0) {
   if (!st?.pending?.length) return 0;
+  if (!all && seatingThisFrame(world, dt)) return 0;
   const t0 = _now();
   let n = 0;
   /* A ceiling on the drain-it-all loop. A slicing job that never says it is
    * finished would otherwise hang the caller, and a hang inside a screenshot
    * tool is the worst place to discover one. */
   const CEIL = 4000;
+  /* WHAT THE BUILD ACTUALLY COST, published rather than assumed — `station.mjs`
+   * asserts the slice against these and the numbers are the arrival the player
+   * saw, not a bench's idea of one. */
+  const log = st.build || (st.build = { calls: 0, pieces: 0, worst: 0, piece: 0, ms: 0 });
   do {
-    const job = st.pending[0];
+    const k = all ? 0 : pickBuildJob(st, BUILD_SLICE - (_now() - t0), n === 0);
+    if (k < 0) break;
+    const job = st.pending[k];
+    const a = _now();
     let again = false;
     try { again = job.run() === true; } catch (e) { console.error(`station: ${job.name} failed to build`, e); }
-    if (!again) st.pending.shift();
+    const cost = _now() - a;
+    /* THE WORST PIECE THIS JOB HAS EVER TAKEN, because the question the slice
+     * asks is "can I afford another one of those" and the honest answer to that
+     * is the worst one seen and not the average. */
+    if (cost > (job.cost ?? 0)) job.cost = cost;
+    if (cost > log.piece) log.piece = cost;
+    log.pieces++;
+    if (!again) st.pending.splice(k, 1);
     n++;
   } while (st.pending.length && n < CEIL && (all || _now() - t0 < BUILD_SLICE));
+  if (n) {
+    const spent = _now() - t0;
+    log.calls++; log.ms += spent;
+    if (spent > log.worst) log.worst = spent;
+  }
   return n;
 }
 
@@ -4243,8 +4512,10 @@ export function stepStation(world, dt) {
   const st = world._station;
   if (!st) return;
   /* THE REST OF THE BUILD, ON THE FRAMES AFTER THE FREEZE. First, so that
-   * anything stepped below finds what it owns already standing. */
-  drainStationBuild(world, st);
+   * anything stepped below finds what it owns already standing — and `dt`,
+   * because the frame the caller is about to step is what tells the people's
+   * job whether `stepStationLife` is going to seat the pool below this line. */
+  drainStationBuild(world, st, false, dt);
   tickStationClock(world, dt);
   /* THE WARD HEALS ON THE STATION'S OWN CLOCK. Every ten seconds, and only
    * then — a man mending is a thing that happens while you shop, not a thing
@@ -4305,6 +4576,15 @@ export function stepStation(world, dt) {
   /* AND THE THREE ROOMS WITH A CARD ON. One place lookup a frame and an early
    * return on every deck that has no venue on it — see `stepCrowd`. */
   stepCrowd(world, st, dt);
+  /* …AND WHAT THOSE THREE ROOMS ARE ROARING AT, on the screen in the room.
+   * The same `watch()` reading `stepCrowd` just spent, on a 0.2 s beat and
+   * only where the door cull has the room drawn — see `StationKit.stepFeeds`.
+   * One property read a frame on every other deck. */
+  stepFeeds(world, st, dt);
+  /* AND THE TANNOY, which says the station's own name on the station's own
+   * clock (V15 §1.1). One floor and one integer compare a frame — see
+   * `stepTannoy`. */
+  stepTannoy(world, st, dt);
 
   const cam = world.player?.camera?.obj || world.player;
   if (!cam) return;

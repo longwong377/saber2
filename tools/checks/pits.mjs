@@ -1340,4 +1340,137 @@ export async function run({ check, assert }) {
     return `clean of all six words, no mode named; foldPit writes exactly ${[...new Set(fields)].join(', ')} `
       + `and touches ${[...new Set(kennelWrites)].join(', ')} on the kennel`;
   });
+
+  check('pits: watching a stranger\'s bout is a WATCH — the lines arrive as the fight reaches them', async () => {
+    /**
+     * ══ A REVEAL IS NOT A WATCH ════════════════════════════════════════════
+     *
+     * *"you should be able to WATCH the entire battle, has a crowd."*
+     *
+     * What the button did: `runPitCard(V, { day, bouts: 1 })`, then
+     * `said.slice(-5)` — the last five announcer lines of a fight that had
+     * already finished, printed all at once on the frame of the press, with
+     * the winner already marked on the board above them. That is a reveal. It
+     * tells you the answer and then reads you the ending.
+     *
+     * ── THE THREE THINGS A WATCH HAS TO BE ────────────────────────────────
+     *
+     *   INCREMENTAL. The stream ARRIVES. Measured as the number of distinct
+     *   ticks on which at least one new line landed — a panel handed the
+     *   whole fight in one go scores 1 and fails, however many lines it has.
+     *
+     *   IN ORDER, AND THE CALL LAST. `result` is the final thing said, and
+     *   nothing before the last tick may carry it. A watch whose first tick
+     *   already knows the winner is the reveal wearing a timer.
+     *
+     *   AND IT CHANGES NOTHING. The same card watched, half-watched and not
+     *   watched at all is the same fight — the whole property `runPitCard`
+     *   already has and the one a playback must not spend. Driven three ways
+     *   and compared event for event, and a stake settled after the call is
+     *   compared against one settled without ever opening a watch.
+     *
+     * DRIVEN IN SECONDS, with no timer and no `requestAnimationFrame`:
+     * `stepWatch(w, dt)` takes elapsed seconds, which is what makes the whole
+     * model measurable at all in a headless node check.
+     */
+    const { openWatch, stepWatch, WATCH_GATE, WATCH_HOLD } = await import('../../src/game/Pits.js');
+    const V = pitById('arena');
+    const day = 3;
+    const run = runPitCard(V, { day, bouts: 1 });
+    assert(run.card, `no card at the Arena on day ${day} — ${run.why}`);
+    const truth = run.races[0].result;
+
+    const w = openWatch(run, 0);
+    assert(w, 'openWatch handed back nothing for a card that has a bout on it');
+    assert(w.said.length === 0, `the watch opened with ${w.said.length} lines already said`);
+    assert(w.gates > 0 && w.gates <= w.of,
+      `the watch runs to gate ${w.gates} of a ${w.of}-segment ground`);
+
+    /* A ticket struck BEFORE the off, on the board the bout was priced at. */
+    const backed = run.races[0].board[0].id;
+    const bet = [{ entrant: backed, stake: 40 }];
+
+    const DT = 1 / 60;
+    let t = 0, ticks = 0, callAt = -1, lastAt = -1;
+    const heard = [];
+    for (let i = 0; i < 60 * 240 && !w.over; i++) {
+      const r = stepWatch(w, DT);
+      t += DT;
+      if (r.fresh.length) {
+        ticks++;
+        lastAt = t;
+        for (const line of r.fresh) heard.push({ t, gate: r.gate, line });
+      }
+      /* WHEN THE CALL LANDED, off the room's own words for it. */
+      if (callAt < 0 && w.cut?.type === 'result') callAt = t;
+    }
+    assert(w.over, `the watch never ended — ${t.toFixed(1)}s and gate ${w.gate} of ${w.gates}`);
+
+    /* ── IT ARRIVED, RATHER THAN LANDING ─────────────────────────────── */
+    assert(ticks >= 3,
+      `every line of the bout arrived on ${ticks} tick(s) — a watch delivers the fight over the `
+      + 'fight, and a panel handed all of it at once is the reveal this clause replaces');
+    assert(heard.length >= 4, `${heard.length} lines over a whole bout`);
+    assert(heard[0].t < lastAt * 0.5,
+      `the first line landed at ${heard[0].t.toFixed(2)}s and the last at ${lastAt.toFixed(2)}s — `
+      + 'the stream is bunched at the end rather than spread over the fight');
+    /* The gate a line was said on only ever goes forward. */
+    for (let i = 1; i < heard.length; i++) {
+      assert(heard[i].gate >= heard[i - 1].gate,
+        `a line arrived on gate ${heard[i].gate} after one on gate ${heard[i - 1].gate}`);
+    }
+
+    /* ── AND THE RESULT IS THE END OF IT, NOT THE START ──────────────── */
+    const winner = run.card.entrants.find((e) => e.id === truth.winner);
+    assert(winner, 'the bout named a winner who is not on the card');
+    const named = heard.findIndex((h) => /That is the fight/.test(h.line));
+    assert(named >= 0, 'the call was never said');
+    assert(named === heard.length - 1,
+      `the call arrived as line ${named + 1} of ${heard.length} — there is fight after the fight`);
+    assert(heard[named].line.includes(winner.name),
+      `the call is "${heard[named].line}" and the winner is ${winner.name}`);
+    assert(callAt > 0 && callAt >= w.gates * WATCH_GATE - 1,
+      `the call landed at ${callAt.toFixed(2)}s of a bout that runs to `
+      + `${(w.gates * WATCH_GATE).toFixed(2)}s`);
+    assert(t >= w.gates * WATCH_GATE + WATCH_HOLD - DT * 2,
+      `the watch closed at ${t.toFixed(2)}s, before the room had the call`);
+
+    /* ── AND WATCHING CHANGED NOTHING ────────────────────────────────── */
+    const half = openWatch(runPitCard(V, { day, bouts: 1 }), 0);
+    for (let i = 0; i < 60 * 3; i++) stepWatch(half, DT);
+    const cold = runPitCard(V, { day, bouts: 1 });
+    const same = (a, b) => JSON.stringify(a.events) === JSON.stringify(b.events);
+    assert(same(cold.races[0].result, truth),
+      'a card run after a watch is not the card that was watched');
+    assert(same(half.race.result, truth), 'a half-watched bout is not the bout');
+    const ledA = settlePitCard(run, bet, 0);
+    const ledB = settlePitCard(cold, bet, 0);
+    assert(JSON.stringify(ledA) === JSON.stringify(ledB),
+      `a stake settled after a watch pays ${ledA.returned} and one settled without watching `
+      + `pays ${ledB.returned}`);
+
+    /* ── AND THE DOOR IN main.js IS THE WATCH AND NOT THE REVEAL ─────── */
+    const { readFile } = await import('node:fs/promises');
+    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const code = main.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    assert(/\bopenWatch\s*\(/.test(code) && /\bstepWatch\s*\(/.test(code),
+      'main.js opens no watch — the Watch it button is still a reveal');
+    const press = /if \(act === 'watch'\)\s*\{([\s\S]*?)\n      \}/.exec(code)?.[1] || '';
+    assert(press, "main.js no longer has a 'watch' press to read");
+    assert(/openWatch/.test(press),
+      'the Watch it press does not open a watch');
+    assert(!/settlePitCard/.test(press),
+      'the Watch it press settles the card on the frame of the press — the money moves before '
+      + 'the first line is said, which is the reveal this clause exists to rule out');
+    /* AND EVERY EXIT SETTLES IT. A ticket struck before the off is a ticket
+     * however the panel was left. */
+    assert(/function closePit\(\)[\s\S]{0,600}?pitSettleWatch\(\)/.test(code),
+      'walking out of the pit mid-watch leaves a ticket nothing will pay');
+
+    return `${heard.length} lines over ${ticks} ticks and ${t.toFixed(1)}s of a ${w.gates}-gate bout `
+      + `(first at ${heard[0].t.toFixed(2)}s, call at ${callAt.toFixed(2)}s as line `
+      + `${named + 1} of ${heard.length}); a 40 stake settles ${ledA.returned} watched and `
+      + `${ledB.returned} unwatched, and all three runs are the same ${truth.events.length} events`;
+  });
+
 }

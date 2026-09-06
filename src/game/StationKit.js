@@ -45,7 +45,7 @@ import { Kit, makeCrate, makeBarrel, Prop, slabGeo, cylGeo } from '../world/Prop
  * them. The import goes one way only: nothing in `Food.js` knows this file
  * exists. */
 import * as Food from './Food.js';
-import { DECK_Y, DRUM, floorOf, waysOn, junctionsOn } from './StationPlan.js';
+import { PLACE, DECK_Y, DRUM, floorOf, waysOn, junctionsOn } from './StationPlan.js';
 /**
  * ── THE WHEEL'S SEGMENT COUNT COMES OFF THE RULES, NOT OFF A RULER ───────
  *
@@ -57,6 +57,19 @@ import { DECK_Y, DRUM, floorOf, waysOn, junctionsOn } from './StationPlan.js';
  */
 import { DRUM as GAMES_DRUM } from './Games.js';
 const DRUM_SEGMENTS = GAMES_DRUM.SEGMENTS.length;
+/**
+ * ── AND THE THREE ROOMS WITH A CARD ON HAVE A SCREEN IN THEM NOW ─────────
+ *
+ * `dressFeeds`/`stepFeeds` at the foot of this file. The import goes one way
+ * only and cannot loop: `Tote.js` imports `MathUtil` and `Spectacle.js` and
+ * nothing else in the tree, and neither of those has heard of a room.
+ *
+ * `watch` is the reading — the identical one the tote panel prints and the
+ * crowd roars at — and `screenOf` turns it into rows. Nothing here decides
+ * what is on the screen; it decides where the screen hangs.
+ */
+import { venueAtPlace, watch as toteWatch, resultOf } from './Tote.js';
+import { screenOf, SCREEN_ROWS, SCREEN_COLS } from './Spectacle.js';
 
 const TAU = Math.PI * 2;
 
@@ -67,6 +80,104 @@ const TAU = Math.PI * 2;
 /** A floor plate. Every place has one; what differs is what stands on it. */
 function floor(kit, M, w, d, y = 0, mat = null) {
   kit.slab(mat || M.deep, w, 0.4, d, 0, y - 0.2, 0, { collide: true, bevel: 0 });
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  THE STANDING'S SHAFT, AND THE ROOMS IT GOES THROUGH — V15 §1.2
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * ── WHAT THE COLUMN WAS ACTUALLY STANDING IN ─────────────────────────────
+ *
+ * `Station.buildDeckPlate` cuts the deck PLATE and the deck SOFFIT round #56
+ * on the decks its shaft passes, and rails the hole. That is the drum's own
+ * structure and it was done. It is not, on its own, a sightline, because a
+ * ROOM standing on that patch of deck lays its own floor, its own lid and
+ * whatever else it is made of straight back across the hole.
+ *
+ * Measured: on deck 44 the shaft comes up inside `#61 The Underlift Pit` — a
+ * 16 x 14 service room whose builder lays a full-depth floor slab over the
+ * cut, sinks a 2.5 m service pit into it, stretches chain-link over that at
+ * 2.2 m and roofs the whole thing at 4.4 m. So the landmark that is the whole
+ * argument for an obelisk over a screen arrived on the Living deck as a black
+ * bollard sticking out of a grating under a chain-link lid, with a ceiling
+ * over it. The deck's hole was cut and then filled in by the room standing on
+ * it, which is the same class of defect as the soffit one deck down.
+ *
+ * ── SO A ROOM THE SHAFT PASSES IS TOLD WHERE IT PASSES ───────────────────
+ *
+ * `standingShaft` hands a builder the shaft in ITS OWN local frame, derived
+ * from `PLACE.get(56)` — the one row that says where the column is — so there
+ * is no second statement of where the shaft goes and no hand-kept list of
+ * which rooms it crosses. A builder that wants to stay out of it passes it to
+ * `floor`, `ceiling` or `sink` as `omit`; a builder that does not is
+ * unaffected, which is why this is a `ctx` field and not a new argument on
+ * fifty shape functions.
+ *
+ * ── IT CUTS WHAT IS OVER YOUR HEAD AND NOT WHAT IS UNDER YOUR FEET ──────
+ *
+ * The first cut of this cut the room's FLOOR and its service pan as well, so
+ * that you could look down the shaft from the Living deck onto the Concourse.
+ * Measured at the well rail with a 61-point ray fan up the column, that bought
+ * NOTHING: the lowest visible point was y = 13.3 m before and y = 13.3 m
+ * after. `railWell` fences the DECK cut, which is a polar region wider than
+ * anything squared off in a room's own frame, so a walker is stopped a couple
+ * of metres short of any hole a room could make and the downward view is
+ * behind the fence he cannot pass. It also cut a hole whose corners are not
+ * provably inside that fence — the cut's tight side is 3.92 m from the
+ * column's axis and a 3.8 m square reaches 5.4 — which is a hole in a floor
+ * with no rail on it, the one defect `Station.railWell` exists to have
+ * removed. Zero gain and a real risk, so the floor and the pan are whole and
+ * this cuts only the lid, the chain and the beams.
+ *
+ * Nothing stands on a ceiling, so the size is a question of how the room
+ * reads: 3.8 m makes a 7.6 m opening over the east half of a 16 x 14 room —
+ * a shaft with roof round it, rather than a room with no roof.
+ */
+export const SHAFT_HALF = 3.8;
+
+/**
+ * Where #56's shaft crosses `place`, in `place`'s own local frame, or null.
+ * Only decks 44 and 48 — deck 40 is where the column STANDS and its own
+ * builder has no lid to cut.
+ */
+export function standingShaft(place) {
+  if (!place || (place.deck !== 44 && place.deck !== 48)) return null;
+  const p = PLACE.get(56);
+  if (!p) return null;
+  const c = Math.cos(place.yaw), s = Math.sin(place.yaw);
+  const dx = p.x - place.x, dz = p.z - place.z;
+  const x = dx * c - dz * s, z = dx * s + dz * c;
+  if (Math.abs(x) - SHAFT_HALF > place.w / 2 || Math.abs(z) - SHAFT_HALF > place.d / 2) return null;
+  return { x, z, h: SHAFT_HALF };
+}
+
+/**
+ * One horizontal slab, with a square hole in it if one is asked for.
+ *
+ * FOUR BOXES ROUND THE HOLE rather than a boolean: everything this kit lays
+ * is merged per material, so a lid in four pieces is the same draw call as a
+ * lid in one and the whole cost is three extra boxes. A piece thinner than
+ * 0.2 m is dropped — a 4 cm strip of ceiling is not a ceiling, it is a seam.
+ *
+ * Returns how many pieces were laid, which is 1 for the ordinary case.
+ */
+function holed(kit, mat, w, t, d, y, o, opts) {
+  if (!o) { kit.slab(mat, w, t, d, 0, y, 0, opts); return 1; }
+  const X0 = -w / 2, X1 = w / 2, Z0 = -d / 2, Z1 = d / 2;
+  const x0 = Math.max(X0, o.x - o.h), x1 = Math.min(X1, o.x + o.h);
+  const z0 = Math.max(Z0, o.z - o.h), z1 = Math.min(Z1, o.z + o.h);
+  if (x1 <= x0 || z1 <= z0) { kit.slab(mat, w, t, d, 0, y, 0, opts); return 1; }
+  let n = 0;
+  const lay = (a, b, c, e) => {
+    if (b - a < 0.2 || e - c < 0.2) return;
+    kit.slab(mat, b - a, t, e - c, (a + b) / 2, y, (c + e) / 2, opts);
+    n++;
+  };
+  lay(X0, x0, Z0, Z1);          // inboard of the hole, full depth
+  lay(x1, X1, Z0, Z1);          // outboard of it
+  lay(x0, x1, Z0, z0);          // in front of it
+  lay(x0, x1, z1, Z1);          // behind it
+  return n;
 }
 
 /**
@@ -101,15 +212,27 @@ function walls(kit, M, w, d, h, opts = {}) {
 
 /** A soffit. `ribs` gives it the structure that stops it reading as a lid. */
 function ceiling(kit, M, w, d, h, opts = {}) {
-  kit.slab(opts.mat || M.dark, w + 0.8, 0.4, d + 0.8, 0, h + 0.2, 0, { collide: true, bevel: 0 });
+  const o = opts.omit || null;
+  holed(kit, opts.mat || M.dark, w + 0.8, 0.4, d + 0.8, h + 0.2, o, { collide: true, bevel: 0 });
   const n = opts.ribs ?? Math.max(2, Math.round(d / 3.5));
+  /* A RIB IS A BEAM AND IT STOPS AT THE HOLE. One that ran across an open
+   * shaft would be the lid this cut exists to remove, in stick form. */
+  const spans = (z) => o && Math.abs(z - o.z) <= o.h + 0.17;
   for (let i = 0; i < n; i++) {
     const z = -d / 2 + d * ((i + 0.5) / n);
+    if (spans(z)) {
+      for (const s of [-1, 1]) {
+        const a = s < 0 ? -w / 2 : o.x + o.h, b = s < 0 ? o.x - o.h : w / 2;
+        if (b - a > 0.2) kit.slab(M.hull, b - a, 0.34, 0.34, (a + b) / 2, h - 0.2, z, { collide: false, bevel: 0 });
+      }
+      continue;
+    }
     kit.slab(M.hull, w, 0.34, 0.34, 0, h - 0.2, z, { collide: false, bevel: 0 });
   }
   if (opts.strips !== false) {
     for (let i = 0; i < n; i += 2) {
       const z = -d / 2 + d * ((i + 0.5) / n);
+      if (spans(z)) continue;
       kit.slab(M.strip, w * 0.66, 0.09, 0.16, 0, h - 0.42, z, { collide: false, bevel: 0 });
     }
   }
@@ -1051,7 +1174,7 @@ export const SHAPES = {
 
   /** #18 The Pit: a LOW DEN. One exit, a cashier behind bars in the corner,
    * a dice cage on a stand and four sabacc tables under hanging lamps. */
-  lowden(kit, M, p) {
+  lowden(kit, M, p, ctx) {
     const { w, d, h } = p;
     floor(kit, M, w, d, 0, M.dark);
     walls(kit, M, w, d, h, { doorW: 2.4 });
@@ -1073,6 +1196,11 @@ export const SHAPES = {
       kit.post(M.strip, 0.45, 0.15, 0.3, x, 2.1, z, { radial: 8 });
       for (let k = 0; k < 3; k++) loose(kit, x + Math.cos(k * 2) * 1.3, 0, z + Math.sin(k * 2) * 1.3, (world, q) => chairBody(world, q, M));
     }
+    /* ── THE FEED OVER THE FAR WALL. #18's gazetteer verb is "watch and bet"
+     * and the room had nothing in it to watch. A board at drinking height on
+     * the wall the tables face — see `dressFeeds`. */
+    kit.slab(M.dark, 3.0, 1.9, 0.08, -w / 2 + 4.6, 2.0, d / 2 - 0.2, { collide: false, bevel: 0.02 });
+    ctx.feed = { at: { x: -w / 2 + 4.6, y: 2.0, z: d / 2 - 0.27, ry: Math.PI }, w: 2.7, h: 1.6 };
   },
 
   /**
@@ -1198,7 +1326,7 @@ export const SHAPES = {
 
   /** #19 Holo-theatre: a FAN. The floor rakes down toward a stage, the seats
    * are in arcs that widen, the back wall is the widest thing in the room. */
-  fanauditorium(kit, M, p) {
+  fanauditorium(kit, M, p, ctx) {
     const { w, d, h } = p;
     floor(kit, M, w, d);
     walls(kit, M, w, d, h, { doorW: 4 });
@@ -1217,6 +1345,19 @@ export const SHAPES = {
     kit.slab(M.deep, w - 6, 0.6, 4, 0, 0.3, d / 2 - 2.6, { collide: true, bevel: 0 });
     kit.post(M.screen, 3.2, 2.4, 3.4, 0, 2.3, d / 2 - 2.6, { radial: 12 });
     kit.slab(M.strip, w - 7, 0.08, 0.12, 0, 0.62, d / 2 - 4.6, { collide: false, bevel: 0 });
+    /* ── AND THE VOLUME HAS THE RACE IN IT (V16 Lane D, "A WINDOW") ──────
+     * The cone above is a lit cylinder and was the whole of #19's holo: sixty
+     * seats facing a shape. The feed hangs on its front face, at the height a
+     * seated crowd is looking at, and `stepFeeds` cuts it to the moments the
+     * sim is emitting while the room roars at them.
+     *
+     * ABOVE THE RAKE AND NOT ON ITS OWN CENTRELINE. The back arcs of this
+     * room reach `rr = 17` at `-d/2 + 3`, which is z = 9 — past the stage
+     * slab's own front edge — so a face hung at seat height would be buried
+     * in the sixth row. 3.4 m clears the top row's headroom, and the z is the
+     * cone's own radius at that height (it tapers 3.2 → 2.4 over 3.4 m), so
+     * the picture sits ON the volume rather than floating in front of it. */
+    ctx.feed = { at: { x: 0, y: 3.4, z: d / 2 - 2.6 - 2.56, ry: Math.PI }, w: 4.4, h: 2.4 };
   },
 
   /** #20 The Arena: a SUNKEN RING. A round pit with tiers all round it,
@@ -1246,6 +1387,11 @@ export const SHAPES = {
     }
     /* The saber rack at the door. */
     rack(kit, M, 3.4, 2.2, 0, -r + 1.2, 0, 3);
+    /* ── AND THE BOUT ON A BOARD OVER THE RING. `arcWall` leaves its gap at
+     * +Z, which is the door, so the feed goes on the far side and faces the
+     * benches across the sand. */
+    kit.slab(M.dark, 4.2, 2.7, 0.1, 0, 4.3, -r + 0.55, { collide: false, bevel: 0.02 });
+    ctx.feed = { at: { x: 0, y: 4.3, z: -r + 0.62, ry: 0 }, w: 3.9, h: 2.4 };
   },
 
   /** #21 Gym: a RUNNING GALLERY. Long and shallow, open to the atrium down
@@ -1377,14 +1523,60 @@ export const SHAPES = {
   /** #56 The Standing: an OBELISK. A tall narrow hall with one object in it,
    * three decks high, running up through a cut in the soffit — so you see the
    * top of it from the Living deck's balcony and the whole of it from the
-   * Concourse floor. Four cut faces, and it turns. */
+   * Concourse floor. Four cut faces, and it turns.
+   *
+   * ── AND THE MOUTH IS OPEN, WHICH IT WAS NOT ─────────────────────────────
+   *
+   * This called `walls(..., { doorW: w - 3.4 })`, which is `walls`' ordinary
+   * front wall with a DOORWAY in it — and a doorway in this kit is 2.6 m
+   * high, because `walls` lays a lintel from 2.6 up to the wall head over
+   * every opening it cuts. So the one room in the gazetteer whose entire
+   * point is a 27 m column had a letterbox in front of it: from the Concourse
+   * floor you saw the bottom 2.6 m of it and the underside of a beam.
+   *
+   * The mouth is now OPEN — no front wall at all, `open: ['front']` — so the
+   * hall is an alcove off the Concourse's east gallery, which is what §3.2's
+   * own line for it says it is: *"a tall narrow hall OFF the Concourse's east
+   * gallery"*, not a room with a door. Measured at the mouth with a 61-point
+   * ray fan up the column: 58/61 points and 27.2 m of it in view.
+   *
+   * ── AND IT BUYS NO GROUND ON DECK 40, WHICH IS WORTH SAYING ─────────────
+   *
+   * Swept over every walkable square metre of the deck at eye height, the
+   * area that can see the column is 207 m² before this and 207 m² after, and
+   * the reason is one wall this file does not own. `#9 The Concourse` is an
+   * IMPORTED room — `station-room-zocalo-hull`, a decoded `.smesh` — and its
+   * east wall runs the full 67 m with no opening at this alcove's mouth.
+   * Rays from the Concourse floor to the column, every 2 m across the hall
+   * and every 4 m down it: 0/21 points at x = −10 through x = +10, 21/21 at
+   * x = +12, which is a metre past that wall. `roomColliders` builds the same
+   * shell in physics — *"two side walls the full length"* — so it is a wall
+   * to a body as well as to a ray.
+   *
+   * So *"the whole of it from the Concourse floor"* is not deliverable from
+   * inside this file: it wants a doorway cut into imported geometry, which is
+   * `StationMesh`'s and the reachability lane's, not a kit shape's. What IS
+   * delivered here is that the hall itself no longer letterboxes its own
+   * landmark, and the decks above — see `standingShaft`.
+   *
+   * The head beam eight lines down still crosses it at 7.6 m and the two side
+   * walls still stand, so the mouth reads as a mouth and not as a missing
+   * wall — and the beam is above the alcove's 7.4 m wall head, which is where
+   * a lintel belongs when the opening is the whole face.
+   */
   obelisk(kit, M, p, ctx) {
     const { w, d, h } = p;
     floor(kit, M, w, d, 0, M.dark);
-    /* Three walls and a doorway; NO ceiling — the cut is what makes the
+    /* Two walls and an OPEN FACE; NO ceiling — the cut is what makes the
      * obelisk visible from two other decks, and §3.1 rule 5 wants the window
      * onto another place to be real rather than described. */
-    walls(kit, M, w, d, 7.4, { doorW: w - 3.4, mat: M.hull });
+    walls(kit, M, w, d, 7.4, { open: ['front'], mat: M.hull });
+    /* THE JAMBS. A face with nothing at its edges reads as a wall that failed
+     * to build; two half-metre returns at the ends of the opening are what an
+     * arcade's piers are, and they carry the head beam below. */
+    for (const s of [-1, 1]) {
+      kit.slab(M.hull, 0.5, 7.4, 0.5, s * (w / 2 - 0.25), 3.7, -d / 2 + 0.25, { collide: true, bevel: 0 });
+    }
     for (const s of [-1, 1]) {
       kit.slab(M.dark, w + 0.8, 0.5, 1.6, 0, 7.6, s * (d / 2 - 0.8), { collide: true, bevel: 0 });
     }
@@ -1804,11 +1996,28 @@ export const SHAPES = {
    */
   chainpit(kit, M, p, ctx) {
     const { w, d, h } = p;
+    /**
+     * ── #56's SHAFT COMES UP THROUGH THIS ROOM, AND IT USED TO BE PAVED ───
+     *
+     * This is the one room on deck 44 standing on the Standing's shaft, and
+     * it roofed it: chain-link at 2.2 m and a lid at 4.4 over a column 27 m
+     * tall. Measured at the well rail with a 61-point ray fan up the column,
+     * before and after this cut: 8/61 points and 3.7 m of column, against
+     * 13/61 and 6.0 m — the landmark used to stop at this room's ceiling.
+     *
+     * THE FLOOR AND THE PAN ARE LEFT WHOLE, and that is measured too — see
+     * `standingShaft`, which carries the numbers and the safety argument.
+     *
+     * The room is not spoiled by it — §3.2 calls this *"a service gap with
+     * the deck plate up"*, and a service gap the Standing rises out of is
+     * more of that room, not less.
+     */
+    const sh = ctx?.shaft || null;
     /* The grating you stand on, and it is `dark` rather than the deck's own
      * plate: this is the floor with its covering taken up. */
     floor(kit, M, w, d, 0, M.dark);
     walls(kit, M, w, d, h, { doorW: 3.0 });
-    ceiling(kit, M, w, d, h, { ribs: 3, strips: false });
+    ceiling(kit, M, w, d, h, { ribs: 3, strips: false, omit: sh });
 
     /* THE CUT. Rectangular, across the room, 2.5 m down, with the lifted deck
      * plate leaning against the far wall where it was dragged. */
@@ -1820,12 +2029,17 @@ export const SHAPES = {
     /* THE CHAIN. Two crossed sets of thin bars at 2.2 m over the cut, on a
      * frame bent out of conduit — stretched over, not built in. */
     const lid = 2.2;
+    /* AND THE NET STOPS AT THE SHAFT. A 5 cm bar is nothing to walk into and
+     * everything to look through: ten of them across an open well is the lid
+     * again, drawn in wire. */
     for (let i = 0; i <= 9; i++) {
       const x = -cw / 2 + (cw * i) / 9;
+      if (sh && Math.abs(x - sh.x) <= sh.h) continue;
       kit.slab(M.wing, 0.05, 0.05, cd + 0.6, x, lid, 0, { collide: false, bevel: 0 });
     }
     for (let i = 0; i <= 7; i++) {
       const z = -cd / 2 + (cd * i) / 7;
+      if (sh && Math.abs(z - sh.z) <= sh.h) continue;
       kit.slab(M.wing, cw + 0.6, 0.05, 0.05, 0, lid - 0.06, z, { collide: false, bevel: 0 });
     }
     for (const s of [-1, 1]) {
@@ -2540,8 +2754,14 @@ export function buildPlace(world, group, place, M, st) {
     habitat: null,
     /** #56's column, handed back so `StationLife` can write the rolls on it. */
     obelisk: null,
+    /** WHERE #56's SHAFT CROSSES THIS ROOM, in this room's own frame, or null
+     * on the forty-odd rooms it does not cross. A builder that lays a floor
+     * or a lid over it passes this on as `omit` — see `standingShaft`. */
+    shaft: standingShaft(place),
     /** #25's lit slabs, handed back so `Notices.js` can write on them. */
     notices: null,
+    /** The screen a room with a card on has in it — see `dressFeeds`. */
+    feed: null,
   };
   fn(kit, M, place, ctx, world);
   const y = floorOf(place);
@@ -2576,6 +2796,17 @@ export function buildPlace(world, group, place, M, st) {
    * exactly, and for the identical reason: a notice is a surface to draw on
    * rather than an object to move, and the group is what culls it. */
   if (ctx.notices) st.notices = { ...ctx.notices, group };
+  /* THE SCREEN IN A ROOM WITH A CARD ON. A LIST and not a single field — three
+   * rooms carry one and they are all on deck 40, so the one thing `stepFeeds`
+   * must not have to do is search the deck for them. Positions are the
+   * builder's own frame; `dressFeeds` rotates them out, exactly as the notices
+   * are. A room whose place is not a `Tote` venue records nothing. */
+  if (ctx.feed && venueAtPlace(place.id)) {
+    (st.feeds || (st.feeds = [])).push({
+      ...ctx.feed, id: place.id, venue: venueAtPlace(place.id).id, group,
+      x: place.x, y, z: place.z, yaw: place.yaw, panel: null, key: null, cut: null, gate: 0, draws: 0,
+    });
+  }
   if (ctx.trees.length) (st.trees ||= []).push({ place, spec: ctx.trees[0] });
   return { draws: out.meshes.length, triangles: out.triangles, boxes: out.boxes?.length || 0 };
 }
@@ -3663,4 +3894,125 @@ export function stepCook(world, dt) {
   const c = world?._cook;
   if (!c) return;
   if (!c.step(dt)) world._cook = null;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  THE SCREEN IN THE ROOM — V16 Lane D's fifth element
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * *"A WINDOW — the sim rendered as moments on a screen in a room."*
+ *
+ * ── WHAT WAS THERE BEFORE THIS ───────────────────────────────────────────
+ *
+ * `Spectacle.momentsOf` and `Pits.PIT_MOMENTS` name sixteen moments between
+ * them and NEITHER had a caller that showed a player anything. #19's holo
+ * volume was one line — `kit.post(M.screen, 3.2, 2.4, 3.4, …)` — a lit cone
+ * on a stage, and the only way to find out what the sixty people around you
+ * were shouting at was to open the betting board. The room reacted to a race
+ * nobody in it could see.
+ *
+ * ── WHY IT IS POSSIBLE NOW AND WAS NOT BEFORE ────────────────────────────
+ *
+ * A screen in a room is only worth building if the room is running while you
+ * stand in it. It is: `Screens.lid` stops the world and `Screens.hands` does
+ * not, and a station board is a board rather than a lid (`Screens.CALM`), so
+ * `stepStation` — and therefore this — winds on behind an open panel and in
+ * front of a player who never opens one. Measured at #19 with a board up: ten
+ * roars, 290 distinct crowd swells, the hour advancing.
+ *
+ * ── AND IT IS THE SAME READING THE CROWD IS ROARING AT ───────────────────
+ *
+ * `Tote.watch()`, once per beat, exactly as `stepCrowd` takes `crowdAt` —
+ * which is the same derivation. There is no second stream and no second
+ * clock, so the screen cannot show a gate the room has not reached or a call
+ * the crowd has not heard, which is the one thing a feed beside a live crowd
+ * must never do.
+ *
+ * ── WHAT IT COSTS ────────────────────────────────────────────────────────
+ *
+ * One draw per screen (three on deck 40, none anywhere else) and one
+ * `watch()` per beat. `FEED_EVERY` is 0.2 s against the shortest gate in the
+ * game — the Pit's 54 segments over 0.3 station hours is 0.67 real seconds —
+ * so the panel never misses a cut and never redraws four times inside one.
+ * `signPanel.draw` early-outs on identical rows, so a screen between races
+ * costs a string compare. The whole of `stepStation` is measured against
+ * §12.2's 2.5 ms in `tools/checks/frame-budget.mjs`'s station clause.
+ */
+
+/** How wide and tall a feed panel's canvas is. 26 columns of Courier at 47 px. */
+const FEED_PX = 768;
+const FEED_PY = 384;
+
+/** How often the screen is re-read, in seconds. See the header. */
+export const FEED_EVERY = 0.2;
+
+/**
+ * HANG THE SCREENS. `dressNotices`' shape and for its reasons: the room hands
+ * back where the face goes in ITS OWN frame, this rotates it into the drum,
+ * and the mesh is parented to the place's group so it is culled, hidden and
+ * disposed with the room rather than living on the scene for the deck's life.
+ */
+export function dressFeeds(world, st) {
+  const list = st?.feeds;
+  if (!world || !list || !list.length) return 0;
+  let made = 0;
+  for (const f of list) {
+    if (f.panel) continue;
+    const panel = signPanel(['', '', '', '', '', ''], {
+      name: `feed${f.id}`, px: FEED_PX, pyx: FEED_PY, align: 'left', head: false,
+      bg: '#07090b', ink2: '#7fc4ff', lit1: '#ffffff',
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(f.w, f.h), panel.material);
+    mesh.name = `station-feed-${f.id}`;
+    const c = Math.cos(f.yaw), s = Math.sin(f.yaw);
+    mesh.position.set(f.x + f.at.x * c + f.at.z * s, f.y + f.at.y, f.z - f.at.x * s + f.at.z * c);
+    mesh.rotation.y = f.yaw + (f.at.ry || 0);
+    (f.group || world.scene).add(mesh);
+    f.panel = panel;
+    f.mesh = mesh;
+    /* ON THE DECK'S BILL — `dressNotices`' stated reason: a mesh that goes to
+     * the scene and is counted by nothing makes §12.2's 400 a measurement of
+     * the wrong number. */
+    st.draws += 1;
+    made++;
+  }
+  return made;
+}
+
+/**
+ * CUT THE SCREENS TO WHAT IS HAPPENING, on the feed's own beat.
+ *
+ * A no-op on every deck but 40, at the cost of one property read a frame,
+ * which is the same bargain `stepCook` and `stepBells` are on. A screen in a
+ * room the player is nowhere near is not read at all: `group.visible` is
+ * §12.3's door cull, already decided by `stepStation`'s last block.
+ *
+ * `rows`, `cut`, `gate` and `draws` are left on the record because they are
+ * the observables a check drives the SHIPPED loop against — "the screen
+ * changed" is `draws` and `key`, measured, and not a flag this function sets.
+ */
+export function stepFeeds(world, st, dt) {
+  const list = st?.feeds;
+  if (!list || !list.length || !(dt > 0)) return 0;
+  st.feedIn = (st.feedIn || 0) - dt;
+  if (st.feedIn > 0) return 0;
+  st.feedIn = FEED_EVERY;
+  let drawn = 0;
+  for (const f of list) {
+    if (f.group && !f.group.visible) continue;
+    const reading = toteWatch(f.venue, st.day | 0, st.hour);
+    const view = screenOf(reading, reading.race ? resultOf(reading.race).events : null,
+      { rows: SCREEN_ROWS, cols: SCREEN_COLS });
+    f.cut = view.cut;
+    f.gate = view.gate;
+    f.of = view.of;
+    f.phase = view.phase;
+    f.rows = view.rows;
+    if (view.key === f.key) continue;
+    f.key = view.key;
+    f.draws++;
+    drawn++;
+    f.panel?.draw(view.rows);
+  }
+  return drawn;
 }
