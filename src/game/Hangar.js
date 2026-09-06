@@ -81,6 +81,9 @@ import { dressDeckFlight, stepDeckFlight, undressDeckFlight, embarkCompany, hull
 import { stepDeckEdit } from './DeckEdit.js';
 import { squadPlan, leadOf, SQUAD, ORDER_REACH, armyToLead, musterPlan, OPENING_STRENGTH, ARMIES, MARKS } from './Command.js';
 import { TERRAIN_PRESETS } from '../world/Terrain.js';
+import { weatherAt } from './StationEvents.js';
+import { stationDay } from './StationSave.js';
+import { weatherUniforms } from './PlanetWeather.js';
 /**
  * ONE PROP FROM THE OUTDOOR LIBRARY, AND IT IS THE ONE THE PLAYER THROWS.
  *
@@ -1628,6 +1631,8 @@ export function dressHangar(world) {
     forward: [0, 0, 1],
     rise: 0.22,
   });
+  /* V18 cool 16: the same weather the station's news reads out, off the same day and theatre. */
+  weatherUniforms(world.engine?.skyDome, weatherAt(stationDay(), shown?.name || 'the line'));
 
   /**
    * ══ AND THE ORDER WHEEL OPENS, BECAUSE THERE IS SOMETHING TO OPEN IT ═══

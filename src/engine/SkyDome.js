@@ -569,6 +569,13 @@ uniform vec3  uAtmoCol;      /* the limb: the level's own skyColor, as a hue */
 uniform vec3  uScatterCol;   /* the rim's own colour, as a hue */
 uniform float uHazeAmt;      /* dust veil over the day side */
 uniform float uStormAmt;     /* cyclone gain */
+/* THE WEATHER THE NEWS READS OUT (V18 cool 16). uWeather is 1 + the row of
+ * StationEvents.WEATHER — 0 is "nothing stamped yet", which leaves the deck
+ * as the level's own. uWeatherSeed places the day's system on the disc,
+ * uWeatherT is the day's own drift phase; both come from PlanetWeather.js. */
+uniform float uWeather;      /* 0 none, 1 clear, 2 high cloud, 3 overcast, 4 rain, 5 storm, 6 dust, 7 fog, 8 snow */
+uniform float uWeatherSeed;  /* where on the disc, and which noise */
+uniform float uWeatherT;     /* the day's drift phase, in cloud-frame radians */
 uniform float uGlint;        /* specular on open water */
 uniform float uRingAmt;      /* 0 = no ring */
 uniform float uRingIn;       /* inner edge, planet radii */
@@ -1624,6 +1631,84 @@ vec3 orbitScene(vec3 dir) {
     cm *= smoothstep(1.0, 0.90, s);
     float cmS = smoothstep(cThr, cThr + 0.075, orbFbm(cps * 3.1 + 9.4));
 
+    /* ── THE WEATHER THE NEWS READS OUT (V18 cool 16) ──────────────────
+     * One system a day, sat where the seed puts it in the cloud frame, so it
+     * shears across the land with the rest of the deck and drifts on its own
+     * phase on top. Everything below is a function of (uWeather, uWeatherSeed,
+     * uWeatherT, uOrbitT) and the pixel — no state. wTint recolours the
+     * cloud plate, wSnow whitens the ground, wDust veils it, wFlash is
+     * the lightning, and the terminator still multiplies all of it. */
+    vec3 wTint = vec3(1.0);
+    float wSnow = 0.0, wDust = 0.0, wFlash = 0.0;
+    if (uWeather > 0.5 && uWeather < 8.5) {
+      float wa = uWeatherSeed * 2.399;
+      float wl = (fract(uWeatherSeed * 0.618034) - 0.5) * 1.4;
+      vec3 Wc = normalize(vec3(cos(wa) * cos(wl), sin(wl), sin(wa) * cos(wl)));
+      vec3 wu = spinAbout(n, uPlanetAxis, uCloudSpin * 0.85 + uWeatherT + uOrbitT * 0.0021);
+      vec3 wp = wu + vec3(uWeatherSeed * 0.37, uWeatherSeed * 0.11, -uWeatherSeed * 0.23);
+      float wdd = length(wu - Wc);
+      float wn = orbFbm(wp * 2.6 + 3.3);
+      float wn2 = orbFbm2(wp * 7.0 + 1.1);
+      float belt = 1.0 - smoothstep(0.55, 1.15, wdd);
+      float wid = floor(uWeather + 0.5);
+      if (wid < 1.5) {
+        /* CLEAR: the deck thins to sparse cumulus — small, bright, far apart. */
+        cm *= 0.45;
+        cm = max(cm, smoothstep(0.66, 0.74, wn2) * belt * 0.9);
+        wTint = vec3(1.04, 1.03, 1.0);
+      } else if (wid < 2.5) {
+        /* HIGH CLOUD: streaked cirrus, stretched along the spin, thin. */
+        float cir = smoothstep(0.50, 0.58, orbFbm2(wp * vec3(3.0, 11.0, 3.0) + 4.4));
+        cm = max(cm, cir * belt * 0.55);
+        wTint = vec3(1.02, 1.02, 1.05);
+      } else if (wid < 3.5) {
+        /* OVERCAST: a grey sheet over the system. */
+        cm = max(cm, smoothstep(0.30, 0.40, wn) * belt);
+        wTint = mix(vec3(1.0), vec3(0.74, 0.75, 0.78), belt);
+      } else if (wid < 4.5) {
+        /* RAIN: a darker grey sheet, with the streaks of it under the base. */
+        float sheet = smoothstep(0.28, 0.38, wn) * belt;
+        cm = max(cm, sheet);
+        float streak = smoothstep(0.55, 0.65, orbFbm2(wp * vec3(2.0, 14.0, 2.0) + 8.8)) * sheet;
+        wTint = mix(vec3(1.0), vec3(0.58, 0.61, 0.67) - streak * 0.08, belt);
+      } else if (wid < 5.5) {
+        /* STORM: the deck spirals about the centre, an eye wall round a clear
+         * eye, and lightning flickers in the arms — seeded off the orbit clock
+         * so every window on the station sees the same flash. */
+        float ax = dot(wp, Wc);
+        vec3 v = wp - Wc * ax;
+        float sw = 4.0 * exp(-wdd / 0.30);
+        vec3 sp = Wc * ax + spinAbout(v, Wc, sw);
+        float arms = smoothstep(0.34, 0.46, orbFbm(sp * 3.4 + 2.2)) * (1.0 - smoothstep(0.55, 1.05, wdd));
+        float wall = exp(-(wdd - 0.09) * (wdd - 0.09) / 2.0e-3) * (1.0 - exp(-wdd * wdd / 4.0e-3));
+        cm = max(cm, max(arms, wall));
+        wTint = mix(vec3(1.0), vec3(0.66, 0.68, 0.74), belt);
+        float tick = floor(uOrbitT * 7.0);
+        float bolt = step(0.91, hash11(tick + uWeatherSeed * 0.013 + 3.7));
+        float where = hash11(tick * 1.7 + uWeatherSeed * 0.029 + 11.0);
+        vec3 Bc = normalize(Wc + spinAbout(v / max(length(v), 1.0e-4), Wc, where * 6.2832) * 0.22);
+        float bd = length(wu - Bc);
+        wFlash = bolt * exp(-bd * bd / 3.0e-3) * arms;
+      } else if (wid < 6.5) {
+        /* DUST: a tan haze over the ground, thickest where the wind lifted it. */
+        wDust = belt * (0.35 + 0.65 * smoothstep(0.30, 0.60, wn));
+        cm *= 1.0 - belt * 0.6;
+        wTint = mix(vec3(1.0), vec3(0.92, 0.82, 0.62), belt);
+      } else if (wid < 7.5) {
+        /* FOG: a pale low sheet lying in the low ground, not on the heights. */
+        float low = 1.0 - smoothstep(0.36, 0.52, relief);
+        cm = max(cm, smoothstep(0.38, 0.50, wn) * belt * low * 0.9);
+        wTint = mix(vec3(1.0), vec3(0.90, 0.91, 0.93), belt);
+      } else {
+        /* SNOW: the ground under the system goes white, the cap pulled down
+         * over it, and the cloud over it is bright and thin. */
+        wSnow = belt * smoothstep(0.30, 0.55, lat + (relief - 0.40) * 0.30 + belt * 0.35) * (1.0 - sea);
+        cm = max(cm, smoothstep(0.42, 0.52, wn) * belt * 0.7);
+        wTint = vec3(1.03, 1.04, 1.08);
+      }
+      cm = clamp(cm, 0.0, 1.0) * smoothstep(1.0, 0.90, s);
+    }
+
     /* …and the ground itself dims toward the limb, where the light leaves
      * through a long slant of the same air the rim glow is made of. */
     float slant = mix(1.0, 0.66, smoothstep(0.58, 1.0, s));
@@ -1642,6 +1727,8 @@ vec3 orbitScene(vec3 dir) {
       }
     }
     vec3 body = albedo * uOrbitKey * uStarCol * day * slant * cShadow * rShadow;
+    /* …and today's snow on it, before the night term so it reads at dusk too. */
+    if (wSnow > 0.001) body = mix(body, iceCol * uOrbitKey * uStarCol * day * slant * rShadow, wSnow);
     /* A night side is not black. It is lit by the star's light scattered
      * through the world's own air, which is why this term carries the limb's
      * colour and not a grey. */
@@ -1664,8 +1751,12 @@ vec3 orbitScene(vec3 dir) {
       body += uStarCol * uOrbitKey * saberCelQuant(clamp(spec * 1.8, 0.0, 1.0), 2.0) * 0.5 * day;
     }
 
-    vec3 cloudCol = (uPlanetLit * uStarCol * day * 0.95 + uPlanetDark * uAtmoCol * 0.10) * uOrbitKey;
+    vec3 cloudCol = (uPlanetLit * uStarCol * day * 0.95 + uPlanetDark * uAtmoCol * 0.10) * uOrbitKey * wTint;
     body = mix(body, cloudCol, cm * 0.92);
+    /* the day's dust, over cloud and ground alike, on the lit side only */
+    if (wDust > 0.001) body = mix(body, vec3(0.86, 0.72, 0.50) * uStarCol * uOrbitKey * day, wDust * 0.70 * day);
+    /* the day's lightning: a flash under the arms, and it shows on the night side */
+    if (wFlash > 0.001) body += vec3(0.85, 0.90, 1.0) * uOrbitKey * wFlash * (0.55 + 0.45 * (1.0 - day));
 
     /* ── CITY LIGHTS ──────────────────────────────────────────────────
      * The one thing on a night side that is not the star's light bounced off
@@ -2153,6 +2244,10 @@ export class SkyDome {
         uScatterCol:   { value: new THREE.Color(1, 1, 1) },
         uHazeAmt:      { value: 0 },
         uStormAmt:     { value: 0.3 },
+        /* ── the day's weather (see src/game/PlanetWeather.js) ──────── */
+        uWeather:      { value: 0 },
+        uWeatherSeed:  { value: 0 },
+        uWeatherT:     { value: 0 },
         uGlint:        { value: 1 },
         uRingAmt:      { value: 0 },
         uRingIn:       { value: 1.4 },

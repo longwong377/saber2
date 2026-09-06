@@ -130,7 +130,7 @@ at deck height) and `seated.mjs` sits the player.
 13. A resident who follows you asking about your saber, and can be told to go away. **BUILT** (`Follower.js`: one per deck visit, four questions naming the real colour, the key dismisses).
 14. A funeral you can attend, with the man's bunk stripped after. **BUILT** (`Vigil.js`: the litter, the reading, the row of his company; #29's bunk bare with an effects box; `funerals` fold).
 15. A late-night channel: the Drum spin live on every screen with the hour. **BUILT** (`Holonet.js` drum programme).
-16. Weather on the planet below, visible from the dome, changing the news. **HALF** — `StationEvents.weatherAt` is in the news and on the orbit chart; nothing in the dome yet.
+16. Weather on the planet below, visible from the dome, changing the news. **BUILT** (`PlanetWeather.js`: `weatherAt`'s word drawn on the SkyDome planet as a seeded system — cumulus, cirrus, grey sheet, rain, a spiral with lightning, dust, fog, snow — on the station and the flight deck off the same day and theatre; one notify line a day when you look up from the dome or the promenade).
 17. A tram interior you can sit in, with residents across from you. **BUILT** (`TramCabin.js`: benches, poles, route map, 2–4 riders who get off at their stops; the seat moves with the car).
 18. Companions greeting each other; two massiffs meeting on the concourse. **BUILT** (`Greetings.js`: animals circle nose-to-tail, owners bark; same-quarter walkers raise a hand).
 19. The Mandalorian tests your saber against a remote in the Forge. **BUILT** (`RemoteTest.js`: eight bolts, Bo calls the count, the rating on a plaque; `forgeTest` fold).
