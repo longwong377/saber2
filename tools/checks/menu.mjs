@@ -143,6 +143,104 @@ export async function run({ check, assert }) {
   });
 
   /* ────────────────────────────────────────────────────────────────────
+   * THE SHELF — a room shows the rows the room is for (V16 §A4)
+   * ──────────────────────────────────────────────────────────────────── */
+
+  /**
+   * ══ #10 THE FORGE OPENS THE SABER, NOT THE CHARACTER CREATOR ════════════
+   *
+   * §A4: *"that's the only place where you can edit your lightsaber."* The
+   * Forge's key has raised `onKiosk('hilt')` for some time and it opened THIS
+   * panel — thirty-seven controls, five of them the saber, scrolled to the
+   * crystal. `Menu.showRows` is the other half: the panel with one room's rows
+   * on it and the rest shelved.
+   *
+   * DRIVEN THROUGH THE REAL PAGE. `menuOn` builds a real Menu over the real
+   * `index.play.html`, so what is counted here is the shipped column and not a
+   * list typed into this file — a row added to that page tomorrow is counted
+   * the day it is added.
+   *
+   * The three things that would each make the door worthless:
+   *   the saber rows are not on screen after the shelf goes up
+   *   the creator's rows still are
+   *   the shelf does not come off, so the tab bar opens a gutted page
+   */
+  check('menu: the Forge shows the saber and shelves the character creator', () => {
+    const { menu, doc, close } = menuOn();
+    try {
+      const col = doc.querySelector('.panel[data-panel="saber"] .col.scroll');
+      assert(col, 'index.play.html has no Jedi column for a counter to open');
+      const kids = [...col.children];
+      assert(kids.length > 30, `the Jedi column has ${kids.length} rows — the page did not build`);
+
+      /* THE FORGE'S OWN ROWS, read out of `main.js` rather than typed here:
+       * two statements of what a smith sells would be the twin §2.3 warns
+       * about, and `station.mjs` already holds the room's end of it. */
+      const block = MAIN.match(/const KIOSK_ROWS = \{([\s\S]*?)\n\};/);
+      assert(block, 'main.js has no KIOSK_ROWS, so no counter can name its rows');
+      const row = block[1].match(/hilt:\s*\[([^\]]*)\]/);
+      assert(row, 'KIOSK_ROWS names no rows for #10 The Forge');
+      const ids = [...row[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+      assert(ids.length >= 5, `the Forge's shelf is ${ids.length} rows`);
+
+      const shown = () => kids.filter((k) => !k.classList.contains('shelved'));
+      const all = shown().length;
+      assert(all === kids.length, 'the column arrived already shelved');
+
+      menu.showRows(ids);
+      const left = shown();
+      assert(left.length < kids.length / 2,
+        `the shelf left ${left.length} of ${kids.length} rows on screen — that is still the whole page`);
+      /* EVERY ROW THE ROOM NAMES IS ON SCREEN, and so is the heading over it:
+       * a swatch rack with no title is a row nobody can name. */
+      for (const id of ids) {
+        const el = doc.getElementById(id);
+        assert(el, `the Forge's shelf names #${id} and the page has no such element`);
+        const own = kids.find((k) => k === el || k.contains(el));
+        assert(own && !own.classList.contains('shelved'), `#${id} is shelved at the Forge's own counter`);
+        const i = kids.indexOf(own);
+        const head = kids.slice(Math.max(0, i - 3), i).reverse().find((k) => k.localName === 'h3');
+        assert(!head || !head.classList.contains('shelved'),
+          `#${id} is on screen with its heading shelved`);
+      }
+      /* AND THE CREATOR IS NOT. The four rows §A4 does not mention and the
+       * mirror in #27 stages behind its own door. */
+      for (const id of ['order-list', 'species-list', 'face-list', 'cut-list']) {
+        const el = doc.getElementById(id);
+        assert(el, `index.play.html has no #${id}`);
+        const own = kids.find((k) => k === el || k.contains(el));
+        assert(own && own.classList.contains('shelved'),
+          `#${id} is still on screen at the armourer's bench — you do not pick your species at a blacksmith`);
+      }
+
+      /* ── AND IT COMES OFF ────────────────────────────────────────────
+       * Three doors take it off — a hand on the tab bar, `hideMenu`, and
+       * `main.js`'s own close — and if none of them did, the front screen
+       * would show a gutted page for the rest of the session. */
+      menu.showRows(null);
+      assert(shown().length === kids.length,
+        `${kids.length - shown().length} rows stayed shelved after the shelf came off`);
+      const tab = doc.querySelector('.tab[data-tab="saber"]');
+      assert(tab, 'there is no Jedi tab on the bar');
+      menu.showRows(ids);
+      /* THE CLICK, AND ITS THROW IS NOT THE SUBJECT. The Jedi tab's handler
+       * also starts the saber preview, which wants a WebGL context there is
+       * no canvas for here — so the shelf comes off at the TOP of the handler
+       * and the render is allowed to fail after it. That ordering is the
+       * thing under test: a `showRows(null)` written below the preview would
+       * never run in this harness and would look green. */
+      try { tab.dispatchEvent({ type: 'click' }); } catch { /* the preview, not the shelf */ }
+      assert(shown().length === kids.length,
+        'clicking the tab left the page shelved — the bar no longer opens the whole panel');
+      menu.showRows(ids);
+      menu.hideMenu();
+      assert(shown().length === kids.length, 'hideMenu left the page shelved');
+      return `${kids.length} rows on the Jedi column; the Forge shows ${left.length} of them `
+        + `(${ids.join(', ')}), the creator's are shelved, and three doors take it off`;
+    } finally { close(); }
+  });
+
+  /* ────────────────────────────────────────────────────────────────────
    * KEYBOARD
    * ──────────────────────────────────────────────────────────────────── */
 

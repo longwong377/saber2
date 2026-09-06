@@ -1999,13 +1999,32 @@ export function dressStationLife(world, st) {
  * HOW MANY BODIES ONE SLICE OF THE PRIME MAY BUILD.
  *
  * A body costs about 40 ms of CPU the first time its archetype is built and
- * about 23 ms after, so four is a frame of roughly a sixth of a second at
- * worst — a stutter under a closing pair of lift doors, not a freeze, and
- * seven slices is the whole pool. One a frame would be smoother and would
- * take twenty-eight frames of the sixty-six available, which is a thinner
- * margin than this is worth.
+ * about 23 ms after, so four was a frame of roughly a sixth of a second at
+ * worst — and the note that stood here called that "a stutter under a
+ * closing pair of lift doors, not a freeze", and rejected one-a-frame as
+ * twenty-eight of the sixty-six frames available.
+ *
+ * IT WAS RIGHT ABOUT ONE AND WRONG ABOUT FOUR. Measured on a warm arrival
+ * after the build queue was fixed to stop seating the pool twice on the same
+ * frame — the queue's own share is gone, so what is left is this constant
+ * and nothing else:
+ *
+ *     PRIME_SLICE   worst warm frame (CPU)   frames to fill the pool
+ *              4        276-413 ms                    9
+ *              2        114-354 ms, typ ~220         16
+ *              1        108-290 ms                   30
+ *
+ * Two halves the peak and still fills the pool in sixteen of the sixty-six,
+ * which is a wider margin than the old note was defending — it was weighing
+ * four against ONE and never priced the middle. The doors do not care
+ * whether the pool is full at frame nine or frame sixteen; the player cares
+ * about the 400 ms frame.
+ *
+ * `drainStationBuild` already stands aside on a frame this seats on and
+ * picks the cheapest job that fits its slice, so the atom is the only lever
+ * left and this is it.
  */
-export const PRIME_SLICE = 4;
+export const PRIME_SLICE = 2;
 
 /**
  * Seat one slice of the first population. Returns true while there is more.

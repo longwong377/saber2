@@ -4093,6 +4093,10 @@ export class Menu {
   }
   hideMenu() {
     this.el.menu.classList.add('hidden');
+    /* THE SHELF COMES OFF WITH THE PAGE. A counter closed by anything at all
+     * — Escape, `Screens.clear()`, a throw inside the card — must not leave
+     * thirty-two controls put away for the next player who opens the tab. */
+    this.showRows(null);
     /* Deploying does not click a tab, so the stage's loop would keep raycast
      * math and renders running behind the live game. It stops with the menu
      * and `showMenu`/the tab click bring it back. */
@@ -4136,6 +4140,72 @@ export class Menu {
     this.el.buildLine?.classList.toggle('hidden', !on);
   }
 
+  /**
+   * ══════════════════════════════════════════════════════════════════════
+   *  THE SHELF — a room shows the rows the room is for (V16 §A4)
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * *"maybe you can only adjust stuff with your lightsaber at the armory …
+   * that's the only place where you can edit your lightsaber."*
+   *
+   * `#10 The Forge` has raised `onKiosk('hilt')` for some time and it has
+   * always opened THIS PANEL — all thirty-seven controls of it, scrolled to
+   * the crystal. That is a door onto the CHARACTER CREATOR that happens to
+   * land near the saber, and the difference matters: the armourer's counter
+   * opened order, species, face, build, hair, beard, skin, robes and thirteen
+   * rows of clothing, and the five rows a smith actually makes were five of
+   * them somewhere in the middle.
+   *
+   * A SHELF IS THE PANEL WITH ONE ROOM'S ROWS ON IT. `main.js`'s `KIOSK_ROWS`
+   * names the controls a counter is for; this hides every other child of the
+   * saber column and leaves those, with the heading over each. Nothing is
+   * deleted, nothing is duplicated, and there is no second page to keep in
+   * step — the front screen's tab shows the same panel with the shelf off,
+   * which is the whole reason the tab can stay for the co-op client.
+   *
+   * ── IT IS DERIVED FROM THE COLUMN AND NOT FROM A SECOND LIST ────────────
+   *
+   * The one thing this is handed is which CONTROLS to show. Which headings go
+   * with them, and which rows are the other thirty-two, are read off the
+   * column itself — so a row added to `index.play.html` tomorrow is shelved
+   * correctly the day it is added and nothing here has to know what a robe is.
+   * A heading is kept by walking back from a kept control to the nearest
+   * `h3`, which is exactly how the page is laid out.
+   *
+   * `shelved` and not `hidden`: `hidden` already has other writers on some of
+   * these elements (`#companion-release`, the flesh row, the bust and hip
+   * sliders), and taking the shelf off must not unhide a row something else
+   * put away.
+   *
+   * Returns how many children are left on screen, which is what a check reads.
+   */
+  showRows(ids) {
+    const col = document.querySelector('.panel[data-panel="saber"] .col.scroll');
+    if (!col) return 0;                               // stripped DOM (tests)
+    const kids = [...(col.children || [])];
+    if (!ids || !ids.length) {
+      for (const k of kids) k.classList?.remove('shelved');
+      return kids.length;
+    }
+    const want = new Set(ids);
+    const keep = new Set();
+    kids.forEach((k, i) => {
+      const mine = want.has(k.id) || ids.some((id) => !!k.querySelector?.(`#${id}`));
+      if (!mine) return;
+      keep.add(k);
+      /* THE HEADING OVER IT, and at most two rows back: a control with no
+       * heading of its own (the second blade slider) sits under its
+       * neighbour's, and an unbounded walk would keep the whole page the
+       * first time a row loses its title. */
+      for (let j = i - 1; j >= 0 && j >= i - 3; j--) {
+        keep.add(kids[j]);
+        if (String(kids[j].tagName || '').toUpperCase() === 'H3') break;
+      }
+    });
+    for (const k of kids) k.classList?.toggle('shelved', !keep.has(k));
+    return keep.size;
+  }
+
   /* ── tabs ────────────────────────────────────────────────────────── */
 
   _buildTabs() {
@@ -4144,6 +4214,11 @@ export class Menu {
     for (const t of tabs) {
       t.addEventListener('click', () => {
         audio.ui('click');
+        /* A HAND ON THE TAB BAR IS THE WHOLE PAGE. `main.js` re-applies a
+         * counter's shelf on the line after it clicks the tab, so a kiosk is
+         * unaffected; a player who then reaches for the bar gets everything
+         * back, which is what the bar means. */
+        this.showRows(null);
         tabs.forEach(x => x.classList.toggle('active', x === t));
         panels.forEach(p => p.classList.toggle('active', p.dataset.panel === t.dataset.tab));
         if (t.dataset.tab === 'saber') this._startPreview();
