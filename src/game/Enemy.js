@@ -9,7 +9,7 @@
 
 import * as THREE from '../../vendor/three/three.module.js';
 import { Actor } from './Ragdoll.js';
-import { Rig, BipedAnimator, aimY } from './Rig.js';
+import { Rig, BipedAnimator, aimY, poseSeated } from './Rig.js';
 import { applyBodyLod, undarken, L3_AT } from './Cohorts.js';
 import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo,
   buildJedi, bodyOptsFor, kitOptsFrom, weakSpotsOf, coverSpotOf, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS,
@@ -9277,6 +9277,9 @@ export class Enemy {
         deferMatrices: this.lod > 1,
       });
       this._poseArms(adt, ctx);
+      /* A resident on a chair — see `_poseSeated`. On the solve frame, so it
+       * lands on top of the gait exactly as the arms do. */
+      if (this.seat && this.seat.blend > 0) this._poseSeated(ctx);
       }
       /**
        * AND A MAN UNDER THRUST IS TILTED. Note #33's first clause.
@@ -9363,6 +9366,29 @@ export class Enemy {
       this.laser.scale.set(1, 1, len);
     }
     if (this.muzzleFlash > 0) this.muzzleFlash -= dt;
+  }
+
+  /**
+   * THE SEAT (V18 hole 4). `StationLife.stepStanding` writes `this.seat` —
+   * `{ blend, y, tableY, cup }` — for a resident that has claimed a chair,
+   * and this puts the body on it at that blend: `Rig.poseSeated` over what
+   * the gait just wrote, exactly where `_poseArms` lands and for the same
+   * reason (the gait rewrites every bone from rest on the next solve, so
+   * nothing accumulates). `seat.y` is the seat's top in WORLD metres and
+   * `position` is the feet, so the pelvis is placed off their difference and
+   * a body on a stool is higher than one on a chair without anybody
+   * measuring the stool here. A `blend` of 0 leaves the gait alone — a body
+   * that is walking to its chair is walking.
+   */
+  _poseSeated(ctx) {
+    const s = this.seat;
+    if (!s || !this.rig?.hipsBone) return;
+    poseSeated(this.rig, s.blend, {
+      position: this.position, facing: this.facing, time: ctx?.time ?? 0,
+      seatY: s.y - this.position.y,
+      tableY: Number.isFinite(s.tableY) ? s.tableY - this.position.y : null,
+      cup: s.cup ? 'R' : null,
+    });
   }
 
   /**

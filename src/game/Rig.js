@@ -2155,9 +2155,20 @@ export function poseMeditation(rig, id, blend = 1, opts = {}) {
   const pose = meditationPose(id);
   blend = clamp(blend, 0, 1);
   if (blend <= 0 || !rig?.hipsBone) return pose;
+  applySolvedPose(rig, POSE_SPECS[pose.id](opts.time ?? 0), blend, opts);
+  return pose;
+}
+
+/**
+ * One solved pose, applied. The body of `poseMeditation` as it was, lifted
+ * out so that a SEATED body — `poseSeated` below — is the same solver on a
+ * different table rather than a second copy of eighty lines. `spec` is one
+ * of `POSE_SPECS`' records already evaluated; everything else is as the
+ * meditation's own note describes it.
+ */
+function applySolvedPose(rig, spec, blend, opts) {
   const s = rig.scale ?? 1;
-  const t = opts.time ?? 0;
-  const spec = POSE_SPECS[pose.id](t);
+
   const o = _mdO.copy(opts.position ?? _ZERO_V);
   const f = opts.facing ?? 0;
   const fwd = _mdF.set(Math.sin(f), 0, Math.cos(f));
@@ -2237,5 +2248,69 @@ export function poseMeditation(rig, id, blend = 1, opts = {}) {
     hips.position.lerpVectors(_md5, hips.position, blend);
   }
   rig.updateMatrices();
-  return pose;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE SEAT — how a body sits on a chair                                 */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * V18 hole 4: *"residents do not sit, eat, drink or hold anything."* The
+ * station's furniture is real — `StationKit.chairBody` puts a 0.45 m seat on
+ * four legs in every social room — and every body in the pool stood beside
+ * it, because the only pose in the tree that lowered a pelvis was the
+ * meditation's, and that one sits on the FLOOR.
+ *
+ * This is the same solver with the pelvis placed at a seat's height instead
+ * of the ground's: thighs level and forward, shins down to the floor, the
+ * trunk upright with a small lean, and the hands either in the lap or on a
+ * table in front. Everything is in the character frame the meditation uses —
+ * x to the figure's left, y up from the FEET, z the way it faces, reference
+ * metres — so it scales with the rig, and the feet origin is where
+ * `Enemy.position` is: the seat's own centre is 0.10 m BEHIND that, which is
+ * where `StationLife` stands a body that has claimed a chair.
+ *
+ * Measured on the reference figure sitting a 0.48 m seat: hips at 0.55, both
+ * knees within 3 cm of hip height, ankles at 0.09, the crown at 1.33.
+ * tools/checks/seated.mjs holds the pelvis under 0.7 m and the knees level.
+ *
+ * @param opts.seatY   the seat's top above the feet origin, WORLD metres
+ * @param opts.tableY  a table top's height above the feet origin, world
+ *                     metres, or null — the hands go on it when there is one
+ * @param opts.cup     'R' when the right hand is holding something: that hand
+ *                     comes up off the table and turns to hold it
+ * @param opts.position / facing / time  as `poseMeditation`
+ */
+export function poseSeated(rig, blend = 1, opts = {}) {
+  blend = clamp(blend, 0, 1);
+  if (blend <= 0 || !rig?.hipsBone) return null;
+  const s = rig.scale ?? 1;
+  const t = opts.time ?? 0;
+  const h = Math.max(0.25, (opts.seatY ?? 0.48) / s);
+  const table = Number.isFinite(opts.tableY) ? opts.tableY / s : null;
+  const cup = opts.cup || null;
+  /* The pelvis: a hand's breadth above the seat and a little back on it. */
+  const hipY = h + 0.07;
+  const spec = {
+    hip: [0, hipY, -0.10], hipPitch: -0.04, lean: 0.14, bow: 0.08,
+    legs: {
+      L: { ankle: [0.11, 0.072, 0.34], pole: [0.11, hipY + 0.9, 0.45], toe: [0.05, -0.2, 1] },
+      R: { ankle: [-0.11, 0.072, 0.34], pole: [-0.11, hipY + 0.9, 0.45], toe: [-0.05, -0.2, 1] },
+    },
+    arms: () => {
+      const lap = (sx) => ({ wrist: [sx * 0.14, hipY + 0.12, 0.30], pole: [sx * 0.60, hipY + 0.35, -0.15], hand: [sx * 0.1, -0.5, 0.85] });
+      const onTable = (sx) => ({ wrist: [sx * 0.18, table + 0.05, 0.42], pole: [sx * 0.60, table + 0.30, -0.10], hand: [0, -0.3, 1] });
+      const holding = (sx) => ({
+        wrist: [sx * 0.16, (table !== null ? table + 0.08 : hipY + 0.24), 0.38],
+        pole: [sx * 0.62, hipY + 0.40, -0.10], hand: [sx * -0.1, -0.85, 0.5],
+      });
+      return {
+        L: table !== null ? onTable(1) : lap(1),
+        R: cup === 'R' ? holding(-1) : table !== null ? onTable(-1) : lap(-1),
+      };
+    },
+    breathe: 0.004 * Math.sin(t * 1.9),
+  };
+  applySolvedPose(rig, spec, blend, opts);
+  return spec;
 }
