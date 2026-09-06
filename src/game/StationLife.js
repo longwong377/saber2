@@ -3658,6 +3658,10 @@ function stepHandlers(world, life) {
     pet.stationName = H.animal;
     /* An animal at heel is a resident too. */
     pet.noAmbientHarm = true;
+    /* …and off the wire like one: both machines spawn it off the same seed,
+     * and without this a guest had a second hawk and a second pup walking
+     * through the first (V18, the deck-44 co-op check). */
+    pet.stationResident = true;
     pet.stationRole = `${H.kind} — ${H.who}'s`;
     pet.stationPlace = body.stationPlace;
     body._stationAnimal = pet;
