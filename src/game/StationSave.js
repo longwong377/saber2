@@ -78,6 +78,9 @@ function blank() {
      * and the hand index restarted at 0 every visit, which made the first
      * deal of the day a known hand you could replay for the pot all day. */
     casino: { index: 0, sabacc: null, drum: null },
+    /** THE REGULARS (V18 cool 10): how many times you have talked to each
+     * resident, by person — `{ [key]: { n, lastDay } }`. See `Regulars.js`. */
+    regulars: {},
     /**
      * ── HOW MANY MIDNIGHTS THIS STATION HAS CROSSED ────────────────────────
      *
@@ -367,6 +370,9 @@ export function setHomeState(v) { const s = read(); s.home = v; return write(s).
 export function casinoState() { const c = read().casino; return c && typeof c === 'object' ? c : { index: 0, sabacc: null, drum: null }; }
 export function setCasinoState(v) { const s = read(); s.casino = v; return write(s).casino; }
 export function flightState() { return read().flight; }
+/** The regulars' ledger — see `Regulars.js`. Always an object. */
+export function regularsState() { const r = read().regulars; return r && typeof r === 'object' ? r : {}; }
+export function setRegularsState(v) { const s = read(); s.regulars = v && typeof v === 'object' ? v : {}; return write(s).regulars; }
 export function setFlightState(v) { const s = read(); s.flight = v; return write(s).flight; }
 
 /** Start again. Only a check calls this. */

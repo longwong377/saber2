@@ -78,6 +78,7 @@ import { resident, barkFor, roomLine, residentLine, RHYTHMS, homeFor } from './S
  * two files disagreeing about what "carrying something" means would be the
  * eighth hand-maintained twin. */
 import { stepMedbay, isHurt } from './Medbay.js';
+import { stepRegulars, talkHook } from './Regulars.js'; import { stepFollower } from './Follower.js';
 /* THE LEAVE LEDGER. `isBar` names the rooms a soldier drinks in and `stepLeave`
  * is what pays him for standing in one — see the branch at the bottom of
  * `stationKey` and the call beside `stepMedbay` in `stepStation`. */
@@ -2470,6 +2471,7 @@ function noticeFor(day, seed) {
  */
 export function talkTo(world, body) {
   if (!body?.stationName) return false;
+  if (talkHook(world, body)) return true;
   const day = stationDay();
   const who = whoOfBody(body);
   if (!who || !body.stationSpecies) {
@@ -4925,6 +4927,8 @@ export function stepStation(world, dt) {
    * clock (V15 §1.1). One floor and one integer compare a frame — see
    * `stepTannoy`. */
   stepTannoy(world, st, dt);
+  /* THE REGULARS AND THE FOLLOWER (V18 cool 10, 13) — see the two files. */
+  stepRegulars(world, st, dt); stepFollower(world, st, dt);
 
   const cam = world.player?.camera?.obj || world.player;
   if (!cam) return;
