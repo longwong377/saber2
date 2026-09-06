@@ -59,11 +59,15 @@ jobs:
         # from `/saber2/<PLAY_PATH>/` and nothing at all from `/saber2/`: the
         # site root has no index, so the previous link answers GitHub's 404
         # while the new one plays. Change PLAY_PATH to move the link again.
+        # THE GAME IS `index.play.html`. The repository's own `index.html` is
+        # the stood-down notice from the day the link was taken down, and it
+        # stays that way; the play path gets the game as its index.
         env:
-          PLAY_PATH: borz-station
+          PLAY_PATH: shark
         run: |
           rm -rf _site && mkdir -p "_site/$PLAY_PATH"
           tar --exclude=./_site --exclude=./.git --exclude=./node_modules -cf - . | tar -xf - -C "_site/$PLAY_PATH"
+          cp index.play.html "_site/$PLAY_PATH/index.html"
           test -f "_site/$PLAY_PATH/index.html"
       - name: Upload site
         uses: actions/upload-pages-artifact@v3

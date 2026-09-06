@@ -20,10 +20,11 @@ that in one line instead of burying it.
 
 ## The play link
 
-The play link is **https://longwong377.github.io/saber2/borz-station/**. That
+The play link is **https://longwong377.github.io/saber2/shark/**. That
 is the only one. No artifacts, no clones, no second copy anywhere. The old
 root link (`/saber2/`) is deliberately dark: `pages.yml` stages the site under
-`PLAY_PATH` and puts nothing at the root.
+`PLAY_PATH` (with `index.play.html` as its index — the repo's `index.html` is
+the stood-down notice) and puts nothing at the root.
 
 It serves the repository's **default branch**, which is
 `claude/lightsaber-combat-game-lxw391`. GitHub Pages refuses to deploy from any
