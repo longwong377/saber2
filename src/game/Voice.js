@@ -496,17 +496,33 @@ function extraPaths(ctx, head, t0, u, pitch) {
 export function speak(text, voiceId = 'human', opts = {}) {
   const line = String(text || '').trim();
   if (!line) return null;
-  if (!audio?.ready || !audio.ctx) return null;
-  if ((audio.voiceLevel ?? 1) <= 0.001) return null;
   const V = typeof voiceId === 'object' && voiceId ? voiceId : voiceFor(voiceId);
-  /* THE PLAYER'S CHOICE COMES FIRST. In 'spoken' the browser's own synthesiser
-   * says the words and a contour under it would be two readings at once. */
-  if (audio.speechMode === 'spoken' && canSpeakWords()) {
-    try { audio.radio({ ...V, cadence: V.rate, gain: 1 }, line, { pos: opts.pos || null, gain: opts.gain ?? 0.8 }); } catch { /* no synth */ }
-    return null;
-  }
   const u = utterFor(line, V, opts);
   if (!u.count) return null;
+  /**
+   * THE LINE IS LOGGED WHERE IT WAS ASKED FOR, not where it was heard.
+   *
+   * `heard` is what actually got a graph, and it is false for every reason a
+   * sound is ever refused — no context yet, the voice slider at zero, a
+   * backlog, a cull. A caller still gets `null` in all of those, so nothing
+   * downstream can mistake a refusal for a reading; but "the PA is a voice and
+   * not a caption" is a question about the CALL, and a check on a station with
+   * no audio device has to be able to ask it. That check exists
+   * (`station.mjs`) and it is the one that caught the tannoy going quiet.
+   */
+  const rec = { voice: V.id || 'human', text: line, at: 0, wait: 0, dur: u.dur,
+    count: u.count, question: u.question, heard: false };
+  SAID.push(rec);
+  if (SAID.length > SAID_MAX) SAID.shift();
+  /* THE PLAYER'S CHOICE COMES FIRST. In 'spoken' the browser's own synthesiser
+   * says the words and a contour under it would be two readings at once. */
+  if (audio?.ready && audio.speechMode === 'spoken' && canSpeakWords()) {
+    try { audio.radio({ ...V, cadence: V.rate, gain: 1 }, line, { pos: opts.pos || null, gain: opts.gain ?? 0.8 }); } catch { /* no synth */ }
+    rec.heard = true;
+    return null;
+  }
+  if (!audio?.ready || !audio.ctx) return null;
+  if ((audio.voiceLevel ?? 1) <= 0.001) return null;
   const now = audio.ctx.currentTime;
   const id = V.id || 'human';
   const at = Math.max(now, QUEUE.get(id) || 0);
@@ -534,8 +550,6 @@ export function speak(text, voiceId = 'human', opts = {}) {
   /* THE SCORE MAKES ROOM — 6 dB, for as long as the line lasts, through the
    * engine's own sidechain so a clash and a word cannot fight over the bus. */
   try { audio.duckMusic(DUCK, wait + u.dur + 0.25); } catch { /* no score */ }
-  const rec = { voice: id, text: line, at, wait, dur: u.dur, count: u.count, question: u.question };
-  SAID.push(rec);
-  if (SAID.length > SAID_MAX) SAID.shift();
+  rec.at = at; rec.wait = wait; rec.heard = true;
   return rec;
 }

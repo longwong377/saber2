@@ -3288,15 +3288,25 @@ export async function run({ check, assert, THREE }) {
    */
   check("station: the tannoy says the station's name, and follows it when the name changes", async () => {
     const S = await import('../../src/game/StationSave.js');
-    const { audio } = await import('../../src/engine/Audio.js');
+    /**
+     * V20 lane 4 MOVED THE PA'S DOOR, and this is the check that caught it.
+     *
+     * The tannoy used to hand its line to `Audio.radio`, which said it as a
+     * wordless contour; it now hands it to `Voice.speak`, which splits it into
+     * syllables and reads it. So the spy is the voice's own log rather than a
+     * stub on the engine — `speechLog()` records the line where it was ASKED
+     * for, which is the question this check has always been asking (the PA is
+     * a voice and not a caption) and is answerable on a machine with no audio
+     * device, exactly as the stub was.
+     */
+    const Voice = await import('../../src/game/Voice.js');
     const was = S.stationName();
-    const realRadio = audio.radio;
     const { world } = await station(40);
-    const spoken = [], banners = [];
+    const banners = [];
+    const spokenLines = () => Voice.speechLog().filter((r) => r.voice === 'tannoy').map((r) => r.text);
     try {
       const idle = (await import('./_coop.mjs')).idleInput();
       const st = world._station;
-      audio.radio = (spec, text) => { spoken.push(String(text || '')); return String(text || ''); };
       const notify = world.notify?.bind(world);
       world.notify = (a, b) => { banners.push(`${a} — ${b}`); notify?.(a, b); };
 
@@ -3307,13 +3317,14 @@ export async function run({ check, assert, THREE }) {
       const turn = () => { st.hour += 0.6; world.update(1 / 60, idle); };
       S.setStationName('Kessel Gate');
       const first = S.stationName().toUpperCase();
-      spoken.length = 0; banners.length = 0;
+      Voice.resetVoices(); banners.length = 0;
       for (let i = 0; i < 5; i++) turn();
 
       assert(st.pa && st.pa.calls >= 4,
         `five turns of the station clock and the tannoy made ${st.pa?.calls ?? 0} calls`);
+      let spoken = spokenLines();
       assert(spoken.length >= 4,
-        `${spoken.length} of ${st.pa.calls} calls reached Audio.radio — the PA is a caption, not a voice`);
+        `${spoken.length} of ${st.pa.calls} calls reached the larynx — the PA is a caption, not a voice`);
       assert(banners.length >= 4,
         `${banners.length} of ${st.pa.calls} calls reached world.notify — the name is unreadable with the sound off`);
       const missed = spoken.filter((t) => !t.toUpperCase().includes(first));
@@ -3329,8 +3340,9 @@ export async function run({ check, assert, THREE }) {
       S.setStationName('Ord Mantell Deep');
       const second = S.stationName().toUpperCase();
       assert(second !== first, 'the rename did not take, so the clause below proves nothing');
-      spoken.length = 0; banners.length = 0;
+      Voice.resetVoices(); banners.length = 0;
       for (let i = 0; i < 3; i++) turn();
+      spoken = spokenLines();
       assert(spoken.length >= 2, `${spoken.length} calls after the rename`);
       const stale = spoken.filter((t) => !t.toUpperCase().includes(second) || t.toUpperCase().includes(first));
       assert(stale.length === 0,
@@ -3338,7 +3350,7 @@ export async function run({ check, assert, THREE }) {
       return `${st.pa.calls} calls: "${first}" on ${5} turns then "${second}" on 3, `
         + `${new Set(spoken).size} distinct lines after the rename, both heard and read`;
     } finally {
-      audio.radio = realRadio;
+      Voice.resetVoices();
       S.setStationName(was);
       world.dispose?.();
     }
