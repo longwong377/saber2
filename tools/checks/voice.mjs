@@ -311,6 +311,7 @@ export async function run({ check, assert }) {
       const said = V.speechLog();
       const pa = said.find(s => s.voice === 'tannoy');
       assert(pa, `the tannoy said nothing through the larynx (${said.length} lines spoken)`);
+      assert(pa.heard, 'the announcement reached the larynx and was never scheduled');
       assert(pa.text === st.pa.said, `the tannoy said "${pa.text}" and the banner read "${st.pa.said}"`);
       assert(pa.count >= 4, `the announcement was ${pa.count} syllables`);
 
@@ -328,6 +329,7 @@ export async function run({ check, assert }) {
       const bark = after.slice(before).find(s => s.voice === body.stationSpecies || s.voice === 'human');
       assert(after.length > before, `talking to a ${body.stationSpecies} said nothing aloud`);
       assert(bark, `a ${body.stationSpecies} answered in the voice '${after[after.length - 1].voice}'`);
+      assert(bark.heard, 'the bark reached the larynx and was never scheduled');
       assert(bark.count >= 2, `the bark was ${bark.count} syllables`);
       return `PA: ${pa.count} syllables of "${pa.text.slice(0, 46)}…"; ${body.stationSpecies} ${body.stationName}: ${bark.count} syllables`;
     } finally {
