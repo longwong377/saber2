@@ -194,6 +194,9 @@ function blank() {
      * day is kept where the day itself is kept. Null until he has struck.
      */
     pick: null,
+    /** The Forge's remote test (V18 cool 19): `{ best, last, day, n }` or null. `RemoteTest.js` owns the shape. */
+    forgeTest: null,
+
   };
 }
 
@@ -388,6 +391,10 @@ export function flightState() { return read().flight; }
 /** The regulars' ledger — see `Regulars.js`. Always an object. */
 export function regularsState() { const r = read().regulars; return r && typeof r === 'object' ? r : {}; }
 export function setRegularsState(v) { const s = read(); s.regulars = v && typeof v === 'object' ? v : {}; return write(s).regulars; }
+/** The Forge's remote-test fold — see `RemoteTest.js`. */
+export function forgeTest() { const f = read().forgeTest; return f && typeof f === 'object' ? f : null; }
+export function setForgeTest(v) { const s = read(); s.forgeTest = v; return write(s).forgeTest; }
+
 export function setFlightState(v) { const s = read(); s.flight = v; return write(s).flight; }
 
 /** The funerals held: `[{ designation, bunk, day }]` — see `Vigil.js`. */

@@ -115,6 +115,11 @@ import { sitKey, releaseSeat } from './StationSit.js';
 import { dressMorning, stepMorning, undressMorning } from './Morning.js';
 import { stepSleep, endSleep } from './Sleep.js';
 import { stepDomeSeat } from './DomeSeat.js';
+import { dressShuttle, stepShuttle, shuttleKey, undressShuttle } from './Shuttle.js';
+import { seatedOnTram } from './TramCabin.js';
+import { stepGreetings, undressGreetings } from './Greetings.js';
+import { dressRemoteTest, stepRemoteTest, remoteTestKey, undressRemoteTest } from './RemoteTest.js';
+
 import * as Food from './Food.js';
 import { shelfFor } from './Counter.js';
 import { flightState, setFlightState } from './StationSave.js';
@@ -1624,6 +1629,7 @@ export function dressStation(world) {
    * every job on this queue and not just of this one. */
   st.pending.push({ name: 'the people', prime: true, run: () => primeStationLife(world) });
   if (deck === 44) dressTram(world, st, M);
+  dressShuttle(world, st, M);
 
   /* ── AND THE THINGS WITH WORDS ON THEM (V15 §1.1, §1.2). The obelisk is a
    * landmark before it is a leaderboard, so it is dressed with the room; the
@@ -1656,6 +1662,8 @@ export function dressStation(world) {
    * recorded. See `dressKeepers` for why they are not in the pool. */
   st.keeperCount = dressKeepers(world, st);
   dressHealing(world, st); // V18 hole 5: the medic, the monitors, the fluid — see Healing.js
+  dressRemoteTest(world, st, M);
+
 
   /* ── AND THE ONE ROOM THAT IS YOURS (V15 §1.3) ─────────────────────────
    *
@@ -1804,6 +1812,8 @@ export function undressStation(world) {
   releaseSeat(world);
   endSleep(world, false);
   undressMorning(world);
+  undressShuttle(world); undressGreetings(world); undressRemoteTest(world);
+
   disposeLiveFeeds(world?._station);
   const st = world._station;
   if (!st) return;
@@ -2883,6 +2893,7 @@ function rideTram(world, place) {
 function setDownFromTram(world, why) {
   const ride = world._tramRide;
   world._tramRide = null;
+  releaseSeat(world);
   const life = world?._stationLife;
   const stop = PLACE.get(STOPS[(life?.tram?.at ?? 0) % STOPS.length]);
   const p = world.player;
@@ -2919,6 +2930,7 @@ export function stepTramRide(world, dt) {
     return;
   }
   world._tramRide.from = life.tram.at;
+  if (seatedOnTram(world)) return;
   _tramAt.set(car.position.x, floorOf(PLACE.get(STOPS[0])) + 0.1, car.position.z);
   p.position.copy(_tramAt);
   p.actor?.setPosition?.(_tramAt);
@@ -2975,6 +2987,7 @@ export function stationKey(world) {
    * suppression note over `beginStationName`. */
   if (namingStation(world)) return true;
   if (liftKey(world)) return true;
+  if (shuttleKey(world)) return true;
   /* THE PLAN TABLE, BEFORE THE HOME AND ONLY WITHIN ARM'S REACH OF IT — V15
    * §1.1's second naming door. See the note over `beginStationName`. */
   if (atPlanTable(world)) return beginStationName(world);
@@ -3048,6 +3061,7 @@ export function stationKey(world) {
    * and the two presses raise different panels.
    */
   const shop = place ? counterHere(world, place) : null;
+  if (shop?.id === 'armourer' && remoteTestKey(world)) return true;
   if (shop && world.onCounter) {
     if (world.onCounter(shop.id) !== false) return true;
   }
@@ -5089,6 +5103,8 @@ export function stepStation(world, dt) {
   stepMorning(world, st, dt);
   stepDomeSeat(world, dt);
   stepStationSound(world, st, dt); // V18 hole 7: crossfade the bed under the player
+
+  stepShuttle(world, dt); stepGreetings(world, world._stationLife, dt); stepRemoteTest(world, dt);
 
 
   const cam = world.player?.camera?.obj || world.player;
