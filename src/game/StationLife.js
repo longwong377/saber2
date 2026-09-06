@@ -2387,6 +2387,8 @@ function spawnResident(world, st, place, i) {
   let body = null;
   try {
     body = world.spawnEnemy(type, _v.clone(), {
+      /* The person, not just the species — see `StationCast.lookFor`. */
+      person: r.look || null,
       /* §11: `team = player.team`, so nothing in the game hunts a resident
        * and no director can ever be handed one as an objective. */
       team: world.player?.team ?? 0,

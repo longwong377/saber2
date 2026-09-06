@@ -131,7 +131,11 @@ Their verdicts, and what was done about each in this same session:
 | Holodeck | slop | `lattice`/`paint` were `() => {}` | #57 has its own floor and lattice materials; the floor takes the ground's colour, the lattice glows |
 | Calibration | thin | untouched dials scored 0.59 of 0.99; perfect bought a tenth of a cooldown | drift 0.30; 15 %/10 % at a perfect solution (the doctrine's 0.85/0.90 bound holds) |
 | Forge as the only door | thin | armoury and mirror open the same tab | open, deliberately: the menu keeps the tab until the room is proven |
-| Bolt catch / One Point | good | both do what they say; the catch is EASIER than the blade for one bolt in the hand | open: tighten the catch cone |
+| Bolt catch / One Point | good | both do what they say; the catch is EASIER than the blade for one bolt in the hand | catch cone 0.42 rad / 2.4 m, down from 0.62 / 3.2 |
+| Species models | thin | fifteen species through one builder: three borrow the Zabrak horn ring, two the Kel Dor mask, the rest are a skin hex and sliders; `suit: true` on Gaim and Vorlon is read by nothing | open: build the two suits; the Narn's reticulation |
+| Variety | slop | Concourse at 09:00: 35 residents, NINE distinct bodies — `spawnResident` passed a team and nothing else, so the stature, face and hair `resident()` drew never reached the builder | `StationCast.lookFor` → `person` on `spawnEnemy` → `Enemy._build`: 33 distinct of 35 |
+| Sound | thin | one drone for three decks; the PA has three lines | open: a bed per deck |
+| First visit | absent | no guide droid; `markSeen` has one caller | open |
 
 **Also built this session, off the first sheet's second verdict** (the plan
 is good, the architecture is mediocre): the atrium is architecture now —

@@ -3031,6 +3031,10 @@ export class Enemy {
      * was no door from a shop's row to the body standing behind its counter.
      * Null for every body in the game that is not behind one. */
     this._armour = opts?.armour ?? null;
+    /* WHO THIS ONE IS (V17): a station resident's own face, hair, age, build
+     * and scale, spread into the build after the archetype's kit — see
+     * `StationCast.lookFor`. Null for every body that is not a resident. */
+    this._person = opts?.person ?? null;
     /* Which chassis's vocabulary his kit is written in — the `Trooper` record
      * has carried `kind` since attributes existed, so the spawn hands it over
      * rather than this file guessing from an archetype name. */
@@ -3488,6 +3492,9 @@ export class Enemy {
        * in. `buildPlayerBody` reads it; `buildJedi` never sees it, because a
        * body wearing armour is not built by `buildJedi` at all. */
       ...(this._armour ? { armour: this._armour } : {}),
+      /* The individual, last but for the plate: their scale multiplies the
+       * species frame rather than replacing it. */
+      ...(this._person ? { ...this._person, scale: (this._person.scale ?? 1) * (A.scale ?? 1) } : {}),
     };
     /* THE MARKSMAN'S PLATE MOVED TO `BODY_KITS` — see the note there. It used
      * to be a special case on this line, spread AFTER the man's own kit, so a

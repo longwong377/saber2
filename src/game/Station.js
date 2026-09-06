@@ -4775,6 +4775,17 @@ function stepAmbientCook(world, st, dt) {
   world._cook = set;
 }
 
+/** A bed per deck (V17): the concourse murmurs, the living deck is near
+ * silent, the working deck hums. `setAmbience` is the engine's own door and
+ * `World` sets the level's once at build, so this is set on the first step
+ * of a deck and never again. */
+const DECK_DRONE = { 40: 0.22, 44: 0.09, 48: 0.42, 32: 0.34, 12: 0.38, 60: 0.06 };
+function setDeckBed(world, st) {
+  if (st.bedSet) return;
+  st.bedSet = true;
+  try { audio.setAmbience({ wind: 0, windFreq: 90, drone: DECK_DRONE[st.deck] ?? 0.24, room: world.room }); } catch {}
+}
+
 export function stepStation(world, dt) {
   const st = world._station;
   if (!st) return;
@@ -4831,6 +4842,7 @@ export function stepStation(world, dt) {
    * at all. */
   stepCook(world, dt);
   stepAmbientCook(world, st, dt);
+  setDeckBed(world, st);
   /* THE SORTIE, on the same terms and for the same reason (§7). A no-op until
    * somebody launches, which is one property read a frame. */
   if (world._sortie || world._flying) stepSortie(world, st, dt);

@@ -709,7 +709,44 @@ export function resident(seed, opts = {}) {
     faction: factionFor(key, role),
     home: homeFor(key, role),
     partner: partnerFor(seed, key, role),
+    look: lookFor(seed, key, h / stature),
   };
+}
+
+/**
+ * ══ THE INDIVIDUAL, IN THE BODY — V17 ═════════════════════════════════════
+ *
+ * Measured on the Concourse at 09:00: thirty-five residents, NINE distinct
+ * bodies, five groups of exact duplicates. `resident()` drew a stature, a
+ * face-eligible seed and a name for each, and none of it reached the
+ * builder: `spawnResident` handed `spawnEnemy` a team and nothing else, so
+ * every Drazi was the same Drazi. This is the sheet the builder reads
+ * (`Bodies.sheetOf` + `faceFor`): eight face axes jittered off the seed,
+ * a hair style where the species grows hair, a beard on some humans, an
+ * age, a build, a sex — and the individual's own scale on top of the
+ * species frame. `StationLife.spawnResident` passes it as `person`.
+ */
+const HAIRS = ['temple', 'shorn', 'crop', 'padawan', 'topknot', 'tail', 'long', 'mane'];
+const BEARDS = ['none', 'none', 'stubble', 'goatee', 'shortbeard', 'full', 'long', 'plaited'];
+const FACE_AXES = ['skull', 'brow', 'cheek', 'jaw', 'chin', 'nose', 'eyes', 'mouth'];
+export function lookFor(seed, species, scale = 1) {
+  const S = SPECIES_BY.get(species) || SPECIES_BY.get('human');
+  const face = {};
+  for (const k of FACE_AXES) face[k] = (hashF(seed, `f:${k}`) - 0.5) * 1.1;
+  const sex = hashF(seed, 'sex') < 0.5 ? 0 : 1;
+  const out = {
+    scale,
+    face,
+    age: Math.pow(hashF(seed, 'age'), 1.6),
+    muscle: 0.25 + hashF(seed, 'muscle') * 0.6,
+    sex,
+    build: hashF(seed, 'build') < 0.6 ? 'even' : hashF(seed, 'build') < 0.8 ? 'heavy' : 'fine',
+  };
+  if (S.hair !== false) {
+    out.hair = S.defaultHair && hashF(seed, 'hair') < 0.6 ? S.defaultHair : HAIRS[Math.floor(hashF(seed, 'hair2') * HAIRS.length)];
+    out.beard = (species === 'human' && sex === 0) ? BEARDS[Math.floor(hashF(seed, 'beard') * BEARDS.length)] : 'none';
+  }
+  return out;
 }
 
 /**
