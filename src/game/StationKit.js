@@ -38,6 +38,7 @@
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
+import { strippedBunks, memorialRows } from './Vigil.js';
 import { Kit, makeCrate, makeBarrel, Prop, slabGeo, cylGeo } from '../world/Props.js';
 /* THE COOK'S OWN NUMBERS. `Food.js` holds no mesh and no material — it hands
  * back where a pan is and where his hands are, in the stall's frame — and
@@ -2153,12 +2154,20 @@ export const SHAPES = {
 
   /** #29 Company barracks: a BUNK HALL. Long, split into bays by lockers
    * standing out from the walls, bunks in each bay, a stove and a slate. */
-  bunkhall(kit, M, p) {
+  bunkhall(kit, M, p, ctx, world) {
     const { w, d, h } = p;
     floor(kit, M, w, d);
     walls(kit, M, w, d, h, { doorW: 3 });
     ceiling(kit, M, w, d, h, { ribs: 9 });
     const bays = 5;
+    /* V18 cool 14: THE STRIPPED BUNKS. A man buried at the chapel vigil has
+     * his bedding taken off the frame and a small effects box left on it —
+     * `Vigil.strippedBunks` is the fold's list, keyed by `Vigil.bunkOf`'s
+     * index: bay × 4 + side × 2 + level, twenty in all. The list is handed
+     * back on `world._station.bunks` so a check can read what was stripped. */
+    let stripped = new Map();
+    try { stripped = strippedBunks(); } catch { stripped = new Map(); }
+    const bunks = { total: bays * 4, stripped: [] };
     for (let i = 0; i < bays; i++) {
       const x = -w / 2 + (w / bays) * (i + 0.5);
       for (const s of [-1, 1]) {
@@ -2166,8 +2175,17 @@ export const SHAPES = {
         if (i) kit.slab(M.dark, 0.5, 2.1, 2.0, x - w / (bays * 2), 1.05, s * (d / 2 - 1.2), { collide: true, bevel: 0 });
         /* Two bunks, one over the other. */
         for (const y of [0.5, 1.6]) {
-          kit.slab(M.wing, 1.9, 0.12, 0.9, x, y, s * (d / 2 - 0.8), { collide: true, bevel: 0 });
-          kit.slab(M.deep, 1.8, 0.16, 0.8, x, y + 0.14, s * (d / 2 - 0.8), { collide: false, bevel: 0 });
+          const idx = i * 4 + (s > 0 ? 2 : 0) + (y > 1 ? 1 : 0);
+          const z = s * (d / 2 - 0.8);
+          kit.slab(M.wing, 1.9, 0.12, 0.9, x, y, z, { collide: true, bevel: 0 });
+          if (stripped.has(idx)) {
+            /* A bare frame, and his effects in a box at its head. */
+            kit.slab(M.wing, 0.46, 0.26, 0.34, x - 0.6, y + 0.19, z, { collide: false, bevel: 0 });
+            kit.slab(M.strip, 0.3, 0.02, 0.2, x - 0.6, y + 0.325, z, { collide: false, bevel: 0 });
+            bunks.stripped.push({ bunk: idx, designation: stripped.get(idx), x, y, z });
+          } else {
+            kit.slab(M.deep, 1.8, 0.16, 0.8, x, y + 0.14, z, { collide: false, bevel: 0 });
+          }
         }
         kit.post(M.dark, 0.06, 0.06, 2.1, x - 0.9, 1.05, s * (d / 2 - 0.4), { radial: 4 });
         kit.post(M.dark, 0.06, 0.06, 2.1, x + 0.9, 1.05, s * (d / 2 - 0.4), { radial: 4 });
@@ -2179,6 +2197,7 @@ export const SHAPES = {
     kit.post(M.status, 0.35, 0.35, 0.2, w / 2 - 2.5, 1.3, 0, { radial: 10 });
     kit.post(M.dark, 0.16, 0.16, h - 1.4, w / 2 - 2.5, 1.4 + (h - 1.4) / 2, 0, { radial: 6 });
     for (let i = 0; i < 4; i++) loose(kit, (i - 1.5) * 3.4, 0, 0, (world, q) => boxBody(world, q, M, 0.8, 0.5, 0.6, M.wing, 14, 'crate'));
+    if (world?._station) world._station.bunks = bunks;
   },
 
   /** #30 Officers' quarters: a CORRIDOR OF DOORS, curved, with one open.
@@ -2783,6 +2802,32 @@ export const SHAPES = {
       kit.slab(M.mark, w / 7 - 0.2, 2.4, 0.05, -w / 2 + (w / 7) * (i + 0.5), 1.7, -d / 2 + 0.28, { collide: false, bevel: 0 });
     }
     kit.slab(M.strip, w - 1, 0.07, 0.16, 0, 3.1, -d / 2 + 0.42, { collide: false, bevel: 0 });
+    /* V18 cool 7: THE NAMES ON THE WALL. The company's dead, one column a
+     * panel, in the words the chapel vigil reads (`Vigil.memorialRows` is the
+     * one list both read). Drawn the way `dressBoards` draws text on a slab —
+     * a `signPanel` on a plane a hair in front of it — and parented to the
+     * place's own group through `kit.after`, so the wall is culled and
+     * disposed with the room. `world._station.memorial` hands the rows back. */
+    let rows = [];
+    try { rows = memorialRows(7); } catch { rows = []; }
+    const pw = w / 7 - 0.3, py = 1.7, pz = -d / 2 + 0.28 + 0.04;
+    const made = [];
+    for (let i = 0; i < 7; i++) {
+      if (!rows[i]?.length) continue;
+      const px = -w / 2 + (w / 7) * (i + 0.5);
+      const lines = rows[i];
+      loose(kit, px, py, pz, (world, q) => {
+        const panel = signPanel(lines, { name: `memorial${i}`, px: 256, pyx: 256, head: false, bg: '#171410', ink2: '#e9dcc0' });
+        const mesh = new THREE.Mesh(new THREE.PlaneGeometry(pw, 2.2), panel.material);
+        mesh.name = `station-memorial-${i}`;
+        mesh.position.copy(q);
+        mesh.rotation.y = p.yaw;
+        const group = world?._station?.places?.get(p.id)?.group;
+        (group || world.scene).add(mesh);
+        made.push({ panel, mesh, lines });
+        if (world?._station) world._station.memorial = made;
+      });
+    }
   },
 
   /** #46 Armoury: CAGES AND A RANGE. A cage wall of rifles, a saber vault

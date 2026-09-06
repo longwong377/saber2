@@ -79,6 +79,8 @@ import { disarmKinetic } from './Impact.js';
 /* V18: the four rows that are SEEN — blackout, rain, the Drazi spill and the
  * weather below. See the EVENTS section and `StationEvents.js`'s header. */
 import { beginStationEvents, calmStationEvents, stepStationEvents, blackoutDip } from './StationEvents.js';
+import { stepVigil } from './Vigil.js';
+import { stepPickpocket } from './Pickpocket.js';
 /* THE ONE EXEMPTION FROM THE DAILY REROLL — see `occupant`. `Quests.js` holds
  * the ledger and answers in SEEDS, so this file still decides who stands where
  * and `StationCast.resident` still decides what a person looks like. */
@@ -3298,7 +3300,7 @@ function marketFill() {
 let _tools = null;
 function eventTools() {
   return _tools || (_tools = {
-    h2, setOut, removeBody, standHere, slotIn, destsOn, missionWalker, inRoom, wrapPi, arcLeg, radLeg,
+    h2, setOut, removeBody, standHere, slotIn, destsOn, missionWalker, inRoom, wrapPi, arcLeg, radLeg, planRoute, buildLitter,
     GUARD_KIT, RING_WALK, GUARD_PACE, WALK_PACE,
   });
 }
@@ -4397,6 +4399,8 @@ export function stepStationLife(world, dt) {
   stepWalkers(world, life, dt);
   stepTram(world, st, life, dt);
   stepEvents(world, st, life, dt);
+  stepVigil(world, st, life, dt, eventTools());
+  stepPickpocket(world, st, life, dt, eventTools());
   /* The reactor's dip, decaying once the surge is over — one number, and
    * `stepDip` below is the reader it did not have. */
   if (!life.event && life.dip > 0) life.dip = Math.max(0, life.dip - dt * 0.9);
