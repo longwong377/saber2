@@ -111,6 +111,10 @@ export const SPECIES = [
     row: {
       id: 'st-narn', name: 'Narn', hair: false, brows: false, eyes: true, ears: false,
       skin: 0xb98a4e, eye: 0x8e2418, sclera: 0xd8c49a,
+      /* The reticulation the note above describes, as `Bodies.reticleMap`
+       * builds it: ten cells across a tile, the cell floor at 55% of the
+       * net. Read by `skinMat` on the head, neck and hands. */
+      dapple: { cells: 10, contrast: 0.45, soft: 0.18 },
       frame: { scale: 1.074, head: 1.139, armLen: 1.00, legLen: 0.98, stature: 1.074 },
       face: { skull: -0.45, jaw: -0.80, brow: 0.90, cheek: 0.35, nose: -0.30 },
     },
@@ -140,15 +144,15 @@ export const SPECIES = [
     key: 'minbari', name: 'Minbari',
     sp: [1.82, 0.065, 0.93, 0.97, 1.03, 1.01, 0.99, [1.00, 0.98, 1.22], 0.76, 1.05, 0.0],
     /* The crest is a broad upright bone fin rising behind and above the crown,
-     * WIDER than the skull. Built through the `horns` mechanism — a ring of
-     * bone standing off the vault is what that field already is — with few,
-     * long, swept segments rather than a Zabrak's twelve short ones. */
+     * WIDER than the skull. It used to be built through the `horns`
+     * mechanism, which made it a ring of seven Zabrak cones whatever the
+     * numbers said; `Bodies.SPECIES_HEADS.minbari` builds it as what it is —
+     * a swept fan of seven bone plates off the back of the crown. */
     note: 'Crest read off rotunda.webp: a broad upright bone fin, wider than the skull. Shape sourced, dimensions EXTRAPOLATED. Slender build from the robed silhouette.',
     authority: 1,
     row: {
-      id: 'st-minbari', headOf: 'zabrak', name: 'Minbari', hair: false, brows: false, eyes: true, ears: false,
+      id: 'st-minbari', headOf: 'minbari', name: 'Minbari', hair: false, brows: false, eyes: true, ears: false,
       skin: 0xd9cdbc, eye: 0x4a5a68, sclera: 0xf2ece0,
-      horns: { n: 7, seg: 5, nCovered: 7, segCovered: 4, gap: 0.0, at: [0, 0.104, -0.040], sink: 0.004, len: 0.085, lenVar: 0.020, r: 0.014 },
       frame: { scale: 1.040, head: 1.030, armLen: 1.01, legLen: 1.03, stature: 1.040 },
       face: { skull: -0.12, jaw: -0.20, cheek: -0.25, brow: -0.20, nose: -0.35 },
     },
@@ -221,13 +225,13 @@ export const SPECIES = [
     key: 'abbai', name: 'Abbai',
     sp: [1.70, 0.060, 1.04, 0.99, 0.98, 0.99, 1.05, [1.06, 1.08, 1.20], 0.74, 0.85, 0.0],
     /* The amphibian note is the only shape information anywhere, so it gets
-     * ONE attachment — a low swept head fin — and nothing else. */
+     * ONE attachment — a low swept head fin, `Bodies.SPECIES_HEADS.abbai` —
+     * and nothing else. It was three Zabrak horns before it was a fin. */
     note: 'EXTRAPOLATED: League founders, mediators, amphibian. The amphibian note is the only shape information, so it gets one attachment and nothing else.',
     authority: 5,
     row: {
-      id: 'st-abbai', headOf: 'zabrak', name: 'Abbai', hair: false, brows: false, eyes: true, ears: false,
+      id: 'st-abbai', headOf: 'abbai', name: 'Abbai', hair: false, brows: false, eyes: true, ears: false,
       skin: 0x8fa9a2, eye: 0x1a2a28, sclera: 0xd0dcd8,
-      horns: { n: 3, seg: 4, nCovered: 3, segCovered: 3, gap: 0.0, at: [0, 0.100, -0.020], sink: 0.006, len: 0.042, lenVar: 0.010, r: 0.010 },
       frame: { scale: 0.971, head: 1.020, armLen: 0.99, legLen: 0.98, stature: 0.971 },
       face: { skull: 0.19, jaw: -0.40, brow: -0.30, cheek: 0.30, nose: -0.55 },
     },
@@ -244,9 +248,11 @@ export const SPECIES = [
     note: 'A SUIT, not a body: rigid plates, no exposed skin, no face. Sigma is small because a suit is made in sizes rather than grown. Everything about the shell is EXTRAPOLATED, constrained by the one encounter suit that IS attested.',
     authority: 5, suit: true,
     row: {
-      id: 'st-gaim', headOf: 'zabrak', name: 'Gaim', hair: false, brows: false, eyes: false, ears: false, mouth: false,
+      /* `suit` HERE as well as on the species: `buildJedi` sees the row and
+       * not the species, and it is the builder that puts the shell on.
+       * `headOf: 'gaim'` is the helmet; `suit: 'gaim'` is the body. */
+      id: 'st-gaim', headOf: 'gaim', suit: 'gaim', name: 'Gaim', hair: false, brows: false, eyes: false, ears: false, mouth: false,
       skin: 0xb0a271, eye: 0xff8a2a, sclera: 0xff8a2a,
-      horns: { n: 5, seg: 4, nCovered: 5, segCovered: 3, gap: 0.0, at: [0, 0.086, 0.010], sink: 0.002, len: 0.050, lenVar: 0.006, r: 0.017 },
       frame: { scale: 1.051, head: 1.157, armLen: 0.96, legLen: 0.94, stature: 1.051 },
       face: { skull: -0.18, jaw: 1.00, brow: 0.60, cheek: 0.80, nose: -1.00, chin: -0.20 },
     },
@@ -323,7 +329,10 @@ export const SPECIES = [
     note: 'A SINGLETON. Kosh. 2.05 m because the suit uses the station\'s doors and nothing else constrains it. sigma 0.0: there is exactly one of these and it is the same every session.',
     authority: 2, suit: true, singleton: true,
     row: {
-      id: 'st-vorlon', headOf: 'keldor', name: 'Vorlon', hair: false, brows: false, eyes: false, ears: false, mouth: false,
+      /* `headOf: 'vorlon'` is the cowl and its one lamp; `suit: 'vorlon'` is
+       * the shrouded column under it, legs hidden, hovering. Both on the row
+       * because the row is what the builder is handed. */
+      id: 'st-vorlon', headOf: 'vorlon', suit: 'vorlon', name: 'Vorlon', hair: false, brows: false, eyes: false, ears: false, mouth: false,
       skin: 0xc8a86a, eye: 0xffd48a, sclera: 0xffd48a,
       frame: { scale: 1.171, head: 1.171, armLen: 0.92, legLen: 0.96, stature: 1.171 },
       face: { skull: 0.6, jaw: 1.0, brow: 1.0, cheek: 1.0, nose: -1.0, mouth: -1.0 },

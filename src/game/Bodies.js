@@ -1838,11 +1838,77 @@ function metalMat(color, rough = 0.38, metal = 0.95, repeat = 2.4) {
  */
 function skinMat(color = 0xc79a76, repeat = 3.0, o = {}) {
   const maps = skinMaps(repeat);
-  return lit(color, MEAN_ALBEDO.skin, new THREE.MeshStandardMaterial({
-    map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
+  /* RETICULATED SKIN — see reticleMap. The dapple REPLACES the pore carrier
+   * (a StandardMaterial has one albedo map) and keeps the pore normal and
+   * roughness under it; its own measured mean is what `lit` divides through,
+   * so the row's skin hex is still the colour the figure averages to. */
+  const ret = o.dapple ? reticleMap(o.dapple, repeat) : null;
+  return lit(color, ret ? ret.mean : MEAN_ALBEDO.skin, new THREE.MeshStandardMaterial({
+    map: ret ? ret.map : maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
     roughness: 0.95, metalness: 0,
     vertexColors: !!o.vc,
   }));
+}
+
+/**
+ * A RETICULATION: dark cells in a pale raised net, which is what a Narn's
+ * skin is (StationCast's own row: *"not spots on plain"*). One 96×96 Worley
+ * tile in a DataTexture — no canvas, so it builds under the check harness
+ * exactly as it builds in the browser — cached per pattern, and cheap: the
+ * texture is 36 KB and the head, neck and hands share the one material they
+ * already shared.
+ *
+ * `cells` is the number of cells across the tile, `contrast` how far the
+ * cell floor sits below the net (0.55 → cells at 45% of the net), `soft` the
+ * width of the ridge as a fraction of a cell. The tile wraps, so the feature
+ * points are laid on a toroidal grid.
+ */
+const _reticles = new Map();
+function reticleMap(d, repeat) {
+  const cells = d.cells ?? 7, contrast = d.contrast ?? 0.55, soft = d.soft ?? 0.16;
+  const key = `${cells}|${contrast}|${soft}|${repeat}`;
+  if (_reticles.has(key)) return _reticles.get(key);
+  const N = 96;
+  const r = makeRng(0x9a2b + cells * 31);
+  // jittered feature points, one per grid cell, on a torus
+  const pts = [];
+  for (let j = 0; j < cells; j++) for (let i = 0; i < cells; i++) {
+    pts.push([(i + 0.2 + r() * 0.6) / cells, (j + 0.2 + r() * 0.6) / cells]);
+  }
+  const data = new Uint8Array(N * N * 4);
+  let sum = 0;
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const u = (x + 0.5) / N, v = (y + 0.5) / N;
+    let f1 = 9, f2 = 9;
+    for (const [px, py] of pts) {
+      let dx = Math.abs(u - px), dy = Math.abs(v - py);
+      if (dx > 0.5) dx = 1 - dx;
+      if (dy > 0.5) dy = 1 - dy;
+      const dd = Math.sqrt(dx * dx + dy * dy);
+      if (dd < f1) { f2 = f1; f1 = dd; } else if (dd < f2) f2 = dd;
+    }
+    // the ridge is where the two nearest cells are equally near
+    const edge = clamp((f2 - f1) / (soft / cells), 0, 1);
+    // cells are darkest at their centre, lifting toward the net
+    const centre = clamp(f1 * cells * 1.6, 0, 1);
+    const k = 1 - contrast * edge * (0.65 + 0.35 * (1 - centre));
+    const o = (y * N + x) * 4;
+    // the net is a shade warmer than the cell floor: a raised keratin ridge
+    data[o] = Math.round(255 * k);
+    data[o + 1] = Math.round(255 * (k * 0.97 + 0.03 * edge));
+    data[o + 2] = Math.round(255 * (k * 0.94));
+    data[o + 3] = 255;
+    sum += k;
+  }
+  const map = new THREE.DataTexture(data, N, N, THREE.RGBAFormat);
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  map.repeat.set(repeat, repeat);
+  map.colorSpace = THREE.SRGBColorSpace;
+  map.needsUpdate = true;
+  const m = sum / (N * N);
+  const out = { map, mean: [m, m * 0.97, m * 0.94] };
+  _reticles.set(key, out);
+  return out;
 }
 /**
  * Battle damage. Cauterised carbon over paint: near-black, matte, and it
@@ -3852,6 +3918,190 @@ const SPECIES_HEADS = {
     }
     k.bake(headObj);
   },
+
+  /**
+   * MINBARI — a bone crest: a swept fan of plates rising off the back of the
+   * crown, wider than the skull.
+   *
+   * Not the Zabrak ring it used to borrow. A ring of twelve short cones is a
+   * crown of horns whatever its numbers say; a Minbari's crest is a FIN —
+   * few, broad, flat bone plates that lean back and spread outward, so the
+   * head reads as a fan from behind and as a swept-back crown from the front.
+   * Seven plates, the centre one tallest, seated on the assembled skull so
+   * the fan follows whatever the face preset did to the vault. Bone, not
+   * skin: the plates are the pale of a Minbari's skin gone hard.
+   */
+  minbari(headObj, s, hg) {
+    const bone = boneMat(0xe9e1d2, 0.40);
+    const k = new Kit();
+    const O = new THREE.Vector3(0, 0.108 * s, -0.030 * s);
+    for (let i = -3; i <= 3; i++) {
+      const a = Math.abs(i);
+      const th = i * 0.40;                                 // bearing round the back of the crown
+      // seat: up and back, spreading sideways with the bearing
+      const d = new THREE.Vector3(Math.sin(th) * 0.86, 0.66 - 0.05 * a, -Math.cos(th) * 0.86).normalize();
+      const p = onSurface(hg, d, 0.010 * s, O);
+      // the plate's long axis: up and back, leaning outward on the flanks
+      const ax = new THREE.Vector3(Math.sin(th) * 0.55, 0.80, -Math.cos(th) * 0.60).normalize();
+      const h = (0.116 - 0.015 * a) * s, w = (0.052 - 0.005 * a) * s;
+      k.aim(bone, plateGeo(w, h, 0.011 * s, 0.004 * s, 1),
+        [p[0] + ax.x * h * 0.46, p[1] + ax.y * h * 0.46, p[2] + ax.z * h * 0.46], ax, null, d);
+    }
+    // the brow ridge the crest rises from: a low bone band across the temples
+    for (const sx of [-1, 1]) {
+      const d = new THREE.Vector3(sx * 0.80, 0.42, -0.42).normalize();
+      const p = onSurface(hg, d, 0.004 * s, O);
+      k.face(bone, plateGeo(0.036 * s, 0.020 * s, 0.010 * s, 0.004 * s, 1), p, d);
+    }
+    k.bake(headObj);
+  },
+
+  /**
+   * ABBAI — one sagittal fin, brow to nape, and two small swept fins off the
+   * temples. The amphibian note is the only shape information there is, so
+   * this is the one attachment and nothing else — but it is a FIN and not
+   * three horns: a ridge of flesh with a flattened section that stands 4 cm
+   * off the crown, which is a different outline from every other head here
+   * at any range. Skin, so it is one draw with nothing else on it.
+   */
+  abbai(headObj, s, hg, { skin }) {
+    const k = new Kit();
+    // section: thin sideways, tall up-and-down — a blade, not a rope
+    const blade = (u) => 0.34 + 0.66 * Math.abs(Math.sin(u));
+    const O = new THREE.Vector3(0, 0.100 * s, 0);
+    const seat = (dx, dy, dz, lift) => onSurface(hg, new THREE.Vector3(dx, dy, dz).normalize(), -lift * s, O);
+    const a = seat(0, 0.55, 0.85, 0.004), b = seat(0, 0.92, 0.42, 0.010), c = seat(0, 1, -0.10, 0.014),
+      d = seat(0, 0.78, -0.62, 0.014), e = seat(0, 0.30, -0.95, 0.008);
+    k.add(skin, tubeGeo([
+      [a[0], a[1], a[2], 0.014 * s],
+      [b[0], b[1], b[2], 0.026 * s],
+      [c[0], c[1], c[2], 0.032 * s],
+      [d[0], d[1], d[2], 0.030 * s],
+      [e[0], e[1], e[2], 0.014 * s],
+    ], 8, { section: blade, tip: 1.0 }));
+    // the temple fins: short, swept back and slightly down, where an ear would be
+    for (const sx of [-1, 1]) {
+      const dir = new THREE.Vector3(sx * 0.96, 0.18, -0.20).normalize();
+      const p = onSurface(hg, dir, 0.006 * s, new THREE.Vector3(0, 0.090 * s, -0.004 * s));
+      const ax = new THREE.Vector3(sx * 0.42, 0.10, -0.90).normalize();
+      const L = 0.062 * s;
+      k.add(skin, tubeGeo([
+        [p[0], p[1], p[2], 0.016 * s],
+        [p[0] + ax.x * L * 0.5, p[1] + ax.y * L * 0.5, p[2] + ax.z * L * 0.5, 0.012 * s],
+        [p[0] + ax.x * L, p[1] + ax.y * L, p[2] + ax.z * L, 0.003 * s],
+      ], 6, { section: blade, tip: 1.1 }));
+    }
+    k.bake(headObj);
+  },
+
+  /**
+   * GAIM — the helmet of an encounter suit: a domed shell over the whole
+   * head, two faceted compound-eye lenses, two antennae, a breather unit at
+   * the mouth with its two tubes running back under the jaw to the nape.
+   *
+   * There is no face. The skull is built (every probe in this file seats on
+   * it) and then hidden inside the dome, which pays for the dome out of the
+   * eyes, lids, brows and lips the row already declines. The body half of
+   * the suit is `encounterSuit('gaim')`.
+   */
+  gaim(headObj, s, hg) {
+    const shell = chitinMat(0x55482c, 0.50);
+    const dark = metalMat(0x3e3a30, 0.55, 0.6, 3.0);
+    const hose = leatherMat(0x2a2620, 0.80, { repeat: 6.0 });
+    const lens = eyeMat(0xff8a2a, 1.3);
+    lens.flatShading = true;
+    const k = new Kit();
+    for (const c of headObj.children) if (c.isMesh && c.geometry === hg) c.visible = false;
+    // THE DOME. An ellipsoid a hair larger than the skull's own extents
+    // (15.1 × 21.0 × 19.6 cm at s = 1), centred where the skull is.
+    const C = [0, 0.098 * s, -0.002 * s];
+    const R = [0.094 * s, 0.128 * s, 0.116 * s];
+    k.add(shell, new THREE.SphereGeometry(1, 16, 11), C, null, R);
+    // where a ray from the centre leaves the ellipsoid, for seating parts
+    const on = (dx, dy, dz, out = 0) => {
+      const t = 1 / Math.sqrt((dx / R[0]) ** 2 + (dy / R[1]) ** 2 + (dz / R[2]) ** 2);
+      const l = Math.hypot(dx, dy, dz);
+      return [C[0] + dx * (t + out / l), C[1] + dy * (t + out / l), C[2] + dz * (t + out / l)];
+    };
+    // the lenses: faceted, so the flat shading gives them a compound read
+    for (const sx of [-1, 1]) {
+      const d = new THREE.Vector3(sx * 0.62, 0.10, 0.78).normalize();
+      const p = on(d.x, d.y, d.z, -0.010 * s);
+      k.aim(dark, new THREE.CylinderGeometry(0.034 * s, 0.030 * s, 0.014 * s, 12), p, d);
+      k.aim(lens, new THREE.IcosahedronGeometry(0.029 * s, 1), on(d.x, d.y, d.z, 0.004 * s), d, [1, 0.62, 1]);
+    }
+    // the antennae, out of the crown and swept back
+    for (const sx of [-1, 1]) {
+      const p = on(sx * 0.28, 0.95, 0.10, -0.004 * s);
+      k.add(dark, tubeGeo([
+        [p[0], p[1], p[2], 0.0075 * s],
+        [p[0] + sx * 0.030 * s, p[1] + 0.070 * s, p[2] - 0.030 * s, 0.0055 * s],
+        [p[0] + sx * 0.062 * s, p[1] + 0.125 * s, p[2] - 0.090 * s, 0.0035 * s],
+        [p[0] + sx * 0.080 * s, p[1] + 0.150 * s, p[2] - 0.150 * s, 0.0018 * s],
+      ], 6, { tip: 1.2 }));
+    }
+    // the breather: a boxed unit low on the face, and its two hoses
+    const md = new THREE.Vector3(0, -0.36, 0.93).normalize();
+    const mp = on(md.x, md.y, md.z, -0.006 * s);
+    k.face(dark, plateGeo(0.062 * s, 0.040 * s, 0.032 * s, 0.008 * s, 1), mp, md);
+    for (let i = 0; i < 3; i++) {
+      k.face(hose, plateGeo(0.040 * s, 0.005 * s, 0.006 * s, 0.002 * s, 1),
+        [mp[0], mp[1] + (i - 1) * 0.010 * s, mp[2] + 0.017 * s], md);
+    }
+    for (const sx of [-1, 1]) {
+      const q = on(sx * 0.80, -0.62, 0.20, 0.004 * s);
+      k.add(hose, tubeGeo([
+        [mp[0] + sx * 0.030 * s, mp[1] - 0.006 * s, mp[2] - 0.004 * s, 0.009 * s],
+        [mp[0] + sx * 0.070 * s, mp[1] - 0.030 * s, mp[2] - 0.040 * s, 0.009 * s],
+        [q[0] + sx * 0.010 * s, q[1] - 0.010 * s, q[2] - 0.040 * s, 0.009 * s],
+        [q[0] * 0.8, q[1] + 0.005 * s, q[2] - 0.080 * s, 0.009 * s],
+      ], 6, { tip: 0.6 }));
+    }
+    // the neck seal, where the dome meets the suit's collar
+    k.add(dark, bandGeo(0.058 * s, 0.070 * s, 0.062 * s, 0.078 * s, 0.026 * s, 14), [0, -0.012 * s, 0]);
+    k.bake(headObj);
+  },
+
+  /**
+   * VORLON — the head of the encounter suit: a hooded cowl leaning forward
+   * over the collar, no face, one lamp lens that glows. The skull is hidden
+   * inside it, as the Gaim's is. Everything below the cowl is
+   * `encounterSuit('vorlon')`.
+   */
+  vorlon(headObj, s, hg) {
+    const cowl = armorMat(0x8a7442, 0.25, 0.48, 2.2);
+    const rim = armorMat(0x9c7a3c, 0.50, 0.42, 3.0);
+    const lamp = eyeMat(0xffd48a, 2.4);
+    const k = new Kit();
+    for (const c of headObj.children) if (c.isMesh && c.geometry === hg) c.visible = false;
+    // the cowl: an egg, taller than it is wide, tipped forward
+    const tilt = 0.30;
+    // centred 15 cm up the head bone: the collar under it stands to 0.675
+    // on the pelvis, the head bone starts at 0.575, and a lamp at the
+    // cowl's centre has to sit above the rim to be seen at all
+    const C = [0, 0.150 * s, 0.006 * s];
+    const R = [0.112 * s, 0.150 * s, 0.128 * s];
+    k.add(cowl, new THREE.SphereGeometry(1, 20, 14), C, [tilt, 0, 0], R);
+    const X = new THREE.Vector3(1, 0, 0);
+    const on = (dx, dy, dz, out = 0) => {
+      // a point on the tipped ellipsoid: solve in its own frame, rotate out
+      const v = new THREE.Vector3(dx, dy, dz).applyAxisAngle(X, -tilt);
+      const t = 1 / Math.sqrt((v.x / R[0]) ** 2 + (v.y / R[1]) ** 2 + (v.z / R[2]) ** 2);
+      const l = v.length();
+      v.multiplyScalar(t + out / l).applyAxisAngle(X, tilt);
+      return [C[0] + v.x, C[1] + v.y, C[2] + v.z];
+    };
+    // the lens: one, dead centre, and it glows
+    const d = new THREE.Vector3(0, -0.06, 1).normalize();
+    k.aim(rim, new THREE.CylinderGeometry(0.044 * s, 0.040 * s, 0.018 * s, 16), on(d.x, d.y, d.z, -0.006 * s), d);
+    k.aim(lamp, new THREE.CylinderGeometry(0.034 * s, 0.034 * s, 0.016 * s, 16), on(d.x, d.y, d.z, 0.004 * s), d);
+    // the hood's brim over the lens, and a seam down the crown
+    const bd = new THREE.Vector3(0, 0.34, 0.94).normalize();
+    k.face(rim, plateGeo(0.130 * s, 0.022 * s, 0.036 * s, 0.006 * s, 1), on(bd.x, bd.y, bd.z, -0.004 * s), bd);
+    const sd = new THREE.Vector3(0, 1, -0.15).normalize();
+    k.face(rim, plateGeo(0.022 * s, 0.150 * s, 0.010 * s, 0.004 * s, 1), on(sd.x, sd.y, sd.z, 0.002 * s), sd);
+    k.bake(headObj);
+  },
 };
 
 function speciesHead(sp, headObj, s, hg, ctx) {
@@ -3871,6 +4121,174 @@ function speciesHead(sp, headObj, s, hg, ctx) {
    */
   const fn = SPECIES_HEADS[sp.id] || (sp.headOf ? SPECIES_HEADS[sp.headOf] : null);
   if (fn) fn(headObj, s, hg, ctx);
+}
+
+/* ── the encounter suits ─────────────────────────────────────────────── */
+
+/**
+ * WHAT `suit` ON A SPECIES ROW BUILDS. Two kinds, and they are the two rows
+ * `body.py` sets apart from the thirteen actors in makeup: *"Every species in
+ * these folders except the Vorlon and the Gaim is an actor in prosthetic
+ * makeup."* Before this the flag was read by nothing, so the Gaim was a horned
+ * man in coveralls and the Vorlon a man in a breath mask and a tunic.
+ *
+ * Both go on AFTER `dressHumanoid`, over the finished body, out of the same
+ * Kit, the same primitives and the same materials every other archetype is
+ * built from — a lathe, a band, a plate, a swept tube — so a suit costs what a
+ * trooper's plate costs and shades the way it shades.
+ *
+ *   vorlon   A tall shrouded column with a flared collar. No legs, no arms:
+ *            the limbs are built (the animator drives them, the ragdoll needs
+ *            them) and hidden, and the shroud hangs from the shoulders to six
+ *            centimetres off the floor. It HOVERS: the shroud mesh carries an
+ *            onBeforeRender that lifts the pelvis by a slow sine, once per
+ *            rendered frame, after the animator has placed it — the one hook
+ *            a body can own without a runtime knowing the species.
+ *   gaim     A plated insectile shell over the coverall the row names: a
+ *            carapace on the chest and back, banded abdomen, domed pauldrons,
+ *            and a plate on every limb sized off the limb it is worn on.
+ *            The helmet is `SPECIES_HEADS.gaim`.
+ */
+function encounterSuit(kind, rig, S, HS, M) {
+  const s = S;
+  const R = (n) => rig.get(n);
+  /* Everything hung under a bone, not just its registered parts: the boot
+   * cuffs and sleeve hems are meshes on the bone object that `addLimb`
+   * never saw. */
+  const hide = (names) => {
+    for (const n of names) {
+      const b = R(n);
+      if (b) b.obj.traverse((o) => { if (o.isMesh) o.visible = false; });
+    }
+  };
+  if (kind === 'vorlon') {
+    const hipsB = R('hips'), hips = hipsB.obj;
+    hide(['thighL', 'shinL', 'footL', 'thighR', 'shinR', 'footR',
+      'clavL', 'armL', 'foreL', 'handL', 'clavR', 'armR', 'foreR', 'handR']);
+    const robe = M.robe;
+    const shroud = clothMat(robe.outer, 0.94, { vc: true, repeat: 2.6 });
+    const panel = clothMat(robe.inner, 0.92, { vc: true, repeat: 2.0 });
+    /* Bronze off the armour bake, not the metal one: the metal carrier is
+     * blue-grey durasteel and `lit` cannot push a warm tint through it —
+     * measured, a 0xc09a52 collar came out olive-grey. */
+    const bronze = armorMat(0x9c7a3c, 0.50, 0.42, 3.0);
+    /* THE COLUMN. Hips frame, y up the spine: the shoulder line is at 0.50,
+     * the floor at about -0.90 (0.072 ankle + 0.86 × 0.96 leg). The profile
+     * flares at the shoulder, falls to a waist, and bells at the hem, which
+     * is the silhouette of a robe with nobody's legs in it. Closed top and
+     * bottom, so there is no way to look up it. */
+    // bottom to top: a lathe's winding follows its profile, and one authored
+    // top-down faces INWARD — the first render of this was a see-through
+    // shroud with a tunic and two boots inside it
+    const prof = [[0, -0.85], [0.200, -0.85], [0.262, -0.845], [0.270, -0.80], [0.244, -0.68],
+      [0.246, -0.35], [0.262, 0.05], [0.296, 0.30], [0.300, 0.44], [0.230, 0.56],
+      [0.150, 0.62], [0, 0.62]].map(([r, y]) => new THREE.Vector2(r * s, y * s));
+    const g = new THREE.LatheGeometry(prof, 22);
+    // ribbed: eight panels round, dark in the folds, and dark under the collar
+    shadeAO(g, ao(
+      (x, y, z) => 1 - 0.30 * clamp(Math.cos(Math.atan2(x, z) * 8) * 1.8 + 0.4, 0, 1),
+      (x, y) => 0.62 + 0.38 * clamp((0.56 * s - y) / (0.16 * s), 0, 1),
+      (x, y) => 0.70 + 0.30 * clamp((y + 0.85 * s) / (0.10 * s), 0, 1),
+    ), { floor: 0.40 });
+    const col = mesh(g, shroud, hips, null, null, [1, 1, 0.80]);
+    markSilhouette(col);
+    // the front panel and its bronze ridge: strips of the same lathe, a
+    // hair proud of it, so they follow the column round
+    const strip = (mat, out, half, segs) => {
+      const pr = prof.slice(1, -1).map((v) => new THREE.Vector2(v.x + out * s, v.y));
+      return mesh(new THREE.LatheGeometry(pr, segs, -half, half * 2), mat, hips, null, null, [1, 1, 0.80]);
+    };
+    strip(panel, 0.006, 0.30, 4);
+    strip(bronze, 0.013, 0.05, 2);
+    /* THE COLLAR: a standing funnel round the cowl, in bronze, ribbed. Tall
+     * and only a little wider than the cowl — the first cut was a 66 cm dish
+     * the cowl sat in like an egg in a bowl. */
+    const collar = mesh(bandGeo(0.150 * s, 0.172 * s, 0.205 * s, 0.226 * s, 0.140 * s, 20), bronze, hips,
+      [0, 0.535 * s, 0], null, [1, 1, 0.86]);
+    shadeAO(collar.geometry, ao(
+      (x, y) => 0.55 + 0.45 * clamp(y / (0.14 * s), 0, 1),
+      (x, y, z) => 1 - 0.22 * clamp(Math.cos(Math.atan2(x, z) * 10) * 2 + 0.5, 0, 1),
+    ), { floor: 0.45 });
+    // a dark throat inside the collar, so the cowl sits in shadow and not on
+    // a bronze floor
+    mesh(new THREE.CylinderGeometry(0.150 * s, 0.150 * s, 0.02 * s, 16), leatherMat(0x1e1810, 0.9), hips,
+      [0, 0.61 * s, 0], null, [1, 1, 0.86]);
+    /**
+     * THE HOVER. `hips.position` is written by the animator every frame it
+     * runs; this adds a slow lift on top, exactly once per rendered frame —
+     * `renderer.info.render.frame` counts render() calls, so the shadow pass
+     * and the colour pass of one frame see the same pelvis. 2.5 cm at 0.19
+     * Hz: a thing that is not standing on anything.
+     */
+    let lastY = NaN, applied = 0;
+    const base = THREE.Object3D.prototype.updateMatrixWorld;
+    hips.updateMatrixWorld = function (force) {
+      const lift = 0.025 * s * (0.5 + 0.5 * Math.sin(performance.now() * 0.0012));
+      // if anything wrote the pelvis since the last lift, the lift is gone with it
+      if (this.position.y !== lastY) applied = 0;
+      this.position.y += lift - applied;
+      applied = lift; lastY = this.position.y;
+      base.call(this, force);
+    };
+    return;
+  }
+  if (kind === 'gaim') {
+    const chitin = chitinMat(0x55482c, 0.50);
+    const dark = metalMat(0x3e3a30, 0.55, 0.6, 3.0);
+    const chestB = R('chest'), spineB = R('spine'), hipsB = R('hips');
+    const k = new Kit();
+    /* THE CARAPACE: a front and a back plate on the chest, seated off the
+     * dressed torso so they clear the coverall, and a banded abdomen down
+     * the spine and pelvis. */
+    // arcs sized off the chest's own wide radius, squashed to its depth, so
+    // they follow the ribcage round instead of standing off it as a board
+    const zk = chestB.primary ? chestB.primary.scale.z : 0.76;
+    k.add(chitin, limbPlate(chestB, 0.01 * s, 0.20 * s, 2.3, { gap: 0.012 * s, thick: 0.014 * s, seg: 8 }),
+      [0, 0.01 * s, 0], null, [1, 1, zk]);
+    k.add(chitin, limbPlate(chestB, 0.02 * s, 0.21 * s, 2.6, { gap: 0.012 * s, thick: 0.014 * s, seg: 8 }),
+      [0, 0.02 * s, 0], [0, Math.PI, 0], [1, 1, zk]);
+    k.bake(chestB.obj);
+    const neckB = R('neck');
+    if (neckB) {
+      const kn = new Kit();
+      kn.add(dark, bandGeo(0.062 * s, 0.076 * s, 0.064 * s, 0.080 * s, 0.050 * s, 14), [0, 0.012 * s, 0]);
+      kn.bake(neckB.obj);
+    }
+    const ks = new Kit();
+    for (let i = 0; i < 3; i++) {
+      const y = 0.010 * s + i * 0.060 * s;
+      const q = onLimb(spineB, y + 0.03 * s, [1, 0, 0], -0.010 * s);
+      const r = Math.hypot(q[0], q[2]);
+      ks.add(chitin, bandGeo(r - 0.004 * s, r + 0.010 * s, r - 0.006 * s, r + 0.006 * s, 0.052 * s, 16), [0, y, 0], null, [1, 1, 0.80]);
+    }
+    ks.bake(spineB.obj);
+    const kh = new Kit();
+    const qh = onLimb(hipsB, 0.09 * s, [1, 0, 0], -0.010 * s);
+    const rh = Math.hypot(qh[0], qh[2]);
+    kh.add(chitin, bandGeo(rh - 0.004 * s, rh + 0.012 * s, rh - 0.006 * s, rh + 0.008 * s, 0.050 * s, 16), [0, 0.070 * s, 0], null, [1, 1, 0.82]);
+    kh.bake(hipsB.obj);
+    /* THE LIMBS: a plate on each, sized off the limb it is worn on, and a
+     * domed pauldron over the shoulder joint. Arcs short of a full ring so
+     * the joint still reads through. */
+    for (const side of ['L', 'R']) {
+      const arm = R('arm' + side), fore = R('fore' + side), th = R('thigh' + side), sh = R('shin' + side);
+      const ka = new Kit();
+      ka.add(chitin, limbPlate(arm, 0.06 * s, 0.25 * s, 4.6, { gap: 0.006 * s, thick: 0.010 * s }), [0, 0.06 * s, 0]);
+      ka.add(chitin, new THREE.SphereGeometry(0.078 * s, 12, 6, 0, Math.PI * 2, 0, Math.PI * 0.5),
+        [0, 0.030 * s, 0], [Math.PI, 0, 0], [1, 0.75, 1]);
+      ka.bake(arm.obj);
+      const kf = new Kit();
+      kf.add(chitin, limbPlate(fore, 0.03 * s, 0.22 * s, 4.6, { gap: 0.006 * s, thick: 0.010 * s }), [0, 0.03 * s, 0]);
+      kf.add(dark, bandGeo(0.040 * s, 0.050 * s, 0.038 * s, 0.048 * s, 0.020 * s, 12), [0, 0.225 * s, 0]);
+      kf.bake(fore.obj);
+      const kt = new Kit();
+      kt.add(chitin, limbPlate(th, 0.05 * s, 0.38 * s, 4.2, { gap: 0.006 * s, thick: 0.011 * s }), [0, 0.05 * s, 0]);
+      kt.bake(th.obj);
+      const kk = new Kit();
+      kk.add(chitin, limbPlate(sh, 0.04 * s, 0.34 * s, 4.2, { gap: 0.006 * s, thick: 0.010 * s }), [0, 0.04 * s, 0]);
+      kk.bake(sh.obj);
+    }
+  }
 }
 
 /* ── what a haircut is made of ───────────────────────────────────────── */
@@ -5728,7 +6146,20 @@ export function buildJedi(opts = {}) {
    *   jerkin    the over-skirt alone, to mid-thigh, over the leg
    *   trousers  none of them; the leg is the garment
    */
-  const LOWER = TOP.lower || 'robe';
+  /**
+   * ── AND THE SUIT, WHICH IS NOT A GARMENT ───────────────────────────────
+   *
+   * `sp.suit` names an encounter suit — 'vorlon' or 'gaim' (StationCast's
+   * rows) — and it is consumed HERE, after the cut and before the lower half
+   * is decided, because a suit overrides both: a Vorlon's lower half is a
+   * shrouded column and not a skirt over legs, so the cloth below the belt
+   * is not built at all (`LOWER` reads 'trousers', which is the no-skirt
+   * state, and the legs themselves are hidden by `encounterSuit`). A Gaim's
+   * suit is plate OVER the coverall the row names, so its cut stands. Absent
+   * on thirteen rows and on every creator species, so nothing else moves.
+   */
+  const SUIT = sp.suit || null;
+  const LOWER = SUIT === 'vorlon' ? 'trousers' : (TOP.lower || 'robe');
 
   /**
    * Five cloth tones off a two-tone palette, not two.
@@ -5761,7 +6192,9 @@ export function buildJedi(opts = {}) {
   // The species' own default tone when nothing is chosen, so
   // `buildJedi({ species: 'twilek' })` is already green rather than beige; the
   // human row's default is 0xc79a76, which is what this line always said.
-  const skin = skinMat(opts.skinColor ?? sp.skin ?? 0xc79a76, 3.0, { vc: true });
+  /* `sp.dapple` is the Narn's reticulation — see reticleMap. Absent on every
+   * other row, so this is the expression it always was for them. */
+  const skin = skinMat(opts.skinColor ?? sp.skin ?? 0xc79a76, 3.0, { vc: true, dapple: sp.dapple || null });
   // The cap is an open shell, so it has to be lit from the inside too. On the
   // cloth bake rather than bare: hair with no normal detail at all is a
   // moulded plastic wig, and it is 20cm from the camera in every menu shot.
@@ -6662,6 +7095,10 @@ export function buildJedi(opts = {}) {
       }
     },
   });
+
+  /* THE ENCOUNTER SUIT goes on last, over the dressed body — see the note at
+   * `SUIT` and the builder itself. */
+  if (SUIT) encounterSuit(SUIT, rig, S, HS, { robe, outer, over, tunic, trim, leather, skin });
 
   return { rig,
            /**
