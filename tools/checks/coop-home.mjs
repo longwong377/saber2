@@ -769,4 +769,83 @@ export async function run({ check, assert }) {
       + `behind #${saved.place}, with the player's own rug and none of the host's bunk; `
       + `${keys.size} durable writers in the tree`;
   });
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('co-op home: the list of apartments reads your own row off the home\'s own record', async () => {
+    /**
+     * ══ THREE FIELDS OF SOMEBODY ELSE'S RECORD, SPELLED HERE ═════════════
+     *
+     * `Coop.apartments` — *"every apartment on the station, yours included, for
+     * a screen or a check"* — built MY row by reaching into `world._home` and
+     * pulling `place.id`, `address` and `state.pieces.length` out of it one at
+     * a time. `Home.homeRecord` is the function written for that exact job,
+     * whose first line is *"the home, for anything that wants to read it
+     * without dressing one"*, and it had NO CALLER ANYWHERE UNDER `src/`.
+     *
+     * The cost of the hand-spelling is the ordinary one: a record that grew a
+     * fourth field would be reported by `homeRecord` and missing from every
+     * screen this list feeds — which is #38's hostel reading, the room a
+     * joining player is housed in.
+     *
+     * MEASURED BY MOVING IT. The two readings are compared, then a piece is put
+     * down and they are compared again: a row that carried a stale count would
+     * pass a single comparison and fail this one.
+     */
+    const C = await import('../../src/game/Coop.js');
+    const H = await import('../../src/game/Home.js');
+    const S = await import('../../src/game/StationSave.js');
+    S.clearStation();
+    const s = await coopStation(2);
+    try {
+      const host = s.host, guest = s.clients[0];
+      const rowOf = (w) => C.apartments(w).find((a) => a.mine) || null;
+
+      for (const [who, node] of [['host', host], ['guest', guest]]) {
+        const rec = H.homeRecord(node.world);
+        const row = rowOf(node.world);
+        assert(rec, `the ${who} has no home record at all`);
+        assert(row, `the ${who}'s own apartment is not in the list of apartments`);
+        assert(row.place === rec.place,
+          `the ${who}'s row says #${row.place} and the record says #${rec.place}`);
+        assert(row.address === rec.address,
+          `the ${who}'s row says "${row.address}" and the record says "${rec.address}"`);
+        assert(row.pieces === rec.pieces,
+          `the ${who}'s row counts ${row.pieces} pieces and the record counts ${rec.pieces}`);
+      }
+
+      /* AND IT MOVES. */
+      const before = rowOf(host.world).pieces;
+      assert(H.addPiece(host.world, 'plant'), 'the catalogue would not give up a planter');
+      const after = rowOf(host.world);
+      assert(after.pieces === before + 1,
+        `a piece went down and the row still counts ${after.pieces} against ${before}`);
+      assert(after.pieces === H.homeRecord(host.world).pieces,
+        'the row and the record disagree after a piece was put down');
+
+      /* AND THE GUEST'S ROW IS ON THE HOST'S LIST TOO — the list is what #38
+       * reads to say who is aboard, so it has to carry more than one home. */
+      const all = C.apartments(host.world);
+      assert(all.length >= 2, `the host's list has ${all.length} apartments in a session of two`);
+      assert(all.filter((a) => a.mine).length === 1,
+        `${all.filter((a) => a.mine).length} of the apartments on the list are "mine"`);
+
+      /* ── AND THE ROOM READS THE LIST ─────────────────────────────────── */
+      const stn = (await readFile(new URL('../../src/game/Station.js', import.meta.url), 'utf8'))
+        .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+      const at = stn.indexOf('function hostelReading(');
+      assert(at > 0 && /apartments\(world\)/.test(stn.slice(at, stn.indexOf('\n}', at))),
+        '#38 no longer reads the list of apartments');
+      const coop = (await readFile(new URL('../../src/game/Coop.js', import.meta.url), 'utf8'))
+        .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+      assert(/homeRecord\(world\)/.test(coop),
+        'the apartment list spells the home out by hand again instead of reading its record');
+      return `${all.length} apartments on the host's list, 1 of them mine; the row and `
+        + `homeRecord agree on #${after.place}, "${after.address}" and ${after.pieces} pieces `
+        + `(${before} before the planter)`;
+    } finally {
+      for (const nd of s.nodes) nd.world.dispose?.();
+      s.close();
+    }
+  });
+
 }

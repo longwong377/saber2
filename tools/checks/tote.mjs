@@ -44,7 +44,7 @@ import { readFile } from 'node:fs/promises';
 import { clocked } from './_shared.mjs';
 import {
   researchedProbabilities, winProbabilities, grudgeCarried, GRUDGE_STEP, GRUDGE_CAP,
-  formStrength, readForm, fieldProbabilities, blindnessOf, SKINS,
+  formStrength, readForm, fieldProbabilities, blindnessOf, SKINS, momentsOf,
 } from '../../src/game/Spectacle.js';
 import * as Tote from '../../src/game/Tote.js';
 import { playWindow, bettingDays, agreesWithBookAt } from './_tote-edge.mjs';
@@ -1735,6 +1735,108 @@ export async function run({ check, assert }) {
       globalThis.fetch = hadFetch;
     }
     return out;
+  });
+
+  /* ══════════════════════════════════════════════════════════════════════
+   *  THE FORM READER'S OWN COLUMN, ON THE GLASS
+   * ══════════════════════════════════════════════════════════════════════ */
+
+  check('tote: the window prints the form book and what a reader makes of it, beside the price', async () => {
+    /**
+     * ══ THE EDGE WAS TRUE OF A BETTOR WHO DID NOT EXIST ═══════════════════
+     *
+     * `_tote-edge.mjs` measures a form reader beating the take by +4.11 /
+     * +8.33 / +7.15% at the three windows. That reader is
+     * `Spectacle.researchedProbabilities`, and until the board carried it,
+     * NOTHING UNDER `src/` CALLED IT — so the strongest claim this game makes
+     * about its own betting room was a claim about a man implemented only in
+     * the harness. `Spectacle.formBook` was in the same state: the function
+     * whose whole job is "the rows a form book prints" printed them nowhere.
+     *
+     * Both halves are asserted, because either alone is the dead thing again:
+     * the FIELD on `boardFor`'s row, driven off a real card, and the LINE in
+     * `main.js` that renders it. A field nothing prints is what this suite's
+     * sibling `reachable.mjs` counts.
+     *
+     * WHAT IS MEASURED IS A DISAGREEMENT AND NOT A FLAG. The reader's column
+     * and the house's are two opinions of one race; if they were the same
+     * number the line would be decoration. So the gap is summed over the field
+     * and required to be real — and the board is still required to be a book,
+     * over-round by the take, which is what makes the gap worth reading.
+     */
+    const race = racesOn('holo-theatre', 33)[0] || racesOn('holo-theatre', 34)[0];
+    assert(race, 'no card at the holo-theatre to read');
+    const board = boardFor(race);
+
+    /* THE BOOK, ON THE ROW. Every runner, and it carries the two things the
+     * hand-spelled form line used to throw away: the RECORD and what the
+     * public strength is worth on tonight's ground. */
+    for (const row of board.runners) {
+      assert(Array.isArray(row.book) && row.book.length >= 3,
+        `${row.name}'s row carries ${row.book?.length ?? 'no'} form-book rows`);
+      const keys = row.book.map(([k]) => k);
+      for (const want of ['rating', 'record', 'recent']) {
+        assert(keys.includes(want), `${row.name}'s book has no "${want}" row — it reads ${keys.join(', ')}`);
+      }
+      assert(keys.some((k) => k.endsWith('on this ground')),
+        `${row.name}'s book prints no public strength term — ${keys.join(', ')}`);
+      /* AND THE LABELS ARE DISTINCT, which is not pedantry: the raw rating and
+       * what the rating is WORTH are two numbers, and a window printing
+       * "rating 79 · rating +3.59" says one word for both. */
+      assert(new Set(keys).size === keys.length, `${row.name}'s book prints a label twice: ${keys.join(', ')}`);
+    }
+
+    /* THE READER'S COLUMN. A probability distribution over the field, public
+     * by construction — `researchedProbabilities` is told no hidden field and
+     * the hidden-rotation clause above proves the board does not move. */
+    const mine = board.runners.reduce((a, r) => a + r.readP, 0);
+    const theirs = board.runners.reduce((a, r) => a + r.marketP, 0);
+    assert(Math.abs(mine - 1) < 0.02, `the reader's column sums to ${mine.toFixed(3)}`);
+    assert(Math.abs(theirs - 1) < 0.02, `the board's own column sums to ${theirs.toFixed(3)}`);
+    /* THE BOOK IS STILL A BOOK. Sum the prices' implied probabilities and it
+     * is over-round by the take — which is the thing the reader is trying to
+     * beat, so it has to still be there. */
+    const over = board.runners.reduce((a, r) => a + 1 / r.win, 0);
+    assert(over > 1.01, `the win book adds to ${over.toFixed(3)} — the house has no take on it`);
+
+    /* AND THEY DISAGREE, MEASURABLY. */
+    const gap = board.runners.reduce((a, r) => a + Math.abs(r.readP - r.marketP), 0);
+    assert(gap > 0.01,
+      `the reader and the board agree to ${(gap * 100).toFixed(2)} points over the whole field — `
+      + 'a column that never disagrees with the price beside it is a decoration');
+    const worst = board.runners.slice().sort((a, b) => (b.readP - b.marketP) - (a.readP - a.marketP))[0];
+
+    /* THE MOMENTS, and the rule about them. `momentsOf` is the story of the
+     * race and the pane prints it ONLY at `called`. */
+    const story = momentsOf(resultOf(race)).filter((e) => e.type !== 'result');
+    assert(story.length > 0, 'a whole race ran and nothing worth cutting to happened in it');
+    for (const e of story) {
+      assert(Number.isFinite(e.t) && e.t >= 0, `a moment with no gate on it: ${JSON.stringify(e)}`);
+    }
+
+    /* ── AND THE WINDOW PRINTS ALL OF IT ────────────────────────────────
+     *
+     * The pane is `main.js` and it used to enumerate the form fields one at a
+     * time, so a field added to the row alone would have been a second dead
+     * thing rather than a fix. Asserted on the source with comments stripped,
+     * the way `reachable.mjs` asserts the kiosk's own guard. */
+    const main = (await readFile(new URL('../../src/main.js', import.meta.url), 'utf8'))
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    assert(/row\.book/.test(main), 'the window no longer prints the form book off the row');
+    assert(/row\.readP/.test(main), "the window no longer prints the reader's own column");
+    assert(/momentsOf\(/.test(main), 'the window no longer prints how the race happened');
+    const at = main.indexOf('momentsOf(', main.indexOf('function showTote') > 0
+      ? main.indexOf('function showTote') : 0);
+    const guard = main.lastIndexOf("r.phase === 'called'", at);
+    assert(at > 0 && guard > 0 && at - guard < 700,
+      'the moments are printed outside the `called` branch — a feed that cuts to a moment the '
+      + 'field has not reached is a result printed early');
+
+    return `${board.runners.length} runners, each with ${board.runners[0].book.length} form rows; `
+      + `the book adds to ${over.toFixed(3)} and the reader's column to ${mine.toFixed(3)}; `
+      + `they disagree by ${(gap * 100).toFixed(1)} points over the field, most on ${worst.name} `
+      + `(${(worst.readP * 100).toFixed(1)}% against ${(worst.marketP * 100).toFixed(1)}% at ${worst.win.toFixed(2)}); `
+      + `${story.length} moments in the race, printed only at called`;
   });
 
 }

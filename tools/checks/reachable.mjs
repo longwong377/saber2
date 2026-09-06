@@ -189,6 +189,79 @@ const SEAMS = new Map(Object.entries({
    * it just booted without stepping it. Play never calls this: play steps."
    * A declared seam that was filed as residue by mistake. */
   'Station.js::finishStationBuild': 'the whole build at once, for a check that asserts on a world it has not stepped — play steps',
+
+  /* ══ AND TWELVE MORE, ON THE SAME BAR AND ONE ARGUMENT EACH ════════════
+   *
+   * The note above is the rule and it has not moved: a seam is an INSTRUMENT —
+   * the subject of an assertion, or the arithmetic a check would otherwise
+   * carry a second copy of — and anything whose stated purpose was a screen
+   * stayed in the residue however harness-only its callers are. Twelve of the
+   * thirty-seven were measurements wearing a docstring; the rest were wired or
+   * deleted.
+   */
+
+  /* THE HOUSE'S EDGE, MEASURED RATHER THAN DECLARED, and their own headers say
+   * so. `drumEdge` is what caught the Drum paying the player 63%; `drumTicketEdge`
+   * measures the WINDOW rather than the wheel, and the two were 90 points apart
+   * for the life of the panel because only one of them was ever run. A player
+   * cannot read a Monte Carlo of twelve thousand spins; the PRICE is what the
+   * room shows them and the price is already on the board. */
+  'Games.js::drumTicketEdge': 'the edge along the path the window walks, measured over 12000 tickets — games.mjs',
+  'Games.js::drumEdge': 'the edge on one kind of bet, measured rather than declared — games.mjs',
+
+  /* THE ASSERTION'S OWN SUBJECT. `priceTemper` has one property — it MUST NOT
+   * BE POSITIVE, or a temper is a free upgrade — and its note names the check
+   * that drives it over the real table rather than transcribing four numbers. */
+  'Kennel.js::priceTemper': 'what a temper is worth NET, which must never be positive — attributes.mjs drives it over the table',
+
+  /* THE TRACK, MEASURED, and the header states the rule it exists to keep:
+   * `flightops.mjs` prints the tightest clearance and the closest approach to
+   * each of the five "rather than this file declaring that the circuit is
+   * clear". A declaration is what it replaces. */
+  'Outside.js::survey': 'the sortie track measured end to end, so flightops.mjs asserts rather than this file declaring',
+
+  /* THE CLOSED FORM OF A DRIVER THAT RUNS ON THE FRAME. `Saber.stepTemper`
+   * integrates x' = (want − x)·rate every frame; this is that ODE solved for t,
+   * and a check that timed the blade by stepping it would be measuring the
+   * integrator's step size. What a player reads is the WORD, which is now on
+   * the HUD — see `Order.orderReadout` and `#hud-order`. */
+  'Order.js::temperTime': 'the temper driver solved for time — the check quotes it and Saber.js runs the integral',
+
+  /* THE FAULT LIST IS THE INVARIANT. Both headers say it outright: "exported
+   * rather than asserted here so tools/checks can state it as a check over the
+   * shipped table, and so a mod adding rows gets the same reading". A duplicate
+   * or prefixed code is silent at runtime; the sentence this returns IS the
+   * only form the defect has. */
+  'Stratagems.js::codeFaults': 'every way the code table can be silently wrong, as sentences — stratagems.mjs asserts the list is empty',
+  'Stratagems.js::phraseFaults': 'the same for the phrase table — a call that spells in five and says four',
+
+  /* THE LIVE STATE THE SIGHT MODEL READS, and the reason it must be the live
+   * one: `depthAlong` is the single answer to "what got through", and the whole
+   * argument of `setAir` is that there is exactly ONE weather number. A check
+   * holding its own copy of the cloud list, or its own idea of the air, would
+   * be asserting about a second storm. */
+  'Smoke.js::smokeClouds': 'the live cloud list the sight model reads — a copy would be a second storm',
+  'Smoke.js::airDepth': 'the one number the storm writes and depthAlong reads — weather.mjs asserts it is zero in calm air and in every mode',
+
+  /* THE PREDICATE THE PLACEMENT INVARIANTS ARE STATED IN. `Hangar.DECK_ZONES`
+   * partitions the deck and `clearOf` — its padded sibling, which the game
+   * uses — is built on the same test; `decklife.mjs` and `deckcast.mjs` assert
+   * that no guard stands in the player's path and that every pad is on the
+   * apron, in exactly these terms. `Command.paintReport`'s seam, one file over. */
+  'Hangar.js::inZone': 'is this point in the named zone — the terms decklife.mjs and deckcast.mjs state every placement rule in',
+
+  /* THE CONTROLLER'S OWN CLASSIFIER, from a world direction. `Bolts.js` keeps a
+   * SECOND copy of the rose table so it needs no dependency on the controller,
+   * and `directional.mjs` drives this against that copy down every zone's own
+   * axis — "two copies of a table is exactly how a partition silently stops
+   * partitioning". The partition is the invariant and this is one side of it. */
+  'SaberController.js::zoneOfDir': 'the controller\'s rose read from a world direction, driven against Bolts\'s copy — directional.mjs',
+
+  /* THE SEQUENCE'S OWN LENGTH. `beatSheet` is a table and this is the fold over
+   * it; `endings.mjs` times a run's ending against the flight and would
+   * otherwise carry a second copy of the beat table to do it. Nothing shows a
+   * player a number of seconds: what they see is the flight. */
+  'Extraction.js::extractionSeconds': 'the beat sheet folded to its own total, so endings.mjs need not re-fold it',
 }));
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -203,62 +276,136 @@ const SEAMS = new Map(Object.entries({
  * means taking its line out of this list — which is the only direction
  * `CENSUS` moves.
  *
- * ── ONE OF THEM WAS JUDGED AND KEPT, AND IT IS WORTH SAYING WHY ──────────
+ * ── AND THE FOUR THAT ARE LEFT, EACH WITH THE REASON IT IS STILL HERE ────
  *
- * `Spectacle.formBook` and `Spectacle.researchedProbabilities` are the entire
- * model behind the tote's measured form-reader edge — +4.11 / +8.33 / +7.15%
- * at the three windows in `_tote-edge.mjs` — and neither has a caller under
- * `src/`. The bettor those numbers describe is implemented in the harness and
- * nowhere else, which means the game's strongest claim about its own betting
- * room is true of a man who does not exist in it.
+ * `Progress.progressLines` IS THE ONLY ONE OF THE THIRTY-SEVEN THAT WAS
+ * DELIBERATELY UNWIRED, and it is why it may not simply be re-wired. It says
+ * "for the menu" and the menu DID call it: `showRecord()` wrote it under the
+ * title on every return to the front screen, and it was cut on instruction —
+ * *"under the name of the game in the main menu you have a bunch of little
+ * white text describing a bunch of bullshit like your progress … I want you to
+ * remove it completely"* (the whole argument is in `main.js` where the writer
+ * stood). Putting it back on the front screen would undo that; putting it on a
+ * second screen instead is the shape §14 forbids — the station adds no
+ * interface. The record HAS a surface the player asked for and it is a place:
+ * `#56 The Standing`, the obelisk, which reads `Progress` and cuts the rows
+ * into stone. What is owed here is either a reading on that column or the
+ * deletion of the six fields `progressLines` alone renders, and neither is a
+ * line of code — so it stays counted.
  *
- * DELETING THEM WOULD DELETE THE CLAIM, so they are not deleted. Nor are they
- * seams: a seam is an instrument, and this is a reading a player was meant to
- * be able to make. `Tote.boardFor` already publishes every INPUT the model
- * eats — `rating`, `recent`, `going`, `standing`, `read`, `beat`/`beaten` —
- * and `main.js` prints all of them, so a human at the window can do by hand
- * what `researchedProbabilities` does in a line. What is missing is the line:
- * the model's own probability beside the price, as information, never as an
- * auto-bet.
+ * `Levels.templeColonnade` IS A DECLARED ORPHAN and `roster.mjs` requires the
+ * word by name, so that the next orphan has to be declared instead of found.
+ * Its room — the Temple — was deleted in the roster cull; the 126 lines of
+ * instanced order are the only shaft/base/capital/entablature vocabulary in the
+ * tree and §4's list of permitted interiors has not shrunk. Deleting it fights
+ * a check that exists on purpose; wiring it means building a room. It is the
+ * one entry here whose debt is a ROOM and not a line.
  *
- * That is a one-field addition to `boardFor`'s row and a one-line addition to
- * the pane that renders it — and the pane is `main.js`, which enumerates the
- * form fields by name, so a field added to the row alone would be a second
- * dead thing rather than a fix. It stays counted here until both halves land
- * together, because a number nobody can see is exactly what this file counts.
+ * `DeckFlight.flightPhase` and `Duel.guardToWorld` are the two this pass could
+ * not honestly place. `flightPhase` is a getter over a private state machine —
+ * no arithmetic, so the seam bar's "a second copy of the arithmetic" does not
+ * reach it, and the only screen it could feed is the ramp, where `Hangar.js`
+ * would have to import `DeckFlight.js`, which imports `Hangar.js`.
+ * `guardToWorld` is `dir.applyQuaternion(guardQuat(yaw, spin)).normalize()` and
+ * `guardQuat` is exported beside it — a second door by the letter of the
+ * sixteen deletions — but `Duel.shape` hoists the quaternion out of a
+ * per-vertex loop, so wiring it costs a frame budget and deleting it means
+ * respelling four sites in two duel suites for one point. Written down rather
+ * than dressed up.
  */
 const RESIDUE = [
-  'Attributes.js::profileMean',
-  'Combat.js::gradeDeflection',
-  'Company.js::trooperOf', 'Company.js::bondWorth',
-  'Coop.js::apartment',
-  'DeckEdit.js::renameMan', 'DeckEdit.js::paintMan', 'DeckEdit.js::attachPart',
-  'DeckFlight.js::rampFoot', 'DeckFlight.js::flightPhase',
-  'DeckLift.js::liftPick',
+  'DeckFlight.js::flightPhase',
   'Duel.js::guardToWorld',
-  'Extraction.js::extractionSeconds',
-  'Food.js::kitchens',
-  'Games.js::drumTicketEdge', 'Games.js::drumEdge',
-  'Hangar.js::inZone',
-  'Holodeck.js::blankHold', 'Holodeck.js::heldPrograms',
-  'Home.js::homeRecord',
-  'Kennel.js::priceTemper',
   'Levels.js::templeColonnade',
-  'Medbay.js::tankLocal',
-  'Order.js::crystalAt', 'Order.js::orderReadout', 'Order.js::temperTime',
-  'Outside.js::survey',
   'Progress.js::progressLines',
-  'Quests.js::pinnedGivers',
-  'SaberController.js::zoneOfDir',
-  'Smoke.js::smokeClouds', 'Smoke.js::airDepth',
-  'Spectacle.js::researchedProbabilities', 'Spectacle.js::formBook', 'Spectacle.js::momentsOf',
-  'Stratagems.js::phraseFaults', 'Stratagems.js::codeFaults',
 ];
 
 /**
  * What the sweep read on the day this file was written. It may only fall.
  *
- * 64 → 37. Seventeen were closed on the pass that wrote this number down —
+ * 64 → 37 → 4.
+ *
+ * ── THE PASS THAT TOOK 37 TO 4 ───────────────────────────────────────────
+ *
+ * THIRTEEN WERE WIRED, and the two the previous pass named as owing a decision
+ * are both among them:
+ *
+ *   `Spectacle.formBook` +          the tote's whole measured form-reader edge
+ *   `researchedProbabilities`       — +4.11 / +8.33 / +7.15% at the three
+ *                                   windows — ran only inside `_tote-edge.mjs`,
+ *                                   so the game's strongest claim about its own
+ *                                   betting room was true of a bettor who did
+ *                                   not exist in it. `Tote.boardFor` now carries
+ *                                   `book` and `readP` on every row and the
+ *                                   window prints both: the form book's own
+ *                                   rows (record and public strength included,
+ *                                   which the hand-spelled line threw away) and
+ *                                   the reader's probability beside the house's.
+ *                                   Information, never an auto-bet.
+ *   `Medbay.tankLocal`              the ward's glass had two spellings and the
+ *                                   one that could be checked was the one
+ *                                   nothing drew. THE CHECK MOVED FIRST:
+ *                                   `medbay.mjs` used to regex `tankrow`'s loop
+ *                                   out of StationKit's source, which is what
+ *                                   made the one-line fix unparseable and got it
+ *                                   reverted once already. It now BUILDS the
+ *                                   room and reads the glass back out of the
+ *                                   kit, so the row may be spelled any way at
+ *                                   all — and `tankrow` calls `tankLocal`.
+ *   `Order.orderReadout`            "what the HUD should say about the order
+ *                                   right now", with no caller: the Grey blade
+ *                                   tempers as you swing, moves `cutPower` and
+ *                                   `returnCone` as it goes, and nothing on the
+ *                                   screen said so. `#hud-order` says it.
+ *   `Company.bondWorth`             the one page that talks about bonding could
+ *                                   not say what a bond is worth. It says it now,
+ *                                   both halves, in the army's own words.
+ *   `Holodeck.heldPrograms`         "the list the door is allowed to use" — and
+ *                                   the door was asking `rack()`, which
+ *                                   deliberately includes what you have not
+ *                                   earned.
+ *   `Holodeck.blankHold`            `main.js` was building the hold as an object
+ *                                   literal of its own.
+ *   `Spectacle.momentsOf`           the window told you who won and by how much;
+ *                                   it now tells you how, at `called` and never
+ *                                   before it.
+ *   `Food.kitchens`                 the larder said "there is a food court on
+ *                                   deck 40" — a room number typed into a screen,
+ *                                   which is the exact thing `kitchens`' own
+ *                                   note refuses.
+ *   `Quests.pinnedGivers`           nothing told the player the giver who owes
+ *                                   them money does not reroll in the morning.
+ *   `Home.homeRecord` +             `Coop.apartments` was spelling three fields
+ *   `Coop.apartment`                of `world._home` itself and `noteApartment`
+ *                                   was spelling the one-peer lookup itself.
+ *   `DeckLift.liftPick`             the words in the car's notification and the
+ *                                   words on its plate were two readings.
+ *
+ * EIGHT WERE DELETED, and every one was the shape the sixteen before them
+ * were — a SECOND DOOR onto something that already had one:
+ * `Combat.gradeDeflection` over the capture-then-grade pair `World.js` runs
+ * separately (and must, because a contact is frozen and graded frames later),
+ * `Company.trooperOf` over `roster.enlistRecord` for a caller that could not
+ * exist because it took the roster as an argument, `DeckFlight.rampFoot` over
+ * `rampSpot(world, 0)`, `DeckEdit.renameMan`/`paintMan`/`attachPart` over the
+ * one generic `applyEdit` line the deck actually spends every edit through,
+ * `Order.crystalAt` over a row every caller already holds, and
+ * `Attributes.profileMean`, whose two named consumers were a screen that orders
+ * by `fieldable` and a `bestFirst` that does not exist — and which could not be
+ * wired to the one ordering left, because deciding who deploys off a mean of
+ * eight attributes is the "rating that decides who is best" its own second
+ * sentence forbids.
+ *
+ * TWELVE MOVED TO `SEAMS`, on the bar the note over that list sets and with an
+ * argument each: the two `drum*Edge` measurements, `priceTemper`, `survey`,
+ * `temperTime`, `codeFaults`, `phraseFaults`, `smokeClouds`, `airDepth`,
+ * `inZone`, `zoneOfDir` and `extractionSeconds`. Not one of them has a screen
+ * in its docstring; every one is either an assertion's own subject or the live
+ * state a measurement reads.
+ *
+ * ── AND THE PASS BEFORE IT ───────────────────────────────────────────────
+ *
+ * Seventeen were closed on the pass that wrote 37 down —
  * sixteen deleted with the argument left standing in the file where the
  * function was, and one WIRED: `Combat.zoneTolerance` was "one function so the
  * ladder cannot drift", and `SaberController` was doing the multiplying and
@@ -293,7 +440,7 @@ const RESIDUE = [
  * in `_tote-edge.mjs`). Those are features nobody can reach, and the number
  * stays honest only while they are counted as such.
  */
-const CENSUS = 37;
+const CENSUS = 4;
 
 /** Every exported function in `src/game/*.js` that nothing under `src/` names. */
 async function uncalled() {

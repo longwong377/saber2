@@ -682,12 +682,26 @@ export function applyEdit(world, op, value, opts = {}) {
   return look;
 }
 
-/** `applyEdit`'s three verbs, named the way the brief names them. */
-export const renameMan = (world, text, opts) => applyEdit(world, 'callsign', text, opts);
-export const paintMan = (world, field, paintId, opts) =>
-  applyEdit(world, 'paint', { [field]: paintId }, opts);
-export const attachPart = (world, field, value, opts) =>
-  applyEdit(world, 'kit', { [field]: value }, opts);
+/**
+ * `renameMan`, `paintMan` and `attachPart` stood here — *"applyEdit's three
+ * verbs, named the way the brief names them"* — and all three are deleted.
+ * Each was one call to `applyEdit` with the op string filled in and, for two of
+ * them, the value wrapped in a one-key object.
+ *
+ * THE DECK DOES NOT HAVE THREE VERBS, IT HAS A LIST OF OPTIONS. Everything a
+ * player can change about a man on this deck arrives as a row out of
+ * `optionsFor` — `{ op, field, value }` — and is spent by `chooseOption` in the
+ * one line above: `applyEdit(world, o.op, o.field ? { [o.field]: o.value } : o.value)`.
+ * That line is the whole edit surface and it is generic BY DESIGN, because a
+ * fourth op is a row in `optionsFor` and nothing else. Three named aliases in
+ * front of it were doors nobody in the game opened, in a file whose one
+ * entry point takes the op as data.
+ *
+ * They were reachable only from a check, and a check calling them was driving a
+ * spelling the deck never uses instead of the one it does — the difference the
+ * `roomReady` deletion is remembered for: the copy that could be checked was
+ * not the copy that ran.
+ */
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  5. THE WASH                                                               */

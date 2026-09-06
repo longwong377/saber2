@@ -60,6 +60,8 @@ import { supportCost } from '../game/Stratagems.js';
 // at all. Audio.js owns both the table and the speaking; the wheel prints.
 import { wordsFor, canSpeakWords } from '../engine/Audio.js';
 import { openState, openMul } from '../game/Combat.js';
+/* The one line the HUD owes the order: see `#hud-order` below. */
+import { orderReadout } from '../game/Order.js';
 /**
  * ══ THE STATION'S OWN PLATE ═══════════════════════════════════════════════
  *
@@ -1329,6 +1331,7 @@ export class HUD {
       // in update() for the session-long 'LESSON' that cost.
       waveWord: root.getElementById('hud-wave-word'),
       rule: root.getElementById('hud-rule'),
+      order: root.getElementById('hud-order'),
       level: root.getElementById('hud-level'),
       diff: root.getElementById('hud-diff'),
       remaining: root.getElementById('hud-remaining'),
@@ -2817,6 +2820,33 @@ export class HUD {
         : (world.director.drafts ? 'A BOON EVERY 2ND WAVE'
           : (mode === 'waves' ? 'NO BOONS — the Holocron is your power' : ''));
       if (el.rule._last !== txt) { el.rule._last = txt; el.rule.textContent = txt; }
+    }
+    /**
+     * ── AND WHAT YOUR OWN BLADE IS DOING, WHICH NOTHING EVER SAID ────────
+     *
+     * `Order.orderReadout`'s first line is *"what the HUD should say about the
+     * order right now"*, and it had no caller anywhere under `src/`: the Grey
+     * blade's `temper` rises while you swing and falls when you stop, it moves
+     * `cutPower` and `returnCone` as it goes, and the only way to know it was
+     * happening was to read `Saber.js`.
+     *
+     * ONE ELEMENT AND ONE WORD. `temper` is null for the two orders that do not
+     * have one, so this line is empty for them and `:empty` takes it out of the
+     * layout — the same bargain `#hud-rule` above makes. The two live numbers
+     * are on the readout for a caller that wants to be specific; a HUD wants the
+     * word, and the word is the thing that changes what you should be doing.
+     *
+     * Written on change, like the rule: `textContent` every frame is a layout
+     * every frame for a string that moves three times a fight.
+     */
+    if (el.order) {
+      /* THE READOUT IS ONLY BUILT FOR A BLADE THAT HAS A TEMPER. Two of the
+       * three orders never move this line, and `orderReadout` allocates a row
+       * object; sixty of those a second for a string that is permanently empty
+       * is the shape `#hud-score` above learned not to be. */
+      const rd = player?.saber?.tempered ? orderReadout(player) : null;
+      const txt = rd?.temper ? `${rd.name.toUpperCase()} — ${rd.temper.toUpperCase()}` : '';
+      if (el.order._last !== txt) { el.order._last = txt; el.order.textContent = txt; }
     }
     /* ── the figure and the word under it ─────────────────────────────
      *

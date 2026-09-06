@@ -32,7 +32,8 @@
  */
 
 import { DECK, LIFT } from '../../src/game/Hangar.js';
-import { RIDE, STATE, DOOR, LEVEL, liftState, liftKey, atTheDoors, liftPick } from '../../src/game/DeckLift.js';
+import { RIDE, STATE, DOOR, LEVEL, liftState, liftKey, atTheDoors, liftPick, liftFloors }
+  from '../../src/game/DeckLift.js';
 
 async function deck() {
   const { bootWorld, idleInput } = await import('./_coop.mjs');
@@ -531,4 +532,76 @@ export async function run({ check, assert, THREE }) {
       return `${heads} heads, ${parts} parts, ${hues.size} plate colours, ${animated} animated kinds, ${instanced} kinds / ${draws} draws; a fan turned ${moved.toFixed(2)} while still`;
     } finally { world.unload(); }
   });
+  check('lift: the column names the floor it picked, in the words on the plate', async () => {
+    /**
+     * ══ TWO READINGS OF ONE NUMBER, ONE OF THEM IN FRONT OF THE PLAYER ═══
+     *
+     * `liftPick(world)` is the row the readout and the button column both show
+     * while a car waits — this suite already holds the CAPTION to it — and it
+     * had no caller anywhere under `src/`. `liftKey` spelled `FLOORS[st.pick]`
+     * itself to build the sentence the player is shown, so the words in the
+     * notification and the words on the plate over their head were two
+     * readings of one field, and only one of them was held to anything.
+     *
+     * DRIVEN, not asserted on the source: the player is put in the car, the
+     * interact key is pressed the way `Player._readInput` presses it, and the
+     * notification the room raised is compared against the plate the room drew.
+     */
+    const { world, idle } = await deck();
+    try {
+      const st = world._deckLift;
+      assert(st, 'no lift on the deck');
+      const said = [];
+      world.notify = (head, line) => { said.push({ head, line }); };
+      /* THE ARRIVAL IS THE MOMENT. The player boots INSIDE the car riding down
+       * (the first clause in this file is about exactly that), so the state to
+       * wait for is the one where the doors are open and he has not walked out
+       * yet — which is the state the column answers in, and the state a player
+       * is actually in when they press it. `idle` throughout: nothing walks. */
+      const open = new Set([STATE.OPENING, STATE.OUT, STATE.WAIT]);
+      for (let i = 0; i < 400 && !open.has(liftState(world)); i++) step(world, 0.05, idle);
+      assert(open.has(liftState(world)),
+        `the car never opened — it is ${liftState(world)} after twenty seconds`);
+
+      const rows = [];
+      for (let i = 0; i < 4; i++) {
+        said.length = 0;
+        assert(liftKey(world), `press ${i + 1} on the column was not taken`);
+        const f = liftPick(world);
+        assert(said.length === 1, `the column said ${said.length} things on one press`);
+        assert(said[0].head === String(f.label).toUpperCase(),
+          `the column said "${said[0].head}" and the pick is "${f.label}"`);
+        assert(said[0].line.includes(`deck ${f.n}`),
+          `the column said "${said[0].line}" for deck ${f.n}`);
+        step(world, 1 / 60, idle);
+        rows.push(`${f.label}/${f.n}`);
+      }
+      /* THE PRESSES ARE A CYCLE AND NOT A NO-OP — four presses, four rows, and
+       * at least two of them different, or the column is a decoration. */
+      assert(new Set(rows).size > 1, `four presses landed on ${rows[0]} every time`);
+
+      /**
+       * ── AND THE WORDS ARE THE PLATE'S WORDS ─────────────────────────────
+       *
+       * The clause above holds a WAITING car's CAPTION to `liftPick(world)`.
+       * This holds the SENTENCE to the same reader — which is the half that
+       * was spelled twice, and the half a player actually reads, because the
+       * plate is over their head and the notification is in front of their
+       * face. Every floor the column names is a real row of `liftFloors()`,
+       * with the deck number the plate would print for it, and the four
+       * presses walk the list rather than landing on one row four times.
+       */
+      const floors = liftFloors();
+      for (const r of rows) {
+        const [label, n] = r.split('/');
+        assert(floors.some((f) => String(f.label) === label && String(f.n) === n),
+          `the column named "${label}" on deck ${n}, which is not a floor this car has`);
+      }
+      assert(rows.length === 4 && rows[0] !== rows[1],
+        `the column said ${rows[0]} twice running — the press does not move it`);
+      return `four presses named ${rows.join(' → ')}, head and deck number both off liftPick, `
+        + `against a car with ${floors.length} floors`;
+    } finally { world.unload(); }
+  });
+
 }

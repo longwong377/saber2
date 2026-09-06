@@ -1097,8 +1097,15 @@ export function formBook(e, ground = null) {
     ['recent', e.form.recent.length ? e.form.recent.join('') : '—'],
   ];
   if (ground) {
+    /* THE PUBLIC HALF OF THE STRENGTH, term by term — what each thing the
+     * book can see is actually WORTH on tonight's ground, which is not the
+     * same reading as the raw number above it. `on this ground` and not the
+     * bare term name: the only `seen` term today is `rating`, and a window
+     * printing "rating 79 · rating +3.59" says one word for two different
+     * quantities. The suffix is on the LABEL rather than on a special case for
+     * that key, so a ground that publishes a second term reads the same way. */
     for (const p of formStrength(e, ground, { hidden: false }).parts) {
-      if (p.seen) rows.push([p.label, p.delta > 0 ? `+${p.delta}` : String(p.delta)]);
+      if (p.seen) rows.push([`${p.label} on this ground`, p.delta > 0 ? `+${p.delta}` : String(p.delta)]);
     }
     const read = readForm(e, ground);
     if (read.going) rows.push(['on this going', `${read.going > 0 ? '+' : ''}${round2(read.going)}`]);

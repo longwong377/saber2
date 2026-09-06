@@ -622,19 +622,25 @@ export function hasFlag(t, flag) {
 }
 
 /**
- * A SINGLE NUMBER FOR A MAN, for sorting a roster and for nothing else.
+ * `profileMean(t)` — the mean of a man's eight attributes — stood here and is
+ * deleted. BOTH THE CALLERS ITS OWN NOTE NAMED ARE GONE, and one of them never
+ * existed: it was *"for giving the roster screen a stable default order … and
+ * giving `bestFirst` something to break ties on"*, and there is no `bestFirst`
+ * anywhere in this tree, while the roster screen orders by
+ * `Company.fieldable` — rank, then service, then kills, on a stable sort — so
+ * the same man is already in the same place twice.
  *
- * Explicitly NOT a power rating and it must never be used as one: the whole
- * argument of this file is that a company is a set of shapes rather than a
- * ranked list, and a "rating" that decides who is best would undo it. What it
- * is for is giving the roster screen a stable default order so the same man is
- * in the same place twice, and giving `bestFirst` something to break ties on.
+ * AND IT COULD NOT HAVE BEEN WIRED WHERE IT WAS WANTED. The one ordering left
+ * that a tie-break would change is `fieldable`, which decides WHO DEPLOYS; a
+ * mean of eight attributes deciding that is precisely the *"rating that decides
+ * who is best"* the note above forbids in its own second sentence, and this
+ * file's whole argument is that a company is a set of shapes rather than a
+ * ranked list. A number that may not be used for the only thing left to use it
+ * for is not a function, it is a temptation.
+ *
+ * `standout` below is what a card prints instead, and it is the reading this
+ * file actually believes in: the two axes a man is furthest from the middle on.
  */
-export function profileMean(t) {
-  let s = 0;
-  for (const a of ATTRS) s += attrOf(t, a.id);
-  return Math.round(s / ATTRS.length);
-}
 
 /**
  * The two attributes furthest from the middle, in order — what a card prints

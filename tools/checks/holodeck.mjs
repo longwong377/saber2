@@ -643,4 +643,63 @@ export async function run({ check, assert, THREE }) {
         + `deck 48 over ${recs.length} places ${deckWorst.toFixed(3)} (${deckPair})`;
     } finally { world.dispose?.(); }
   });
+  check('holodeck: the door runs only what the hold holds, and it asks the list written for the door', async () => {
+    /**
+     * ══ TWO READINGS OF "HELD" IN ONE ROOM ═══════════════════════════════
+     *
+     * `rack()` is the list the console PRINTS and it deliberately includes what
+     * you have not earned — "a rack that hides what you have not earned tells
+     * you nothing about where you are going". `heldPrograms()` is the other
+     * one, and its whole docstring is *"only what can actually be run. This is
+     * the list the door is allowed to use."*
+     *
+     * The door was asking `rack()` and filtering it in place, so the function
+     * written for the door had no caller anywhere under `src/` — two readings
+     * of one word, one of them unused, in the one room where getting it wrong
+     * means a lesson you have not reached deploying a ground.
+     *
+     * MEASURED AND NOT FLAGGED: the two lists have to be DIFFERENT LENGTHS on
+     * a blank hold, or the refusal refuses nothing; and clearing one lesson has
+     * to move the door's list and not the console's.
+     */
+    const grounds = [{ id: 'hoth', name: 'Hoth' }];
+    const blank = H.blankHold();
+    assert(JSON.stringify(blank) === '{"cleared":[]}',
+      `a blank hold reads ${JSON.stringify(blank)} — the record's own shape has moved`);
+
+    const printed = H.rack(LESSONS, grounds, blank);
+    const runnable = H.heldPrograms(LESSONS, grounds, blank);
+    assert(printed.length > runnable.length,
+      `the console prints ${printed.length} programs and the door will run ${runnable.length} of them — `
+      + 'a door that refuses nothing is not a door');
+    for (const p of runnable) {
+      assert(printed.some((r) => r.id === p.id && r.held),
+        `${p.id} is runnable and the rack does not mark it held — the two lists disagree`);
+    }
+
+    /* ONE RUNG CLEARED MOVES THE DOOR AND NOT THE PAGE. */
+    const one = H.clearLesson(blank, LESSONS[0].id);
+    const after = H.heldPrograms(LESSONS, grounds, one);
+    assert(after.length > runnable.length,
+      `clearing ${LESSONS[0].id} opened ${after.length - runnable.length} programs`);
+    assert(H.rack(LESSONS, grounds, one).length === printed.length,
+      'clearing a lesson changed how many programs the console prints');
+
+    /* ── AND THE ROOM ASKS IT ────────────────────────────────────────────
+     *
+     * `main.js` owns the door. Asserted on the source with comments stripped,
+     * because the alternative — a rack filtered in place at the call site — is
+     * exactly what was there and is indistinguishable from this by behaviour
+     * until the two definitions of held drift.
+     */
+    const main = code(await read('main.js'));
+    const fn = main.slice(main.indexOf('function runProgram('));
+    const body = fn.slice(0, fn.indexOf('\n}') + 2);
+    assert(/heldPrograms\(/.test(body),
+      'runProgram no longer asks heldPrograms — the door is reading the console\'s list again');
+    assert(/blankHold\(/.test(main), 'main.js builds the hold from a literal of its own again');
+    return `${printed.length} printed, ${runnable.length} runnable on a blank hold, `
+      + `${after.length} after one rung; runProgram asks heldPrograms`;
+  });
+
 }

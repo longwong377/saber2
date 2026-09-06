@@ -82,7 +82,11 @@ import { Destruction, Structure, PROFILES, fractureSolid, boxPoly, clipPoly, pol
 import { Rig, humanoidSkeleton, BipedAnimator } from '../src/game/Rig.js';
 import { buildB1, buildJedi, buildTrooper, buildAcolyte, limbGeo, plateGeo } from '../src/game/Bodies.js';
 import { Actor, updateCauterisation } from '../src/game/Ragdoll.js';
-import { BladeContactSolver, gradeDeflection, resolveBladeClash, GRADE, TOUGHNESS, DIFFICULTY } from '../src/game/Combat.js';
+/* `gradeDeflection` was a one-line wrapper over these two and is deleted — see
+ * the note where it stood in Combat.js. The two calls are what `World.js` runs,
+ * a capture at the contact and a grade at the release, so a check driving them
+ * separately is driving the shipped path. */
+import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GRADE, TOUGHNESS, DIFFICULTY } from '../src/game/Combat.js';
 import { sliceGeometry, spheresForGeometry, recenterGeometry } from '../src/world/Slice.js';
 import { Saber } from '../src/game/Saber.js';
 import { SaberController } from '../src/game/SaberController.js';
@@ -1406,7 +1410,7 @@ check('deflect: a motionless blade only blocks', () => {
   sweepBlade(saber, p, Q(0, 0, 0), p, Q(0, 0, 0));
   const contact = saber.pointAt(0.6, new THREE.Vector3());
   const bolt = boltAt(contact.clone().add(V(0, 0, 3)), V(0, 0, -1));
-  const res = gradeDeflection(bolt, saber, { bladeT: 0.6, point: contact }, {
+  const res = gradeCaught(captureSnapshot(bolt, saber, { bladeT: 0.6, point: contact }), {
     aimOrigin: V(0, 1.6, 0), aimDir: V(0, 0, -1), candidates: [], flow: 0,
   });
   assert(res.grade === GRADE.BLOCK, `graded ${res.grade}, expected BLOCK`);
@@ -1420,7 +1424,7 @@ check('deflect: a driven blade mirrors the bolt about its surface', () => {
   sweepBlade(saber, a, Q(0, 0, 0), b, Q(0, 0, 0));
   const contact = saber.pointAt(0.6, new THREE.Vector3());
   const bolt = boltAt(contact.clone().add(V(0, 0, 3)), V(0, 0, -1));
-  const res = gradeDeflection(bolt, saber, { bladeT: 0.6, point: contact }, {
+  const res = gradeCaught(captureSnapshot(bolt, saber, { bladeT: 0.6, point: contact }), {
     aimOrigin: V(0, 1.6, 0), aimDir: V(0, 0, -1), candidates: [], flow: 0,
   });
   assert(res.grade >= GRADE.DEFLECT, `graded ${res.grade}, expected DEFLECT or better`);
@@ -1436,7 +1440,7 @@ check('deflect: a fast tip with an enemy under the reticle RETURNS the bolt at t
   const contact = saber.pointAt(0.8, new THREE.Vector3());
   const bolt = boltAt(contact.clone().add(V(0, 0, 3)), V(0, 0, -1));
   const enemy = { dead: false, position: V(0, 1.4, -20), aimPoint: (o) => o.set(0, 1.4, -20) };
-  const res = gradeDeflection(bolt, saber, { bladeT: 0.8, point: contact }, {
+  const res = gradeCaught(captureSnapshot(bolt, saber, { bladeT: 0.8, point: contact }), {
     aimOrigin: V(0, 1.6, 0), aimDir: V(0, 0, -1), candidates: [enemy], flow: 1, returnCone: 0.42,
   });
   assert(res.grade >= GRADE.RETURN, `graded ${res.grade} (tip speed ${res.bladeSpeed.toFixed(1)}), expected RETURN`);
@@ -1454,7 +1458,7 @@ check('deflect: no return target outside the aim cone', () => {
   const contact = saber.pointAt(0.8, new THREE.Vector3());
   const bolt = boltAt(contact.clone().add(V(0, 0, 3)), V(0, 0, -1));
   const behind = { dead: false, position: V(0, 1.4, 20), aimPoint: (o) => o.set(0, 1.4, 20) };
-  const res = gradeDeflection(bolt, saber, { bladeT: 0.8, point: contact }, {
+  const res = gradeCaught(captureSnapshot(bolt, saber, { bladeT: 0.8, point: contact }), {
     aimOrigin: V(0, 1.6, 0), aimDir: V(0, 0, -1), candidates: [behind], flow: 0,
   });
   assert(res.grade < GRADE.RETURN, `returned to an enemy behind the player (grade ${res.grade})`);

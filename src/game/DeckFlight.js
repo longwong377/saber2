@@ -351,17 +351,20 @@ function stepFlames(st, total) {
   }
 }
 
-/** The ramp's foot, in world space, on the deck behind the hull. */
-export function rampFoot(world, out = new THREE.Vector3()) {
-  const st = world?._deckFlight;
-  const B = st?.bay || { back: 3.3 };
-  const reach = st ? Math.cos(rampAngle(st)) * FLIGHT.ramp : 2.4;
-  out.set(0, -1.15, B.back + reach + 0.25);
-  if (st) st.group.localToWorld(out);
-  else out.set(DEPLOY_RAMP.x, 0, DEPLOY_RAMP.z);
-  out.y = FLIGHT.padHeight;
-  return out;
-}
+/**
+ * `rampFoot(world, out)` stood here and is deleted. It was `rampSpot(world, 0)`
+ * — the same nine lines with `back` and `side` fixed at nought, branch for
+ * branch including the no-hull fallback to `DEPLOY_RAMP` — and it had no caller
+ * anywhere under `src/`: the four places in this file that want a point behind
+ * the ramp all ask `rampSpot`, because all four want to stand somebody a metre
+ * or two clear of it.
+ *
+ * TWO SPELLINGS OF ONE FRAME IS THE THING THAT COST THIS FILE A DAY. The note
+ * over `rampSpot` records it: "behind the ramp" is +Z in the HULL's frame and
+ * the parked hull is yawed π, so adding to the WORLD z put the whole boarding
+ * file under the hull. A second function doing the same transform is a second
+ * place for that to be got wrong. `rampSpot(world, 0)` is the foot.
+ */
 
 /**
  * A SPOT ON THE APRON BEHIND THE RAMP, in world space: `back` metres further

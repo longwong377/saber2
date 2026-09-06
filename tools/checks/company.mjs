@@ -1415,4 +1415,56 @@ export async function run({ check, assert }) {
       + `${before} meshes before and after; enlisting gained x${plain.gain.maxHp.toFixed(2)} health `
       + 'either way; rank paint untouched';
   });
+  check('company: the page says what a bond is worth, in numbers and in both directions',
+    () => withCleanStore(() => {
+      /**
+       * ══ "THEY COME BACK CHANGED" WAS THE WHOLE OF THE PAYOFF ═════════════
+       *
+       * The Almost-bonded watchlist asks a player to spend two men's next
+       * deployment on the same ground, and said nothing about what that buys.
+       * `Company.bondWorth` is the figure — read straight off `Attributes.js`'s
+       * trait table so this file grows no second copy of the swing — and it had
+       * NO CALLER ANYWHERE UNDER `src/`: the one page that talks about bonding
+       * was the one page that could not say what bonding is worth.
+       *
+       * ASSERTED ON THE RENDERED PAGE AND AGAINST THE TABLE, never against
+       * typed-out text. Every row `bondWorth` returns has to be findable in the
+       * panel's own words, so a trait table that changes moves the page with it.
+       *
+       * AND BOTH DIRECTIONS. A line reading "+16 Loyalty" alone is a reward for
+       * playing a long time, which is the cross-run power `Company.js` refuses
+       * at the top of its own file — so the give AND the take are required to
+       * be on the glass, by sign.
+       */
+      const near = Math.max(1, Company.BOND_AREAS - 1);
+      const short = freshRoll(4);
+      for (const t of short.all) t.areas = near;
+      Company.keep(short.all, { army: 'republic', deployed: short.all, ground: 'geonosis' });
+
+      const rows = Company.bondWorth('flesh');
+      assert(rows.length >= 2, `bondWorth names ${rows.length} attributes — a bond with no take on it`);
+      assert(rows.some(([, v]) => v.startsWith('+')) && rows.some(([, v]) => !v.startsWith('+')),
+        `the bond's swing is one-directional: ${rows.map(([n, v]) => `${v} ${n}`).join(', ')}`);
+
+      const { doc, close } = menuOn();
+      try {
+        const panel = doc.querySelector('[data-panel="company"]');
+        assert(panel, 'the Company tab has no panel');
+        const text = panel.textContent.replace(/\s+/g, ' ');
+        assert(/Almost bonded/.test(text),
+          'four men one ground short of a bond and the page has no watchlist at all');
+        for (const [name, v] of rows) {
+          assert(text.includes(`${v} ${name}`),
+            `the page never says "${v} ${name}" — it reads: ${text.slice(text.indexOf('Almost bonded'), text.indexOf('Almost bonded') + 220)}`);
+        }
+        /* AND IT IS THE DROID'S WORDS ON A DROID ROLL. `attrName` decides and
+         * neither this file nor the page types either set. */
+        const steel = Company.bondWorth('steel');
+        assert(steel.map(([n]) => n).join() !== rows.map(([n]) => n).join(),
+          'a droid roll and a clone roll print the same attribute names');
+        return `the page prints ${rows.map(([n, v]) => `${v} ${n}`).join(', ')} under Almost bonded; `
+          + `a steel roll would read ${steel.map(([n, v]) => `${v} ${n}`).join(', ')}`;
+      } finally { close(); }
+    }));
+
 }

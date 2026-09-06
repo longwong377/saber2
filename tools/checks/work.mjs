@@ -500,4 +500,47 @@ export async function run({ check, assert, near }) {
       + `${(jobs / 14).toFixed(1)} jobs a day; ${files.size} modules in the build`;
   });
 
+  check('work: the board says how many people are staying on the station for you', async () => {
+    /**
+     * ══ THE EXEMPTION NOBODY WAS TOLD ABOUT ══════════════════════════════
+     *
+     * The clause above drives the pin itself: a giver is held on the station
+     * from taking through finishing and comes unpinned on paying, while every
+     * other resident rerolls on the station's own morning. That is the whole of
+     * *"you go back to that npc who will be there since you completed the
+     * quest"* — and until this line NOTHING TOLD THE PLAYER IT WAS TRUE.
+     * `pinnedGivers` had no caller anywhere under `src/`: the fact was
+     * implemented, checked, and invisible, so a giver still standing there two
+     * days later read as luck.
+     *
+     * The count is on the board, off the same call this suite drives, so the
+     * number a player reads and the people in the rooms are one body.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const W = await import('../../src/game/Quests.js');
+    W.clearWork();
+    assert(W.pinnedGivers().size === 0, 'a clean ledger pins somebody to the station');
+    let job = null;
+    for (let day = 0; day < 40 && !job; day++) job = W.offersAt(14, day)[0] || null;
+    assert(job && W.takeJob(job).ok, 'no job to take at #14 in forty days');
+    const n = W.pinnedGivers().size;
+    assert(n === 1, `${n} people pinned by one open job`);
+    /* AND THE ROOM HOLDS THE SAME MAN — one body under both readers, which is
+     * what makes the number on the board a description of the rooms. */
+    const room = W.pinnedAt(job.place);
+    assert(room.length >= 1, `#${job.place} holds nobody while a job from it is open`);
+
+    /* ── AND THE BOARD PRINTS IT ─────────────────────────────────────── */
+    const main = (await readFile(new URL('../../src/main.js', import.meta.url), 'utf8'))
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const at = main.indexOf('function showWork(');
+    const body = main.slice(at, main.indexOf('\n  el.innerHTML', at));
+    assert(at > 0 && /pinnedGivers\(\)/.test(body),
+      'the job board no longer says who is staying on the station for you');
+    assert(/staying on the station/.test(body),
+      'the board asks pinnedGivers and never puts the answer on the page');
+    W.clearWork();
+    return `0 pinned on a clean ledger, ${n} with one job open at #${job.place}, and the room holds `
+      + `${room.length} off the same body; the board prints the count`;
+  });
 }

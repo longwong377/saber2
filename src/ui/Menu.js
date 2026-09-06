@@ -52,7 +52,7 @@ import {
   nameSquad as companyNameSquad, squadLabel as companySquadLabel,
   SQUAD_NAME_MAX as companySquadNameMax,
   CALLSIGN_MAX as companyCallsignMax,
-  honoursOf as companyHonours, bondRows as companyBondRows,
+  honoursOf as companyHonours, bondRows as companyBondRows, bondWorth as companyBondWorth,
 } from '../game/Company.js';
 /* V16 §C1's one row about a casualty, in `Company.dossier`'s own shape — see
  * `_companyManHtml`. `Medbay.js` owns the thresholds and the tank's rate, and
@@ -7680,13 +7680,38 @@ export class Menu {
         for (const b of companyBondRows(m, c)) {
           if (b.bonded || !(b.areas > 0)) continue;
           if (m.designation >= b.with) continue;
-          watch.push({ a: companyNameOf(m), b: b.name, toGo: b.toGo });
+          watch.push({ a: companyNameOf(m), b: b.name, toGo: b.toGo, kind: kindOfArmy(c.army) });
         }
       }
     }
     watch.sort((x, y) => x.toGo - y.toGo);
+    /**
+     * ── AND WHAT "CHANGED" MEANS, IN NUMBERS ───────────────────────────
+     *
+     * "They come back changed" was the whole of what this section said about
+     * the payoff, which asks a player to spend two men's deployments on a
+     * promise with no figure attached to it. `Company.bondWorth` is that
+     * figure — the bond trait's give AND its take, read straight off
+     * `Attributes.js`'s own table in the army's own words — and it had no
+     * caller anywhere under `src/`, so the one page that talks about bonding
+     * was the one page that could not say what bonding is worth.
+     *
+     * BOTH HALVES OR NEITHER, which `bondWorth` enforces by returning them in
+     * one list: a line reading "+16 Loyalty" alone is a reward for playing a
+     * long time, and that is the cross-run power `Company.js` refuses at the
+     * top of its own file.
+     *
+     * The KIND comes off the pair's own roll, so a droid roll reads Uplink and
+     * Reset where a clone's reads Loyalty and Resolve. Where two rolls are on
+     * the page the first pair's army names it, because the watchlist is sorted
+     * by how close the pair is and the closest pair is the decision.
+     */
+    const worth = watch.length ? companyBondWorth(watch[0].kind) : [];
     const watchlist = watch.length
       ? `<h4 class="codex-head">Almost bonded</h4>
+        ${worth.length ? `<p class="hint">A bond is worth
+          ${worth.map(([n, v]) => `${escKey(v)} ${escKey(n)}`).join(', ')} — both halves,
+          and both of them go when he does.</p>` : ''}
         ${watch.slice(0, 4).map((w) => `<p class="hint">${escKey(w.a)} and ${escKey(w.b)} —
           ${w.toGo} ground${w.toGo === 1 ? '' : 's'} short. Get them out together and
           they come back changed.</p>`).join('')}`

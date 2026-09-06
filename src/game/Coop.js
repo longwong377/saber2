@@ -152,7 +152,7 @@
  * from a broken broker, and the person holding the code will simply try again.
  */
 
-import { dressHome, undressApartment, cleanHome, homeUnder, homeAddress, larder,
+import { dressHome, undressApartment, cleanHome, homeUnder, homeAddress, larder, homeRecord,
   homePetIdent, cleanPet, pieceKind, CELL, NOTCHES, MAX_PIECES } from './Home.js';
 import { PLACES } from './StationPlan.js';
 
@@ -495,7 +495,12 @@ export function noteApartment(world, from, msg) {
     st.refused++;
     return { ok: false, why: `${row.name || from} published #${rec.place}, which is not their door (#${seat})` };
   }
-  const held = st.homes.get(from);
+  /* THROUGH `apartment`, which is the one reader of "what does this machine
+   * believe about that player's home". It was `st.homes.get(from)` here — the
+   * same lookup spelled twice, and the exported one had no caller anywhere
+   * under `src/`, so the door every guest's furniture comes through was not
+   * using the function written to answer for it. */
+  const held = apartment(world, from);
   if (held && rec.seq <= held.seq) {
     st.refused++;
     return { ok: false, why: `seq ${rec.seq} is not newer than ${held.seq}` };
@@ -514,10 +519,17 @@ export function apartment(world, id) { return coopState(world).homes.get(id) || 
 export function apartments(world) {
   const st = coopState(world);
   const out = [];
-  const mine = world?._home;
-  if (mine?.mine) {
+  /* MY OWN ROW COMES OFF `Home.homeRecord`, which is the function whose whole
+   * first line is *"the home, for anything that wants to read it without
+   * dressing one"* — and which had no caller under `src/`, while this list
+   * reached into `world._home.place.id`, `.address` and `.state.pieces.length`
+   * itself. Three fields of somebody else's record, spelled here: a home that
+   * grew a fourth would have been reported by `homeRecord` and missing from
+   * every screen this list feeds, which is #38's hostel reading. */
+  const mine = homeRecord(world);
+  if (world?._home?.mine && mine) {
     out.push({ id: world.net?.peer?.id || 'local', name: world.net?.name || 'you', mine: true,
-      place: mine.place.id, address: mine.address, pieces: mine.state.pieces.length });
+      place: mine.place, address: mine.address, pieces: mine.pieces });
   }
   for (const [id, row] of st.homes) {
     out.push({ id, name: row.name, mine: false, place: row.place,

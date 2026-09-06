@@ -84,6 +84,7 @@ import { makeRng } from '../engine/MathUtil.js';
 import {
   SKINS, groundById, dressGround, makeCard, priceCard, favouriteOf,
   runSpectacle, recordResult, readForm, announce, MOMENTS,
+  formBook, researchedProbabilities,
 } from './Spectacle.js';
 
 /** A stable 32-bit hash. Same idiom `Quests.js` and `Counter.js` use. */
@@ -554,6 +555,25 @@ function topK(p, i, k) {
 export function boardFor(race) {
   if (race._board) return race._board;
   const rows = priceCard(race.card, race.ground);
+  /* ══ THE READER'S OWN COLUMN, BESIDE THE HOUSE'S ══════════════════════════
+   *
+   * `Spectacle.researchedProbabilities` is the model the tote's whole measured
+   * edge is quoted from — +4.11 / +8.33 / +7.15% at the three windows in
+   * `_tote-edge.mjs` — and until this line it had NO CALLER under `src/`, which
+   * meant the bettor those numbers describe existed in the harness and nowhere
+   * in the game. Everything it eats was already on this row (`rating`,
+   * `recent`, `going`, `standing`, `read`, `beat`/`beaten`); what was missing
+   * was the one line of arithmetic that turns them into a number, so a player
+   * could do by hand in ten minutes what the house does in a frame.
+   *
+   * IT IS TOLD NOTHING. `hidden: false` throughout and the head-to-head is the
+   * PUBLISHED count, so this column is public by construction and the check
+   * that rotates every hidden field under the board finds it unmoved.
+   *
+   * AND IT IS INFORMATION, NOT A BET. Nothing here stakes anything; `readP`
+   * against `marketP` is the reader's disagreement with the price, printed, and
+   * what a player does about it is theirs. */
+  const readP = new Map(researchedProbabilities(race.card, race.ground).map((x) => [x.id, x.p]));
   /* `priceCard` rounds `marketP` for printing, so the column no longer sums to
    * exactly one. Renormalised before anything is derived from it: a place
    * market built on a book that adds to 0.997 is 0.3% long on every row, and
@@ -585,6 +605,15 @@ export function boardFor(race) {
     const row = {
       id: r.id, name: e.name, kind: e.kind, rating: e.form.rating,
       recent: e.form.recent.slice(), marketP: Math.round(p[i] * 1000) / 1000,
+      /* WHAT A FORM READER MAKES IT, against what the board charges for it.
+       * See the note over `researchedProbabilities` above. */
+      readP: Math.round((readP.get(r.id) ?? 0) * 1000) / 1000,
+      /* THE FORM BOOK'S OWN ROWS, as `Spectacle.formBook` prints them —
+       * label/value pairs a pane can put on the glass without knowing what a
+       * form line is, which is the same bargain the price is on this row for.
+       * The pane no longer spells the fields out one at a time, so a column
+       * the book grows is a column the window shows. */
+      book: formBook(e, race.ground),
       starts: e.form.starts, wins: e.form.wins,
       /* What the reading room could recover about tonight's going, and how
        * many starts it had to read to say it. */

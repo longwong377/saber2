@@ -497,12 +497,12 @@ export async function run({ check, assert, THREE }) {
         standBefore(world, row, 2.2, THREE, idle);
         Edit.focusKey(world);
 
-        Edit.renameMan(world, 'Ladder');
+        Edit.applyEdit(world, 'callsign', 'Ladder');
         Edit.applyEdit(world, 'mark', 'blood');
         Edit.applyEdit(world, 'band', 'sky');
-        Edit.paintMan(world, 'color', 'jungle');
+        Edit.applyEdit(world, 'paint', { color: 'jungle' });
         const kit = Edit.optionsFor(row).find((o) => o.op === 'kit' && o.value);
-        Edit.attachPart(world, kit.field, kit.value);
+        Edit.applyEdit(world, 'kit', { [kit.field]: kit.value });
 
         /* READ BACK THROUGH THE STORE'S OWN DOOR, not off the object the deck
          * is holding: `Company.load` re-parses what was written, which is the
@@ -573,10 +573,10 @@ export async function run({ check, assert, THREE }) {
 
         const seen = {};
         const count = (k, fn) => { heard.length = 0; fn(); seen[k] = heard.length; };
-        count('name', () => Edit.renameMan(world, 'Ladder'));
-        count('paint', () => Edit.paintMan(world, 'color', 'blood'));
+        count('name', () => Edit.applyEdit(world, 'callsign', 'Ladder'));
+        count('paint', () => Edit.applyEdit(world, 'paint', { color: 'blood' }));
         const kit = Edit.optionsFor(row).find((o) => o.op === 'kit' && o.value);
-        count('attach', () => Edit.attachPart(world, kit.field, kit.value));
+        count('attach', () => Edit.applyEdit(world, 'kit', { [kit.field]: kit.value }));
         /* The attach cue is the LANDING and not the keypress — see the drop
          * check — so it is counted after the part has fallen. */
         const at = heard.length;
@@ -586,7 +586,7 @@ export async function run({ check, assert, THREE }) {
         const off = Edit.optionsFor(row).find((o) => o.op === 'kit' && o.field === kit.field
           && (o.value === null || o.value === false));
         heard.length = 0;
-        Edit.attachPart(world, off.field, off.value);
+        Edit.applyEdit(world, 'kit', { [off.field]: off.value });
         drive(world, 1.2, idle);
         seen.detach = heard.length;
 

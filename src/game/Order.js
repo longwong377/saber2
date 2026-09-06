@@ -321,8 +321,9 @@ export function getOrder(id) {
  * `index` is the SABER_COLORS index and is the value that must end up in
  * `settings.colorIndex` — Menu._swatchRow writes the POSITION in the array it
  * was handed, which is not the same number for a filtered rack, so the caller
- * has to map through `.index` (or use crystalAt below). With no order the whole
- * rack comes back, positions and indices equal, and nothing changes.
+ * has to map through `.index` — which `Menu._buildSaber` does on the row it is
+ * drawing. With no order the whole rack comes back, positions and indices
+ * equal, and nothing changes.
  */
 export function crystalPalette(orderId) {
   const o = getOrder(orderId);
@@ -330,11 +331,25 @@ export function crystalPalette(orderId) {
   return idx.map((i) => ({ ...SABER_COLORS[i], index: i }));
 }
 
-/** The SABER_COLORS index for the nth swatch of an order's rack. */
-export function crystalAt(orderId, slot) {
-  const p = crystalPalette(orderId);
-  return (p[slot] || p[0]).index;
-}
+/**
+ * `crystalAt(orderId, slot)` stood here — *"the SABER_COLORS index for the nth
+ * swatch of an order's rack"* — and is deleted. It was
+ * `crystalPalette(orderId)[slot].index` with a fallback to slot 0.
+ *
+ * IT WAS WRITTEN AGAINST A TRAP THE MENU DOES NOT WALK INTO. The trap is real
+ * and worth keeping written down: an order's rack is FILTERED, so a swatch's
+ * POSITION in the row is not its `SABER_COLORS` index, and a panel that wrote
+ * the position into `settings.colorIndex` would hand the world a different
+ * crystal from the one under the player's finger. `Menu._buildSaber` does not
+ * do that — it iterates `crystalPalette(order)` and writes `c.index` off the
+ * row it is drawing, with a comment on the line saying why — so nothing in the
+ * tree has ever held a bare slot number to convert.
+ *
+ * A second door for a caller that does not exist, onto a row every caller
+ * already has. What guards the trap is `order.mjs`'s assertion that every row
+ * of every rack carries the index its own name belongs to, which is the fact
+ * `Menu.js` relies on and is asserted whether or not this function exists.
+ */
 
 /**
  * Move a saved crystal into an order's rack.

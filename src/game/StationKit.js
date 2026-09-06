@@ -70,6 +70,9 @@ const DRUM_SEGMENTS = GAMES_DRUM.SEGMENTS.length;
  */
 import { venueAtPlace, watch as toteWatch, resultOf } from './Tote.js';
 import { screenOf, SCREEN_ROWS, SCREEN_COLS } from './Spectacle.js';
+/* #44's row of tanks, from the file that decides who stands in them — see
+ * `tankrow`. The count and the geometry travel together. */
+import { TANKS, tankLocal } from './Medbay.js';
 
 const TAU = Math.PI * 2;
 
@@ -2282,8 +2285,15 @@ export const SHAPES = {
     floor(kit, M, w, d, 0, M.dark);
     walls(kit, M, w, d, h, { doorW: 2.6 });
     ceiling(kit, M, w, d, h, { ribs: 4, strips: false });
-    for (let i = 0; i < 5; i++) {
-      tank(kit, M, 0.85, h - 1.0, -w / 2 + (w / 5) * (i + 0.5), d / 2 - 1.6);
+    /* ONE SPELLING OF THE ROW. `Medbay.tankLocal` used to MIRROR this loop —
+     * its own note said so and called the mirror the thing that was wrong with
+     * it — and the glass was built off the copy nothing could check while the
+     * copy a check could drive was the one nothing drew. There is one now, and
+     * `TANKS` is the count the ward admits by, so a sixth tank cannot appear in
+     * the room without a sixth man being admitted to it. */
+    for (let i = 0; i < TANKS; i++) {
+      const [x, , z] = tankLocal(i, w, d);
+      tank(kit, M, 0.85, h - 1.0, x, z);
     }
     /* The plant behind them: pipes running the length at the soffit. */
     for (const dz of [-0.5, 0, 0.5]) kit.post(M.wing, 0.16, 0.16, w - 1, 0, h - 0.5, d / 2 - 0.6 + dz, { rx: 0, rz: Math.PI / 2, radial: 6 });

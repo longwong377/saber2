@@ -63,7 +63,11 @@ import { servedHere } from './game/StationLife.js';
 import { wardRows, wakePlan, arrivalNotice, checkIn, discharge, tanksFree, wounded, TANKS, soonestOut,
   awayFor } from './game/Medbay.js';
 import { watch as toteWatch, raceById as toteRace, boardFor as toteBoard, ticketsDue,
-  venueAtPlace, MAX_STAKE } from './game/Tote.js';
+  venueAtPlace, MAX_STAKE, resultOf as toteResult } from './game/Tote.js';
+/* THE RACE YOU JUST WATCHED, AS THE MOMENTS IT WAS MADE OF — see the window
+ * pane below. `Spectacle.MOMENTS` is the list a screen would cut to and this
+ * is the reader over one finished result. */
+import { momentsOf } from './game/Spectacle.js';
 /* V16 Lane C2 — the liberty board at #29 and the four rooms it sends men to. */
 import {
   BARS, barById, barPlaces, berths, leaveRows, grantLeave, recallLeave,
@@ -83,8 +87,9 @@ import {
  * `Games.js` where it can be swept and measured. See `drumTicket`'s note: this
  * panel used to build the ticket by hand and destroyed the bet doing it. */
 import { drumTicket, drumDue, drumStop, drumClockOf, SABACC, sabaccPot } from './game/Games.js';
-import { takeJob, openJobs, dropJob, settleRun } from './game/Quests.js';
-import { programById, programSettings, rack, rackLines, Cycle } from './game/Holodeck.js';
+import { takeJob, openJobs, dropJob, settleRun, pinnedGivers } from './game/Quests.js';
+import { programById, programSettings, rack, rackLines, heldPrograms, blankHold, Cycle }
+  from './game/Holodeck.js';
 import { LESSONS } from './game/Dojo.js';
 import { stakeAtTote, payAtTote, tickStationClock, stakeAtDrum, payAtDrum, payForJob,
   orderJump, keeperOf } from './game/Station.js';
@@ -3359,6 +3364,25 @@ function showWork(board) {
   const el = paneRoot('work');
   let html = `<div class="pane"><h2>${esc(board.name)}</h2>`;
   html += `<p class="sub">${purse()} credits · carrying ${openJobs().length} of 3</p>`;
+  /**
+   * ── AND WHO IS STILL ON THE STATION BECAUSE OF YOU ────────────────────
+   *
+   * `Quests.pinnedGivers` is *"the whole station's answer"* to which residents
+   * do not reroll in the morning — the people who owe you money and the people
+   * waiting on a job you took — and it had no caller under `src/`. Its
+   * per-room twin `pinnedAt` is what the census asks when it draws one slot;
+   * nothing anywhere told the PLAYER that the exemption exists, so a job taken
+   * on Tuesday and a giver still standing there on Thursday looked like luck.
+   *
+   * One line, counted off the same body both readers share, so the number here
+   * and the people in the rooms can never disagree.
+   */
+  const pinned = pinnedGivers().size;
+  if (pinned) {
+    html += `<p class="sub">${pinned} ${pinned === 1 ? 'person is' : 'people are'} `
+      + 'staying on the station for you — they do not change with the day while '
+      + 'a job is open or a payment is owed.</p>';
+  }
   if (work?.said) html += `<p class="sub">${esc(work.said)}</p>`;
   /**
    * WHAT YOU ARE CARRYING, AND THE ONE CONTROL THAT PUTS IT DOWN.
@@ -3720,25 +3744,50 @@ function showTote(venueId, { keep = false } = {}) {
     html += '<div class="rows">' + (board?.runners || []).map((row) => {
       const held = toteHeld.filter((t) => t.race === shown?.id && t.on === row.id);
       const lead = onLive && r.standings?.[0]?.id === row.id;
-      const form = [`rating ${row.rating}`];
-      form.push(row.recent?.length ? `form ${row.recent.join('-')}` : 'unraced');
-      /* THE TWO READINGS, AND THE BIG ONE IS THE SECOND. `on the book` is how
-       * this one has been finishing against what its rating claims, which is
-       * the column the board prices least of and the one that pays; `this
-       * going` is the going split beside it. Both are printed only where the
-       * book had enough starts to say anything — a reading off two runs is a
-       * rumour and `readForm` shrinks it to nothing anyway, so printing it
-       * would be printing a zero with a decoration on it. */
-      if (row.read >= 4 && Math.abs(row.standing) >= 0.02) {
-        form.push(`on the book ${row.standing > 0 ? '+' : ''}${row.standing.toFixed(2)} (${row.read} read)`);
-      }
-      if (row.read >= 4 && Math.abs(row.going) >= 0.02) {
-        form.push(`this going ${row.going > 0 ? '+' : ''}${row.going.toFixed(2)}`);
-      }
+      /* ── THE FORM BOOK'S OWN ROWS, AND NOT A SECOND SPELLING OF THEM ────
+       *
+       * This was eight lines naming `rating`, `recent`, `standing` and `going`
+       * one at a time, which meant `Spectacle.formBook` — the function whose
+       * whole job is "the rows a form book prints" — had no caller anywhere in
+       * `src/`, and the two lists had already drifted: the book prints the
+       * RECORD and the public strength breakdown and this window threw both
+       * away. `Tote.boardFor` now carries the book on the row and this prints
+       * what is in it, so a column the book grows is a column the window
+       * shows.
+       *
+       * THE ONE JUDGEMENT KEPT FROM THE OLD SPELLING is the gate on the two
+       * recovered readings: they are printed only where the book had enough
+       * starts to say anything, because a reading off two runs is a rumour and
+       * `readForm` shrinks it to nothing anyway, so printing it would be
+       * printing a zero with a decoration on it. */
+      const readable = row.read >= 4;
+      const form = (row.book || []).filter(([k]) => readable || !k.startsWith('on '))
+        .map(([k, v]) => `${k} ${v}`);
+      if (!row.recent?.length) form.push('unraced');
       if (row.beat || row.beaten) form.push(`met them ${row.beat}–${row.beaten}`);
+      /* ── AND WHAT A FORM READER MAKES OF ALL THAT, BESIDE THE PRICE ─────
+       *
+       * `row.readP` is `Spectacle.researchedProbabilities` — the model this
+       * game's strongest claim about its own betting room is measured from
+       * (+4.11 / +8.33 / +7.15% at the three windows) and which, until it was
+       * put on the board row, ran only inside `_tote-edge.mjs`. So the edge was
+       * true of a bettor who did not exist in the game.
+       *
+       * Printed as a PERCENTAGE beside the house's own, because the two
+       * disagreeing is the whole information: the house's book is over-round
+       * by its take, so a runner the reader makes shorter than the market is
+       * where the take is being given back. It stakes nothing and recommends
+       * nothing — a player who wants the bet still has to press the button. */
+      /* A DECIMAL UNDER TEN PER CENT, because whole percents round a 300-1
+       * outsider and a 60-1 outsider to the same "0%" and the disagreement
+       * between the two columns is the entire point of printing them. */
+      const pc = (v) => (v * 100 < 10 ? (v * 100).toFixed(1) : String(Math.round(v * 100)));
+      const mine = pc(row.readP ?? 0);
+      const theirs = pc(row.marketP ?? 0);
       return `<div class="row"><b>${esc(row.name)}${lead && r.phase !== 'parading' ? ' ◂' : ''}</b>`
         + `<span>${Number(row.win).toFixed(2)}`
         + (row.place ? ` · pl ${Number(row.place).toFixed(2)}` : '')
+        + ` · board ${theirs}% · form ${mine}%`
         + (held.length ? ` · ${held.reduce((a, t) => a + t.stake, 0)} on` : '')
         + '</span>'
         + (open ? `<button class="buy" data-on="${esc(row.id)}" data-kind="win">back</button>` : '')
@@ -3779,6 +3828,30 @@ function showTote(venueId, { keep = false } = {}) {
     if (onLive && r.phase === 'called' && r.winner) {
       const w = (board?.runners || []).find((x) => x.id === r.winner);
       html += `<p class="sub">${esc(w?.name || r.winner)} by ${Number(r.margin).toFixed(2)}.</p>`;
+      /**
+       * ── AND HOW IT HAPPENED, WHICH THE WINDOW NEVER SAID ────────────────
+       *
+       * `Spectacle.momentsOf` is *"every moment a screen would be worth cutting
+       * to, in order"* — the lead changes, the overtakes, the wall, the
+       * mechanical, the retirement — and it had no caller under `src/`: the
+       * window told you who won and by how much, and a race a player had money
+       * on was otherwise a number appearing on a board.
+       *
+       * ONLY AT `called`, WHICH IS THE ONE RULE THIS ROOM HAS. `standingsAt`
+       * carries its own note about it and `screenOf` gates its result line the
+       * same way: a feed that prints a moment the field has not reached yet is
+       * a result printed early. `called` means the race is over and the tickets
+       * are settled, so the whole stream is fair.
+       *
+       * `result` itself is dropped, because the line above already is it.
+       */
+      const story = momentsOf(toteResult(shown)).filter((e) => e.type !== 'result');
+      if (story.length) {
+        const nameOf = (id) => (board?.runners || []).find((x) => x.id === id)?.name || id;
+        html += '<div class="rows">' + story.slice(-6).map((e) =>
+          `<div class="row"><b>gate ${e.t}</b><span>${esc(e.type)}`
+          + (e.who ? ` — ${esc(nameOf(e.who))}` : '') + '</span></div>').join('') + '</div>';
+      }
     }
   }
   /**
@@ -4526,7 +4599,20 @@ function showLarder() {
   if (!seen.ok) {
     html += `<p class="sub">${esc(seen.whose)}'s larder — their cupboard, not yours.</p>`;
   } else if (!rows.length) {
-    html += '<p class="sub">Empty. There is a food court on deck 40.</p>';
+    /* ── WHERE TO GO, DERIVED, NOT "THERE IS A FOOD COURT ON DECK 40" ────
+     *
+     * That sentence was a room number typed into a screen, which is the exact
+     * thing `Food.kitchens`' own note refuses: *"that list would be wrong the
+     * first time somebody puts a soup on the quartermaster's shelf, and
+     * nothing would say so."* `kitchens()` derives it — a counter is a kitchen
+     * if it has anything edible on its table — and it had no caller under
+     * `src/`, so the one screen that tells a hungry player where to go was the
+     * one screen not asking. */
+    const ks = Food.kitchens();
+    html += `<p class="sub">Empty. ${ks.length
+      ? `${ks.map((k) => esc(k.name)).join(', ')} ${ks.length === 1 ? 'has' : 'have'} `
+        + `something to eat — ${ks.map((k) => `#${k.place}`).join(', ')}.`
+      : 'Nothing on the station is selling food today.'}</p>`;
   } else {
     html += '<div class="rows">' + rows.map((r) => {
       const d = Food.dishById(r.id);
@@ -4635,7 +4721,21 @@ screens.card('larder', () => closePane('larder'));
  */
 let holoCycle = null;
 
-function holoHold() { return { cleared: lessonsCleared() }; }
+/**
+ * THE HOLD, AND ITS SHAPE IS NOT SPELLED HERE.
+ *
+ * This was `{ cleared: lessonsCleared() }` — an object literal in this file
+ * standing in for a record `Holodeck.js` owns, which is why `blankHold()` had
+ * no caller anywhere under `src/`: the one function whose whole job is to say
+ * what a hold IS was never asked. A second field on the hold would have been
+ * added in `Holodeck.js`, defaulted in `blankHold`, read by `isHeld` — and
+ * silently missing from every hold this room actually builds.
+ *
+ * So the blank comes from the file that owns it and only the one durable fact
+ * is filled in. `Progress.lessonsCleared` is still where the list lives; see
+ * the note under `runProgram`.
+ */
+function holoHold() { return { ...blankHold(), cleared: lessonsCleared() }; }
 
 /**
  * ══ THE GROUNDS THE ROOM CAN BUILD ════════════════════════════════════════
@@ -4835,7 +4935,15 @@ function showHolodeck() {
 function runProgram(id) {
   const grounds = holoGrounds();
   const p = programById(LESSONS, grounds, id);
-  if (!p || !rack(LESSONS, grounds, holoHold()).some((r) => r.id === id && r.held)) return;
+  /* ── THE DOOR ASKS THE LIST THE DOOR IS ALLOWED TO USE ────────────────
+   *
+   * `Holodeck.heldPrograms` is documented as exactly that — *"only what can
+   * actually be run. This is the list the door is allowed to use."* — and it
+   * had no caller: this refusal was spelled out of `rack()`, which is the
+   * list that deliberately includes what you have NOT earned so the console
+   * can print the whole syllabus. Two readings of "held" in one room, one of
+   * them written for the door and never asked at it. */
+  if (!p || !heldPrograms(LESSONS, grounds, holoHold()).some((r) => r.id === id)) return;
   Object.assign(settings, programSettings(p, settings));
   holoCycle = new Cycle(p, settings, {
     say: (line) => world?.notify?.('THE REPEATING ROOM', line),

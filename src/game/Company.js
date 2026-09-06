@@ -917,20 +917,22 @@ function bodyHurt(t) {
 }
 
 /**
- * …AND BACK. A stored man → a live `Trooper` on a roll, through the roster's
- * own door.
- *
- * `CommandRoster.enlistRecord` is where the field copy lives and its note says
- * why: `Trooper` has getters every screen reads, the constructor is in
- * Command.js, and Command.js may not import this file back. So there is one
- * copy of that mapping and this is a name for it — a caller who has a roster
+ * `trooperOf(m, army, roster)` stood here and is deleted. Its own note gave the
+ * argument against it before anything else did: *"a caller who has a roster
  * should say `roster.enlistRecord(m)` outright; this exists for the ones that
- * only have a company.
+ * only have a company."*
+ *
+ * THERE ARE NO CALLERS THAT ONLY HAVE A COMPANY. It took a roster as its third
+ * argument and could not work without one, so every possible caller already had
+ * the door — and in the whole tree there was not one, in `src/` or out of it,
+ * that reached this instead of the roster's. What it added over
+ * `roster.enlistRecord(m)` was `army: m.army ?? army?.id ?? army`, which is a
+ * default a caller holding both a man and an army can write, and a THIRD
+ * spelling of "which roll is this" beside the two the record already carries.
+ *
+ * `CommandRoster.enlistRecord` is still the one copy of the stored-man → live-
+ * `Trooper` mapping and still says so where it stands.
  */
-export function trooperOf(m, army, roster) {
-  if (!m || !roster?.enlistRecord) return null;
-  return roster.enlistRecord({ ...m, army: m.army ?? army?.id ?? army });
-}
 
 /* ── what a run does to a company ────────────────────────────────────── */
 

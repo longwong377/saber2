@@ -964,15 +964,23 @@ export function captureSnapshot(bolt, saber, hit) {
 }
 
 /**
- * @param bolt      the incoming bolt
- * @param saber     the blade it met
- * @param hit       { bladeT, point } from intersectBladeSweep
- * @param ctx       { aimOrigin, aimDir, candidates, flow, difficulty, skillBias }
- * @returns { grade, dir, damageMul, target }
+ * `gradeDeflection(bolt, saber, hit, ctx)` stood here and was deleted. It was
+ * `gradeCaught(captureSnapshot(bolt, saber, hit), ctx)` and nothing else — a
+ * SECOND DOOR onto a pair the game already opens separately, which is the one
+ * shape `tools/checks/reachable.mjs` has removed sixteen of.
+ *
+ * The reason the two steps are two steps is the whole subject of
+ * `captureSnapshot`'s note above: a contact is FROZEN at the moment the blade
+ * met the bolt and graded later, possibly several frames later, with the aim
+ * the player has THEN. `World.js` — the only thing in the game that grades a
+ * deflection — captures at the contact and grades at the release, and cannot
+ * use a function that does both in one call. So the composed form was reachable
+ * only from a check, and a check driving it was driving a path the game does
+ * not run.
+ *
+ * A caller that genuinely wants both in one breath writes the two calls; they
+ * are three lines apart and both exported.
  */
-export function gradeDeflection(bolt, saber, hit, ctx) {
-  return gradeCaught(captureSnapshot(bolt, saber, hit), ctx);
-}
 
 /**
  * Turn a frozen contact into an outgoing bolt, using the aim you have NOW.

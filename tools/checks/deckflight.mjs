@@ -19,7 +19,9 @@
  */
 
 import { DECK, DEPLOY_RAMP, MARCH_SPEED } from '../../src/game/Hangar.js';
-import { FLIGHT, PHASE, flightPhase, rampFoot, rampSpot, inBay } from '../../src/game/DeckFlight.js';
+/* `rampFoot` was `rampSpot(world, 0)` and is deleted — see the note where it
+ * stood. The foot is that call. */
+import { FLIGHT, PHASE, flightPhase, rampSpot, inBay } from '../../src/game/DeckFlight.js';
 
 async function deck(run = {}) {
   const { bootWorld, idleInput } = await import('./_coop.mjs');
@@ -55,7 +57,7 @@ export async function run({ check, assert, THREE }) {
       assert(st.open > 0.99, 'the parked hull has its ramp up');
       assert(st.solids.length >= 5, `${st.solids.length} colliders on a parked hull — the player walks through it`);
       /* The ramp's foot is on the pad, walkable: within a step of the pad's top. */
-      const foot = rampFoot(world);
+      const foot = rampSpot(world, 0);
       assert(Math.abs(foot.y - FLIGHT.padHeight) < 0.01, `the ramp's foot is at y=${foot.y.toFixed(2)}`);
       assert(FLIGHT.padHeight <= 0.45, `the pad is ${FLIGHT.padHeight} m proud — over the 0.45 m step`);
       /* THE HULL IS THE ARMY'S: a Republic deck stands a Republic hull. */
@@ -154,7 +156,7 @@ export async function run({ check, assert, THREE }) {
       assert(d < 0.6, `the hull landed ${d.toFixed(1)} m off its pad`);
       assert(Math.abs(st.group.rotation.y - DEPLOY_RAMP.yaw) < 0.02, 'the hull did not park nose-out');
       assert(!p.riding, 'the ramp is down and the player is still seated');
-      const foot = rampFoot(world);
+      const foot = rampSpot(world, 0);
       assert(Math.hypot(p.position.x - foot.x, p.position.z - foot.z) < 3, 'the player was not put off at the ramp');
       /* On the apron, not under the hull: further from the hull's centre than the foot is. */
       const hull = st.group.position;

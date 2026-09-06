@@ -33,7 +33,7 @@
 
 import * as THREE from 'three';
 import { Saber, SABER_COLORS, HILT_STYLES, BLADE_TUNING, TEMPER } from '../../src/game/Saber.js';
-import { ORDERS, ORDER_IDS, getOrder, applyOrder, crystalPalette, crystalAt,
+import { ORDERS, ORDER_IDS, getOrder, applyOrder, crystalPalette,
   crystalForOrder, hiltsForOrder, orderReadout, temperTime } from '../../src/game/Order.js';
 import { ROBE_COLORS } from '../../src/game/Bodies.js';
 import { BOONS } from '../../src/game/Waves.js';
@@ -937,14 +937,17 @@ export async function run({ check, assert, near }) {
     /* The UI is another lane's, so what this lane owes it is a shape that cannot
      * silently mislead. The trap that matters: Menu._swatchRow writes the
      * POSITION in the array it was handed into the setting, and for a filtered
-     * rack the position is not the SABER_COLORS index. crystalAt is the mapping,
-     * and it exists so nobody has to notice. */
+     * rack the position is not the SABER_COLORS index. What keeps the menu out
+     * of it is that every ROW carries its own index and `_buildSaber` writes
+     * `c.index` off the row it is drawing — so this asserts the rows, which is
+     * the fact the panel actually leans on. (`crystalAt`, a second door onto
+     * `crystalPalette(id)[slot].index` for a caller holding a bare slot number,
+     * stood here and is deleted; nothing ever held one.) */
     for (const id of [null, ...ORDER_IDS]) {
       const pal = crystalPalette(id);
       assert(pal.length, `${id} has an empty rack`);
       pal.forEach((c, slot) => {
         assert(SABER_COLORS[c.index].name === c.name, `${id} slot ${slot} carries the wrong index`);
-        assert(crystalAt(id, slot) === c.index, `${id} slot ${slot}: crystalAt disagrees with the palette`);
       });
       const hs = hiltsForOrder(id);
       assert(hs.length >= 3, `${id} offers only ${hs.length} hilts`);
@@ -970,4 +973,58 @@ export async function run({ check, assert, near }) {
     return `racks ${ORDER_IDS.map((i) => `${i} ${crystalPalette(i).length}`).join('/')}; `
       + `green → ${SABER_COLORS[moved].name} and purple → ${SABER_COLORS[near2].name} on the Sith rack`;
   });
+  check('order: the HUD says which order you are and what the blade is doing', async () => {
+    /**
+     * ══ THE ONE LIVE NUMBER NOTHING EVER SHOWED ══════════════════════════
+     *
+     * `orderReadout`'s first line is *"what the HUD should say about the order
+     * right now"* and it had no caller anywhere under `src/`. The Grey blade's
+     * `temper` rises while you swing and falls when you stop; it moves
+     * `cutPower` and `returnCone` as it goes; and the only way to know any of
+     * that was happening was to read `Saber.js`.
+     *
+     * DRIVEN OVER THE REAL RANGE, not asserted at one point: the word has to
+     * CHANGE across the temper, or a line that never moves is a label. And it
+     * has to be EMPTY for the two orders with no temper, because the alternative
+     * — a HUD line that says something about every order — is a row of dead
+     * pixels on two thirds of the game.
+     */
+    const words = new Set();
+    const seen = [];
+    for (let t = 0; t <= 1.0001; t += 0.05) {
+      const rd = orderReadout({ order: 'grey', saber: { tempered: true, temper: t }, boonMods: {} });
+      assert(rd, `the Grey has no readout at temper ${t.toFixed(2)}`);
+      assert(rd.temper, `the Grey's readout says nothing at temper ${t.toFixed(2)}`);
+      if (!words.has(rd.temper)) seen.push(`${rd.temper}@${t.toFixed(2)}`);
+      words.add(rd.temper);
+      assert(Math.abs(rd.t - t) < 1e-9, `the readout carries t=${rd.t} for a temper of ${t}`);
+    }
+    assert(words.size >= 3,
+      `the temper says "${[...words].join('/')}" over its whole range — a line that does not move`);
+
+    /* THE ORDERS WITH NO TEMPER SAY NOTHING. */
+    for (const id of ORDER_IDS) {
+      const o = getOrder(id);
+      if (o.temperLabels) continue;
+      const rd = orderReadout({ order: id, saber: { tempered: false }, boonMods: {} });
+      assert(rd && rd.temper === null,
+        `${id} has no temper and its readout says "${rd?.temper}"`);
+    }
+    /* AND THE TWO LIVE NUMBERS ARE THE PLAYER'S OWN, not a second opinion. */
+    const rd = orderReadout({ order: 'grey', saber: { tempered: true, temper: 0.8 },
+      boonMods: { cutPower: 1.37, returnCone: 0.44 } });
+    assert(rd.cutPower === 1.37 && rd.returnCone === 0.44,
+      'the readout invents its own numbers instead of reading the player\'s');
+
+    /* ── AND THE HUD WRITES IT WHERE A PLAYER CAN SEE IT ───────────────── */
+    const hud = (await readFile(src('ui/HUD.js'), 'utf8'))
+      .replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    assert(/orderReadout\(/.test(hud), 'the HUD no longer asks what the order is doing');
+    assert(/getElementById\('hud-order'\)/.test(hud), 'the HUD has no element to write it into');
+    const page = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
+    assert(/id="hud-order"/.test(page), '#hud-order is not on the page the game ships');
+    return `the Grey reads ${seen.join(' → ')} across the temper; `
+      + `${ORDER_IDS.filter((id) => !getOrder(id).temperLabels).length} orders say nothing and take no room`;
+  });
+
 }

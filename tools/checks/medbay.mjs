@@ -124,7 +124,7 @@ async function station(deck = 48) {
   return { world, idle: idleInput() };
 }
 
-export async function run({ check, assert, near }) {
+export async function run({ check, assert, near, THREE }) {
   check = await clocked(check);
 
   /* ════════════════════════════════════════════════════════════════════════ */
@@ -436,9 +436,9 @@ export async function run({ check, assert, near }) {
      * builds them; this file may not and does not touch either. What is
      * measured is that the ids it names are the rooms it thinks they are, that
      * they are ON the deck the station boots, and that `Medbay.tankLocal`
-     * lands on the same five points `tankrow`'s own loop does — because a
-     * renderer standing a body behind the glass asks this file where the glass
-     * is, and a copy of a formula that has drifted puts a man in a wall.
+     * lands on the same five points the glass `tankrow` STANDS does — because
+     * a renderer standing a body behind the glass asks this file where the
+     * glass is, and a formula that has drifted puts a man in a wall.
      */
     const { PLACES } = await import('../../src/game/StationPlan.js');
     const by = new Map(PLACES.map((p) => [p.id, p]));
@@ -449,26 +449,57 @@ export async function run({ check, assert, near }) {
     assert(triage.deck === 48 && ward.deck === 48 && morgue.deck === 48,
       `the three rooms are on decks ${triage.deck}/${ward.deck}/${morgue.deck}`);
 
-    /* `tankrow`'s own loop, read out of the kit's source so the comparison is
-     * against what SHIPS rather than against a second copy of it here. */
-    const kit = await readFile(new URL('../../src/game/StationKit.js', import.meta.url), 'utf8');
-    const body = /tankrow\(kit, M, p\) \{([\s\S]*?)\n  \},/.exec(kit)?.[1] || '';
-    assert(body, 'StationKit.tankrow is gone — the tanks are not built');
-    const n = Number(/for \(let i = 0; i < (\d+); i\+\+\)/.exec(body)?.[1]);
+    /* ── THE ROW IS DRIVEN, NOT READ ──────────────────────────────────────
+     *
+     * This clause used to `readFile` StationKit.js, regex the literal `5` out
+     * of `for (let i = 0; i < 5; i++)` and `new Function` the two coordinate
+     * expressions out of the `tank(...)` call beside it. That worked, and it
+     * had one cost that mattered more than the working: a `tankrow` written
+     * any other way stopped being parseable, so THE CHECK FORBADE THE FIX. The
+     * repair `Medbay.tankLocal`'s own note asks for — "the repair is one line:
+     * `tankrow` calls `tankLocal` and the row has a single spelling" — was
+     * made once by an earlier pass and REVERTED, because the check that exists
+     * because there are two copies could only read one of the two spellings.
+     *
+     * So the kit is BUILT instead. `SHAPES.tankrow` is run into a real `Kit`
+     * with the ward's own dimensions and the glass cylinders are read back out
+     * of the bin they landed in — which is the same measurement whether the
+     * loop writes the arithmetic out, calls `tankLocal`, or is replaced
+     * tomorrow by a table. What is asserted is where the GLASS IS, which is
+     * the thing a renderer standing a body behind it needs to be true.
+     */
+    const { SHAPES } = await import('../../src/game/StationKit.js');
+    const { Kit } = await import('../../src/world/Props.js');
+    const { stationMats } = await import('../../src/game/Station.js');
+    const { w, d, h } = ward;
+    const M = stationMats(ward.deck);
+    const kit = new Kit(1);
+    /* Weathering displaces vertices and would move a bounding box off centre;
+     * `buildPlace` turns it off for every station room for its own reasons. */
+    kit.weather = false;
+    SHAPES.tankrow(kit, M, ward);
+    /* Only `tank()` puts glass in this room — `walls` glazes on an option
+     * `tankrow` does not pass. One cylinder per tank, centred on it. */
+    const glass = kit.bins.get(M.glass) || [];
+    const n = glass.length;
     assert(n === Medbay.TANKS,
       `the kit builds ${n} tanks and Medbay.TANKS is ${Medbay.TANKS} — a patient in a tank that is not there`);
-    const line = /tank\(kit, M, [^,]+, [^,]+, ([^,]+), ([^)]+)\)/.exec(body);
-    assert(line, 'tankrow no longer places its tanks in a loop this can read');
-    const { w, d } = ward;
-    /* eslint-disable no-new-func */
-    const kx = new Function('w', 'd', 'i', `return ${line[1]};`);
-    const kz = new Function('w', 'd', 'i', `return ${line[2]};`);
+    const built = glass.map((g) => {
+      g.computeBoundingBox();
+      const c = new THREE.Vector3();
+      g.boundingBox.getCenter(c);
+      return c;
+    }).sort((a, b) => a.x - b.x);
     let worst = 0;
     for (let i = 0; i < Medbay.TANKS; i++) {
       const [x, , z] = Medbay.tankLocal(i, w, d);
-      worst = Math.max(worst, Math.hypot(x - kx(w, d, i), z - kz(w, d, i)));
+      worst = Math.max(worst, Math.hypot(x - built[i].x, z - built[i].z));
     }
-    assert(worst < 1e-9, `tankLocal is ${worst.toFixed(3)} m off the kit's own row`);
+    /* A tenth of a millimetre, and the tolerance is FLOAT32 and not slack:
+     * the positions come back out of a `BufferAttribute`, so a coordinate of 8
+     * is carried to about 5e-7 m whatever the arithmetic that produced it. */
+    assert(worst < 1e-5, `tankLocal is ${worst.toFixed(4)} m off the glass the kit stood`);
+    assert(h > 0, `the ward has no height for a tank to stand in (h ${h})`);
 
     /* AND THE DECK BOOTS WITH THEM ON IT, through the shipped door. */
     const { world } = await station(48);

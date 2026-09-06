@@ -1994,7 +1994,13 @@ export function liftKey(world) {
     st.pick = (st.pick + 1) % FLOORS.length;
     /* From here the column decides where the car goes — see `floorTarget`. */
     st.chose = true;
-    const f = FLOORS[st.pick];
+    /* THROUGH `liftPick`, WHICH IS THE READOUT'S OWN READER. This line spelled
+     * `FLOORS[st.pick]` itself, so the sentence the player is shown and the
+     * plate over their head were two readings of one number — and `liftPick`,
+     * the function `decklift.mjs` holds the caption to, had no caller under
+     * `src/` at all. One reader now: the words in the notification are the
+     * words on the plate, by construction. */
+    const f = liftPick(world);
     lightButtons(st);
     world.notify?.(String(f.label).toUpperCase(), `deck ${f.n} — step back to ride`);
     audio.tone?.({ freq: 540, freqEnd: 700, dur: 0.09, gain: 0.10, pos: _v.set(LIFT.x, 1.6, LIFT.z) });

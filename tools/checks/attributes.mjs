@@ -32,7 +32,7 @@ import { bootWorld } from './_coop.mjs';
 import { functionBody } from './_source.mjs';
 import {
   ATTRS, ATTR_IDS, TRAITS, attrScale, rollSoldier, attrOf, scaleOf, hasFlag,
-  kindOfArmy, traitsFor, attrName, attrBlurb, standout, profileMean, shedTraits,
+  kindOfArmy, traitsFor, attrName, attrBlurb, standout, shedTraits,
   BOND_AREAS, applyTrait, isBonded,
 } from '../../src/game/Attributes.js';
 import { ARMIES, ARCHETYPE_BIAS, ORDER_LAG, HOLD_BREAK } from '../../src/game/Command.js';
@@ -608,7 +608,10 @@ export async function run({ check, assert, near }) {
     const stored = Company.manOf(a, {});
 
     const green = new CommandRoster(ARMIES.republic);
-    const kept = Company.trooperOf(stored, ARMIES.republic, green);
+    /* THROUGH THE ROSTER'S OWN DOOR. `Company.trooperOf` was a name for this
+     * call with an army default in front of it and is deleted — see the note
+     * where it stood in Company.js. */
+    const kept = green.enlistRecord({ ...stored, army: stored.army ?? 'republic' });
     assert(kept, 'the saved man did not come back at all');
     assert(kept.traits.includes('green'),
       'a trait the muster pool cannot deal did not survive the door — the man was re-rolled');
@@ -619,7 +622,8 @@ export async function run({ check, assert, near }) {
      * refund. This is the branch that was dead, so asserting the restore alone
      * would leave it dead. */
     const vet = { ...stored, areas: 9 };
-    const grown = Company.trooperOf(vet, ARMIES.republic, new CommandRoster(ARMIES.republic));
+    const grown = new CommandRoster(ARMIES.republic)
+      .enlistRecord({ ...vet, army: vet.army ?? 'republic' });
     assert(!grown.traits.includes('green'),
       'nine areas held and he is still Green — shedTraits is on an unreachable path again');
     assert(grown.attr('nerve') > kept.attr('nerve'),
@@ -633,7 +637,6 @@ export async function run({ check, assert, near }) {
     const b = rollSoldier(r, 'flesh');
     const same = ATTR_IDS.filter((id) => a.attrs[id] === b.attrs[id]).length;
     assert(same < ATTR_IDS.length, 'two rolls came out identical on every axis');
-    assert(profileMean(a) >= 0 && profileMean(a) <= 100, 'profileMean is out of range');
     const out = standout(a, 'flesh');
     assert(out.length === 2, 'standout does not name two things');
     assert(out[0].spread >= out[1].spread, 'standout is not sorted by distance from the middle');

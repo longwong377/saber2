@@ -1454,4 +1454,50 @@ export async function run({ check, assert, THREE }) {
     return `2 files clean of all six words and of Math.random; dishes run ${cheapest}–${dearest} `
       + `credits against a per-run cap of ${C.PER_RUN_CAP}`;
   });
+  check('food: an empty larder says where to eat, and the list is derived and not typed', async () => {
+    /**
+     * ══ A ROOM NUMBER TYPED INTO A SCREEN ════════════════════════════════
+     *
+     * The larder's empty state read *"Empty. There is a food court on deck
+     * 40."* — one room, named by hand, on the one screen a hungry player is
+     * looking at. `Food.kitchens` exists precisely against that sentence and
+     * says so: *"the obvious way to answer is `[17, 15, 32]` written into the
+     * screen. That list would be wrong the first time somebody puts a soup on
+     * the quartermaster's shelf, and nothing would say so."* It had no caller
+     * anywhere under `src/`.
+     *
+     * WHAT IS MEASURED IS THAT IT IS DERIVED. Every counter `kitchens()` names
+     * has to have something edible on it, every counter it leaves out has to
+     * have nothing — asked of `Food.isDish` over the real stock, so a dish
+     * added to any counter moves the answer — and the count has to be more than
+     * the one room the sentence used to name.
+     */
+    const F = await import('../../src/game/Food.js');
+    const { COUNTERS } = await import('../../src/game/Vendors.js');
+    const ks = F.kitchens();
+    assert(ks.length >= 1, 'nothing on this station sells food at all');
+    const ids = new Set(ks.map((k) => k.id));
+    for (const c of COUNTERS) {
+      const edible = (c.stock || []).filter((r) => F.isDish(r)).length;
+      assert(ids.has(c.id) === edible > 0,
+        `${c.name} has ${edible} dishes on it and kitchens() ${ids.has(c.id) ? 'does' : 'does not'} name it`);
+    }
+    assert(ks.length > 1,
+      `only ${ks.length} counter cooks — the hand-typed sentence this replaced named one room, so a `
+      + 'derived list of one is not yet an improvement worth measuring');
+    /* AND EVERY ONE OF THEM IS A ROOM A PLAYER CAN WALK TO. */
+    const { PLACE } = await import('../../src/game/StationPlan.js');
+    for (const k of ks) assert(PLACE.get(k.place), `${k.name} stands in #${k.place}, which is not a place`);
+
+    /* ── AND THE PANE PRINTS THEM ────────────────────────────────────── */
+    const main = strip(await src('main.js'));
+    const at = main.indexOf('function showLarder(');
+    const body = main.slice(at, main.indexOf('\n}', at) + 2);
+    assert(at > 0 && /Food\.kitchens\(\)/.test(body),
+      'the larder no longer asks which counters cook');
+    assert(!/food court on deck/i.test(body), 'the hand-typed room number is back on the larder page');
+    return `${ks.length} counters cook, in #${ks.map((k) => k.place).join(', #')} `
+      + `(${ks.map((k) => k.name).join(', ')}); ${COUNTERS.length - ks.length} counters sell nothing to eat`;
+  });
+
 }
