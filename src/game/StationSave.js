@@ -177,6 +177,8 @@ function blank() {
      * `station` and nothing here goes near `recordRun`.
      */
     flight: null,
+    /** The Forge's remote test (V18 cool 19): `{ best, last, day, n }` or null. `RemoteTest.js` owns the shape. */
+    forgeTest: null,
   };
 }
 
@@ -367,6 +369,9 @@ export function setHomeState(v) { const s = read(); s.home = v; return write(s).
 export function casinoState() { const c = read().casino; return c && typeof c === 'object' ? c : { index: 0, sabacc: null, drum: null }; }
 export function setCasinoState(v) { const s = read(); s.casino = v; return write(s).casino; }
 export function flightState() { return read().flight; }
+/** The Forge's remote-test fold — see `RemoteTest.js`. */
+export function forgeTest() { const f = read().forgeTest; return f && typeof f === 'object' ? f : null; }
+export function setForgeTest(v) { const s = read(); s.forgeTest = v; return write(s).forgeTest; }
 export function setFlightState(v) { const s = read(); s.flight = v; return write(s).flight; }
 
 /** Start again. Only a check calls this. */

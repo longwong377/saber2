@@ -72,6 +72,7 @@ import { companyOf } from './StationBoards.js';
  * across; `station.mjs` imports both orders.
  */
 import { handlerOf, handlersOn } from './Pits.js';
+import { dressTramCabin, stepTramCabin, undressTramCabin } from './TramCabin.js';
 /* One call, on one body — see `stepHandlers`. `Impact.js` imports Combat,
  * MathUtil and Audio and nothing that reaches back here, so this one is a
  * plain edge rather than a cycle. */
@@ -3091,6 +3092,7 @@ function stepTram(world, st, life, dt) {
   const a = a0 + d * k;
   t.car.position.set(DRUM.tramR * Math.sin(a), DECK_Y[44] + 1.2, DRUM.tramR * Math.cos(a));
   t.car.rotation.y = a + Math.PI / 2;
+  stepTramCabin(world, st, life, dt);
 }
 const angleOf = (id) => { const p = PLACE.get(id); return Math.atan2(p.x, p.z); };
 const smooth = (x) => x * x * (3 - 2 * x);
@@ -3108,6 +3110,7 @@ export function dressTram(world, st, M) {
   world.scene.add(g);
   world.statics.push(g);
   if (world._stationLife) world._stationLife.tram.car = g;
+  dressTramCabin(world, st, M, g);
   return g;
 }
 
@@ -4429,6 +4432,7 @@ export function stepStationLife(world, dt) {
 
 /** Everything the life made, put down. */
 export function undressStationLife(world) {
+  undressTramCabin(world);
   const life = world?._stationLife;
   if (!life) return;
   /* THE MODULE'S ROW GOES DOWN WITH THE WORLD. It is what `headcount`
