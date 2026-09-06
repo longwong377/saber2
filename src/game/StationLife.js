@@ -41,7 +41,8 @@
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
-import { PLACES, PLACE, DECK_Y, DRUM, placesOn, floorOf, waysOn, junctionsOn } from './StationPlan.js';
+import { PLACES, PLACE, DECK_Y, DRUM, SHAFTS, placesOn, floorOf, waysOn, junctionsOn,
+  apronOn } from './StationPlan.js';
 import {
   SPECIES_KEYS, SPECIES_BY, RHYTHMS, ROLE_BY, resident, speciesFor, roleFor,
   residents, frictionBetween, BORZ_BY_PLACE, borzArchetype, nameFor,
@@ -421,6 +422,65 @@ export function wayPlacesOn(deck) {
       heads, peak, arc,
     });
   };
+  /**
+   * ══ AND A FLIGHT DECK'S WALKWAYS ARE ITS OWN AISLES ═══════════════════
+   *
+   * `apronGraph` has already split the plan's declared lanes at their
+   * crossings and hung a stub onto every door and onto the lift, so the deck's
+   * between-space is exactly that graph: a WALK on every stretch of lane long
+   * enough to be one, and a JUNCTION at every end, corner and doorway.
+   *
+   * WHY THE DRUM'S OWN STRETCHES ARE NOT ALSO PUT HERE. They were, and they
+   * were seating people in two places nobody may stand: the balcony stretch at
+   * r = 24 crosses #5 Cobra bay on deck 12 — six bodies in a launch well —
+   * and the ring at 85.5 crosses #4 Fighter maintenance bay on deck 32. There
+   * is nothing on either ring to walk to in any case: `WAYS` and `JUNCTIONS`
+   * declare not one fixture on either deck, so the drum's twelve stretches
+   * down here were a corridor with no shopfront, no bench and no crossing on
+   * it, 56 m from anything the gazetteer names.
+   *
+   * `band: 'ring'` IS KEPT, because it is not decoration either: `fullness`
+   * gives that band a 0.55 flood at each of the three shift changes against
+   * 0.18 elsewhere, and a shift change is precisely what a flight deck's
+   * aisles fill with.
+   */
+  const G = apronGraph(deck);
+  if (G) {
+    const putAt = (x, z, yaw, w, d, heads, peak, what, extra) => {
+      out.push({ id: id++, deck, band: 'ring', way: what, x, z, yaw, w, d, heads, peak, arc: 0, ...extra });
+    };
+    for (let i = 0; i < G.nodes.length; i++) {
+      const n = G.nodes[i];
+      /**
+       * A doorway, an END, a CORNER or a crossing is a place a person stands
+       * and waits; a plain cut in the middle of a straight lane is not one.
+       *
+       * THE TURN IS PART OF THE TEST and it is not a nicety: the corners of a
+       * circuit have exactly two neighbours, so a degree test alone called the
+       * north-east corner of deck 12 and three of deck 32's four a stretch of
+       * open lane — no junction, and therefore nowhere to walk to at the one
+       * point on the deck where the walk changes direction.
+       */
+      const turn = n.adj.length === 2 && Math.abs(wrapPi(
+        Math.atan2(G.nodes[n.adj[0].to].x - n.x, G.nodes[n.adj[0].to].z - n.z)
+        - Math.atan2(G.nodes[n.adj[1].to].x - n.x, G.nodes[n.adj[1].to].z - n.z) - Math.PI)) > 0.26;
+      if (n.adj.length !== 2 || turn || n.place || n.lift) {
+        putAt(n.x, n.z, Math.atan2(n.x, n.z), APRON_NODE, APRON_NODE,
+          n.lift ? 5 : 4, 14, 'junction', { node: i });
+      }
+      /* AND THE LANE ITSELF, once per edge. `d` is the length walked and `w`
+       * is the width scattered across — the way a spine stretch is declared,
+       * because `slotIn` reads `d` along the yaw and `w` across it. */
+      for (const e of n.adj) {
+        if (e.to < i || e.len < APRON_MIN) continue;
+        const m = G.nodes[e.to];
+        putAt((n.x + m.x) / 2, (n.z + m.z) / 2, Math.atan2(m.x - n.x, m.z - n.z),
+          G.w, e.len - 1.5, WALK_HEADS, 14, 'walk');
+      }
+    }
+    _ways.set(deck, out);
+    return out;
+  }
   /* THE CROSSINGS, which is where a person waits for somebody. */
   for (const j of junctionsOn(deck)) put(DRUM.ringR, j.at, 11, 7, 6, 14, 'junction');
   /* EVERY FIXTURE — at the counter, on the bench, at the rail. */
@@ -712,6 +772,12 @@ function bestSpine(deck, a0, a1) {
 
 /** Which annuli a walker standing here can actually reach. */
 function reachFrom(deck, r, a) {
+  /* A FLIGHT DECK HAS ONE SURFACE AND IT IS CONNECTED. `apronGraph` is built
+   * as a single circuit with stubs hung off it, so every destination on it is
+   * reachable from every other and there is no second annulus to be cut off
+   * from. Asked before `spanAt`, which would otherwise derive the drum's
+   * spine spans on a deck that has no spines to walk. */
+  if (apronOn(deck)) return 'apron';
   const sp = spanAt(deck, a, r);
   const through = throughSpines(deck).length > 0;
   if (sp) {
@@ -720,6 +786,362 @@ function reachFrom(deck, r, a) {
   }
   if (through) return 'both';
   return r > (BALC_WALK + RING_WALK) / 2 ? 'ring' : 'balcony';
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  AND THE TWO DECKS THAT ARE NOT THE DRUM                                   */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ A FLIGHT DECK GETS ITS OWN SPAN KIND, AND HERE IS THE ARGUMENT ════════
+ *
+ * MEASURED, and it is the last of the two audits' open findings. Standing
+ * where the flight shaft puts you, sixty seconds of frames, the pool full:
+ *
+ *     deck 12   20–30 bodies, 8–29 of them walkers, **0 with a planned route**
+ *     deck 32   24–30 bodies, 12–28 walkers,        **0 with a planned route**
+ *
+ * and zero arrivals at every hour of the day on both. The reason is one line
+ * in `destsOn`: a place is classified by the RADIUS OF ITS DOOR, `'ring'` past
+ * `roomR` and `'balcony'` inside the lip, and every door on decks 12 and 32 is
+ * at neither — 27.2 and 42.0 m on 12, 31.0, 42.4 and 65.3 on 32. So no walker
+ * down there was ever handed a destination and `planRoute` had nothing to plan
+ * along. They stood in the corridor for the whole of the day.
+ *
+ * ── WHY THIS IS NOT DONE BY GENERALISING THE ANNULUS ─────────────────────
+ *
+ * The drum's router is two leg kinds — an ARC at a fixed radius and a RADIAL
+ * on a corridor's bearing — and the cheap fix is to keep both and pick radii
+ * that are clear on these two decks. It was tried on paper against the room
+ * rectangles first, which is where it dies:
+ *
+ *   DECK 12   the balcony walk at r = 24 runs THROUGH #5 Cobra bay between
+ *             bearings 111° and 135°. The ring at 85.5 is clear — and a
+ *             radial in from it to #5's door at 107° crosses #6 Fighter rack,
+ *             which occupies 100°–123° at r 40.5–65.9.
+ *   DECK 32   the ring at 85.5 runs through #4 Fighter maintenance bay
+ *             (r 60.9–94.8, and its far corner is 4.8 m OUTSIDE the skin).
+ *             The balcony at 24 is clear and reaches nothing: every door on
+ *             the deck is outboard of it, behind one of the other two rooms.
+ *
+ * The rooms shadow one another radially because they are a CLUSTER in one
+ * quadrant, which is what a hangar floor is, rather than a rhythm round a
+ * turn, which is what the drum is. Generalising the annulus means teaching
+ * `planRoute` that an arc may be blocked over part of its sweep and that a
+ * blocked arc has to be detoured — which is a search, on the deck the drum's
+ * three surfaces were written to avoid needing one on.
+ *
+ * SO THE SMALLER CHANGE IS THE THIRD LEG KIND. A straight lane between two
+ * points is one line of arithmetic, the drum's own arcs and radials are not
+ * touched by a character — `RING_WALK`, `BALC_WALK`, `spineSpansOn`,
+ * `bestSpine` and `planRoute`'s five-leg shape are all exactly what they were
+ * — and what the flight decks get is the shape their own frame is already in.
+ * `StationPlan.APRONS` is where the aisles are declared and why they are
+ * where they are; this is what walks them.
+ *
+ * ── AND IT IS THE SAME CONTRACT THE DRUM'S WALKERS HAVE ──────────────────
+ *
+ * A destination is a real place — a room's door, the lift, or a corner of the
+ * circuit — a route is a polyline the body follows leg by leg, the trip
+ * counter goes up when the last leg runs out, and after a `DWELL` at the door
+ * it sets off somewhere else. `stepWalkers` grew one branch for the leg kind
+ * and nothing else; `setOut`, `pickDest`, the cull and the dwell are shared.
+ */
+
+/**
+ * How far off a lane a standing point may be and still BE the lane — the stub
+ * that would join them is shorter than the two strides it takes to walk it,
+ * and a leg that short is a corner the facing turns through for nothing.
+ */
+const APRON_SNAP = 3;
+/** A sub-lane shorter than this is a node, not a walk. */
+const APRON_MIN = 3;
+/**
+ * How far off a room's own face a flight deck's people stand, against
+ * `DOOR_STAND`'s 1.4 in the drum.
+ *
+ * IT IS BIGGER BECAUSE THE STANDING POINT IS ALSO A PLACE. A drum walker
+ * arrives at a door and stops on a corridor that is nine metres wide; a
+ * junction pseudo-place down here is three metres across, and its people are
+ * scattered ±1.08 m about it, so a standing point 1.4 m off a wall puts a
+ * third of them inside the hangar's hull. Measured with `DOOR_STAND`: five
+ * seated slots on each deck were inside a room.
+ */
+const APRON_STAND = 3;
+/** The footprint of a junction pseudo-place on an apron: a doorway, a corner
+ *  or the foot of a stub, and small enough that its people stay on the floor. */
+const APRON_NODE = 3;
+
+/** Where a body stands when it has arrived at a place on a flight deck: out
+ *  of the door by `DOOR_STAND`, measured in the ROOM's own frame so a yawed
+ *  box is left through the face its door is actually in. */
+function standOf(p) {
+  const c = Math.cos(p.yaw || 0), s = Math.sin(p.yaw || 0);
+  const dx = p.door[0] - p.x, dz = p.door[1] - p.z;
+  /* The same two lines `boxHas` tests with — see `slotIn` for the inverse. */
+  const u = dx * c - dz * s, v = dx * s + dz * c;
+  const hu = (p.w || 0) / 2, hv = (p.d || 0) / 2;
+  let U = u, V = v;
+  /* WHICH FACE THE DOOR IS IN is the axis it is furthest out along, in units
+   * of that half-extent — a door 0.4 m inside a 26 m wall and 0.4 m inside an
+   * 11 m one is in the long wall. `layout()` puts every drum door 0.4 m INSIDE
+   * its room, and these decks' doors are typed by hand and are mostly just
+   * outside, so the push is a `max` rather than a set: a door already clear of
+   * its own wall is left where the gazetteer put it. */
+  if (hu > 0 && (hv <= 0 || Math.abs(u) / hu > Math.abs(v) / hv)) {
+    U = (u >= 0 ? 1 : -1) * Math.max(Math.abs(u), hu + APRON_STAND);
+  } else {
+    V = (v >= 0 ? 1 : -1) * Math.max(Math.abs(v), hv + APRON_STAND);
+  }
+  return [p.x + U * c + V * s, p.z - U * s + V * c];
+}
+
+/** The nearest point of a segment to (px, pz), as `{ t, x, z, d }`. */
+function nearOn(L, px, pz) {
+  const ax = L[0], az = L[1], bx = L[2], bz = L[3];
+  const rx = bx - ax, rz = bz - az;
+  const len2 = rx * rx + rz * rz;
+  let t = len2 > 1e-9 ? ((px - ax) * rx + (pz - az) * rz) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const x = ax + rx * t, z = az + rz * t;
+  return { t, x, z, d: Math.hypot(px - x, pz - z) };
+}
+
+/** Where two lanes cross, as the pair of parameters, or null. Endpoints
+ *  count: the aisles of a circuit meet at their corners. */
+function crossAt(A, B) {
+  const r1x = A[2] - A[0], r1z = A[3] - A[1];
+  const r2x = B[2] - B[0], r2z = B[3] - B[1];
+  const den = r1x * r2z - r1z * r2x;
+  if (Math.abs(den) < 1e-9) return null;
+  const dx = B[0] - A[0], dz = B[1] - A[1];
+  const t = (dx * r2z - dz * r2x) / den;
+  const u = (dx * r1z - dz * r1x) / den;
+  if (t < -1e-6 || t > 1 + 1e-6 || u < -1e-6 || u > 1 + 1e-6) return null;
+  return [t, u];
+}
+
+const _apron = new Map();
+
+/**
+ * THE DECK'S LANE NETWORK, DERIVED FROM WHAT THE PLAN DECLARES.
+ *
+ * `APRONS[deck].lanes` are the aisles and nothing else is typed: this splits
+ * them where they cross, hangs a stub off the network onto every room's
+ * standing point and onto the lift, and returns
+ *
+ *     { nodes: [{ x, z, adj: [{ to, len }], place, lift }], w }
+ *
+ * Cached, because it is pure and `pickDest` runs it per trip.
+ */
+function apronGraph(deck) {
+  const hit = _apron.get(deck);
+  if (hit !== undefined) return hit;
+  const A = apronOn(deck);
+  if (!A) { _apron.set(deck, null); return null; }
+  const nodes = [];
+  const byKey = new Map();
+  /* Quarter-metre buckets: two lanes meeting at a typed corner land on the
+   * same node, and a projection a hair off one does too. */
+  const nodeAt = (x, z) => {
+    const k = `${Math.round(x * 4)}:${Math.round(z * 4)}`;
+    let i = byKey.get(k);
+    if (i === undefined) { i = nodes.length; nodes.push({ x, z, adj: [] }); byKey.set(k, i); }
+    return i;
+  };
+  const link = (a, b) => {
+    if (a === b) return;
+    const len = Math.hypot(nodes[a].x - nodes[b].x, nodes[a].z - nodes[b].z);
+    if (len < 0.05) return;
+    if (nodes[a].adj.some((e) => e.to === b)) return;
+    nodes[a].adj.push({ to: b, len });
+    nodes[b].adj.push({ to: a, len });
+  };
+
+  /* ── THE CUTS ALONG EACH AISLE: its ends, its crossings, and the foot of
+   * every stub that hangs off it. */
+  const lanes = A.lanes;
+  const cuts = lanes.map(() => [0, 1]);
+  for (let i = 0; i < lanes.length; i++) {
+    for (let j = i + 1; j < lanes.length; j++) {
+      const x = crossAt(lanes[i], lanes[j]);
+      if (!x) continue;
+      cuts[i].push(Math.max(0, Math.min(1, x[0])));
+      cuts[j].push(Math.max(0, Math.min(1, x[1])));
+    }
+  }
+
+  /**
+   * ── WHAT IS WORTH WALKING TO, AND IT IS NOT A LIST ────────────────────
+   *
+   * Every room the gazetteer puts on this deck that has anybody in it, plus
+   * the lift. The lift stand is the shaft's own position pulled two metres
+   * INBOARD, which is the side the car's doors open on (`dressStation` faces
+   * it at `atan2(x, z) + π`) and therefore the floor a man steps out onto.
+   */
+  const stands = [];
+  for (const p of placesOn(deck)) {
+    if (!p.heads || !p.door || !p.w) continue;
+    const [sx, sz] = standOf(p);
+    stands.push({ x: sx, z: sz, place: p });
+  }
+  for (const sh of SHAFTS) {
+    if (!sh.decks.includes(deck)) continue;
+    const r = Math.hypot(sh.x, sh.z) || 1;
+    const k = (r - 2) / r;
+    stands.push({ x: sh.x * k, z: sh.z * k, lift: sh.id });
+  }
+  for (const s of stands) {
+    let best = null;
+    for (let i = 0; i < lanes.length; i++) {
+      const n = nearOn(lanes[i], s.x, s.z);
+      if (!best || n.d < best.d) best = { ...n, lane: i };
+    }
+    if (!best) continue;
+    s.foot = best;
+    cuts[best.lane].push(best.t);
+  }
+
+  /* ── AND THE AISLES BECOME EDGES BETWEEN THEM ─────────────────────────── */
+  for (let i = 0; i < lanes.length; i++) {
+    const L = lanes[i];
+    const len = Math.hypot(L[2] - L[0], L[3] - L[1]);
+    const ts = cuts[i].slice().sort((a, b) => a - b);
+    let prev = -1;
+    for (const t of ts) {
+      if (prev >= 0 && (t - prev) * len < 0.25) continue;
+      const a = prev < 0 ? -1 : nodeAt(L[0] + (L[2] - L[0]) * prev, L[1] + (L[3] - L[1]) * prev);
+      const b = nodeAt(L[0] + (L[2] - L[0]) * t, L[1] + (L[3] - L[1]) * t);
+      if (a >= 0) link(a, b);
+      prev = t;
+    }
+  }
+
+  /* ── AND THE STUBS ONTO THEM. A stand within a stride of its aisle IS the
+   * node on the aisle: a stub nobody could see is a leg the walker spends a
+   * frame on and a corner the facing turns through for nothing. */
+  for (const s of stands) {
+    if (!s.foot) continue;
+    const foot = nodeAt(s.foot.x, s.foot.z);
+    let at = foot;
+    if (s.foot.d > APRON_SNAP) { at = nodeAt(s.x, s.z); link(foot, at); }
+    if (s.place) nodes[at].place = s.place;
+    if (s.lift) nodes[at].lift = s.lift;
+  }
+
+  const G = { nodes, w: A.w ?? 5, from: new Map() };
+  _apron.set(deck, G);
+  return G;
+}
+
+/**
+ * EVERY NODE'S DISTANCE TO ONE GOAL, AND THE STEP TOWARDS IT.
+ *
+ * Dijkstra from the destination rather than from the walker, so the answer is
+ * a property of the DESTINATION and is cached on it: a dozen nodes, a dozen
+ * goals, and every walker on the deck bound for the same door reuses the same
+ * table. `prev[i]` is the next node on the way there from `i`.
+ */
+function apronFrom(G, goal) {
+  const hit = G.from.get(goal);
+  if (hit) return hit;
+  const n = G.nodes.length;
+  const d = new Float64Array(n).fill(Infinity);
+  const prev = new Int32Array(n).fill(-1);
+  const done = new Uint8Array(n);
+  d[goal] = 0;
+  for (;;) {
+    let u = -1, best = Infinity;
+    for (let i = 0; i < n; i++) if (!done[i] && d[i] < best) { best = d[i]; u = i; }
+    if (u < 0) break;
+    done[u] = 1;
+    for (const e of G.nodes[u].adj) {
+      if (d[u] + e.len < d[e.to] - 1e-9) { d[e.to] = d[u] + e.len; prev[e.to] = u; }
+    }
+  }
+  const out = { d, prev };
+  G.from.set(goal, out);
+  return out;
+}
+
+/** A straight leg. Pushed only when it is worth walking, as the other two. */
+function lineLeg(legs, x0, z0, x1, z1) {
+  const len = Math.hypot(x1 - x0, z1 - z0);
+  if (len < 0.05) return false;
+  legs.push({ line: true, x0, z0, x1, z1, len });
+  return true;
+}
+
+/**
+ * THE ROUTE ACROSS A FLIGHT DECK: onto the network, along it, and no further.
+ *
+ * The destination is always a NODE — `destsOn` only ever offers one — so the
+ * whole of the plan is the walk in from wherever the body is standing plus the
+ * chain `apronFrom` already worked out.
+ *
+ * A BODY INSIDE A ROOM LEAVES BY ITS OWN DOOR. `stir` hands this a person who
+ * was standing at a console in the ready room, and the nearest point of the
+ * network to them is through a wall. Their room's own standing point is the
+ * one place its people are meant to come out at, so that is the way in — the
+ * same allowance the drum makes when its first radial leg crosses the room a
+ * stirred body is walking out of.
+ */
+function apronRoute(deck, x0, z0, dest, legs, body) {
+  legs.length = 0;
+  const G = apronGraph(deck);
+  const goal = dest?.node;
+  if (!G || !(goal >= 0)) return legs;
+  const table = apronFrom(G, goal);
+  let entry = -1;
+  const inRoom = body ? PLACE.get(body.stationPlace) : null;
+  if (inRoom && inRoom.deck === deck && inRoom.w && boxHas(inRoom, x0, z0)) {
+    for (let i = 0; i < G.nodes.length; i++) if (G.nodes[i].place === inRoom) { entry = i; break; }
+  }
+  if (entry < 0) {
+    /**
+     * ── THE WAY ON IS AN END OF THE LANE THE BODY IS STANDING ON ────────
+     *
+     * NOT the nearest node on the deck, and the difference is a body walking
+     * through a hull: a walker seated on the east return of deck 12 is 20 m
+     * from a node on the north aisle in a straight line and that line goes
+     * through #6 Fighter rack. The one thing a walker may do off the network
+     * is step to an end of the lane it is already on, which is open floor by
+     * construction — every lane is asserted clear in `station.mjs`.
+     *
+     * BOTH ends are candidates and the cost is to the GOAL: stepping on at
+     * the near end and doubling back is the corridor version of the spine
+     * walk that went inward to the balcony and straight out again.
+     */
+    let near = Infinity, ends = null;
+    for (let i = 0; i < G.nodes.length; i++) {
+      for (const e of G.nodes[i].adj) {
+        if (e.to < i) continue;
+        const n = nearOn([G.nodes[i].x, G.nodes[i].z, G.nodes[e.to].x, G.nodes[e.to].z], x0, z0);
+        if (n.d < near) { near = n.d; ends = [i, e.to]; }
+      }
+    }
+    let best = Infinity;
+    for (const i of ends || G.nodes.map((_, k) => k)) {
+      if (!Number.isFinite(table.d[i])) continue;
+      const c = table.d[i] + Math.hypot(G.nodes[i].x - x0, G.nodes[i].z - z0);
+      if (c < best) { best = c; entry = i; }
+    }
+  }
+  if (entry < 0 || !Number.isFinite(table.d[entry])) return legs;
+  let x = x0, z = z0;
+  lineLeg(legs, x, z, G.nodes[entry].x, G.nodes[entry].z);
+  x = G.nodes[entry].x; z = G.nodes[entry].z;
+  /* `nodes.length` is the bound because a shortest path visits no node twice;
+   * a graph that somehow disagreed would hang the frame rather than the walk. */
+  for (let at = entry, guard = G.nodes.length; at !== goal && guard-- > 0;) {
+    const next = table.prev[at];
+    if (next < 0) break;
+    lineLeg(legs, x, z, G.nodes[next].x, G.nodes[next].z);
+    x = G.nodes[next].x; z = G.nodes[next].z;
+    at = next;
+  }
+  return legs;
 }
 
 /* A leg is `{ arc, r|a, from, to, len }` and nothing else. Pushed only when it
@@ -743,8 +1165,13 @@ function radLeg(legs, a, r0, r1) {
  * the spine, round to the bearing, in to the door — and two in the common
  * case of two rooms on the same ring.
  */
-function planRoute(deck, r0, a0, dest, legs) {
+function planRoute(deck, r0, a0, dest, legs, body) {
   legs.length = 0;
+  /* A FLIGHT DECK IS THE OTHER SPAN KIND. Its own router is above; the drum's
+   * arcs and radials below are untouched by it. */
+  if (apronOn(deck)) {
+    return apronRoute(deck, r0 * Math.sin(a0), r0 * Math.cos(a0), dest, legs, body);
+  }
   const destLvl = dest.on === 'ring' ? RING_WALK : BALC_WALK;
   /* WHICH ANNULUS THIS WALK STARTS FROM. A walker on a spine stub is mid-band,
    * so "which annulus is it on" has no answer — what it has is an END, and it
@@ -789,6 +1216,36 @@ function destsOn(deck) {
   const hit = _dests.get(deck);
   if (hit) return hit;
   const out = [];
+  /**
+   * ── A FLIGHT DECK'S DESTINATIONS ARE ITS AISLES' OWN NODES ────────────
+   *
+   * Every one of them is a NODE of `apronGraph`, which is what makes the
+   * route a chain rather than a search: the rooms' standing points, the lift,
+   * and the corners and doorways of the circuit, all of which `wayPlacesOn`
+   * has already declared as junction pseudo-places with the node index on
+   * them. So this is the same two lines the drum's fixtures get — a place, a
+   * standing point, and the headcount that weights the desire line — read off
+   * the deck's own shape instead of off a radius.
+   *
+   * A ROOM'S NODE CARRIES THE ROOM, so #3's eight pilots pull the way #16's
+   * diners do: `pickDest` weights by `headcount(d.p, hour)` and a walker on
+   * deck 32 at 06:00 is drawn to the ready room because the ready room is
+   * where the people are at 06:00. A corner carries its own pseudo-place and
+   * pulls at four.
+   */
+  if (apronOn(deck)) {
+    const G = apronGraph(deck);
+    for (const w of wayPlacesOn(deck)) {
+      if (w.node === undefined) continue;
+      const n = G.nodes[w.node];
+      out.push({
+        p: n.place || w, id: w.id, on: 'apron', node: w.node,
+        x: n.x, z: n.z, a: Math.atan2(n.x, n.z), r: Math.hypot(n.x, n.z), w: 0,
+      });
+    }
+    _dests.set(deck, out);
+    return out;
+  }
   for (const p of placesOn(deck)) {
     if (!p.heads || !p.door) continue;
     if (p.band !== 'outer' && p.band !== 'inner' && p.band !== 'radial') continue;
@@ -886,6 +1343,13 @@ const TRIP = { near: 8, far: 35 };
  * own radius because a cross-annulus trip turns on the wider of the two.
  */
 function tripLen(r0, a0, d) {
+  /* AND ON A FLIGHT DECK IT IS A STRAIGHT LINE, because the legs are. Priced
+   * as an arc the whole apron is inside `TRIP.near` — 8 m of chord across the
+   * launch well is 20 m of arc at r = 24 — so every trip on deck 12 fell
+   * through to the nearest-thing fallback and the desire lines never ran. */
+  if (d.on === 'apron') {
+    return Math.hypot(d.x - r0 * Math.sin(a0), d.z - r0 * Math.cos(a0));
+  }
   return Math.abs(wrapPi(d.a - a0)) * Math.max(r0, d.r) + Math.abs(d.r - r0);
 }
 
@@ -932,7 +1396,7 @@ const DWELL = { min: 2, span: 5 };
 function setOut(deck, hour, body) {
   const dest = pickDest(deck, hour, body);
   if (!dest) { body.wayDwell = DWELL.min; return false; }
-  body.wayLegs = planRoute(deck, body.wayR, body.wayAngle, dest, []);
+  body.wayLegs = planRoute(deck, body.wayR, body.wayAngle, dest, [], body);
   body.wayTo = dest.id;
   body.wayAt = 0;
   body.wayT = 0;
@@ -1161,60 +1625,147 @@ function planBias(place, j) {
 }
 
 /**
- * ══ THE FLOOR — EIGHT OF EVERY SPECIES, ON EVERY DAY (§5.3) ═══════════════
+ * ══ THE FLOOR — AND IT IS A CURVE, BECAUSE THE STATION IS (§5.3) ══════════
  *
- * "≥ 8 residents placed per species." The Vorlon is the one exception and it
- * is the roster's, not this file's: `SPECIES.vorlon` carries `singleton`, and
- * §3.3 is explicit — *"one encounter suit, one place (#37), never walks."*
- * There is one, and one is his floor.
+ * §5.3 asks for *"≥ 8 residents placed per species"*. Eight at WHAT HOUR was
+ * never written down, and for as long as it was not, the answer was one hour:
+ * `station.mjs` swept a year of days at 13:00 and certified the floor off
+ * that. Swept at all twenty-four instead, the same station failed §5.3 on
+ * 1268 of 10800 (species, hour, day) triples — Grome and "other" down to two,
+ * the Llort and the Gaim to three, and not only in the small hours: 10:00,
+ * 11:00, 16:00 and 20:00 all sat at six or seven.
+ *
+ * ── WHY A FLAT EIGHT IS THE WRONG ASK ─────────────────────────────────────
+ *
+ * The station is not the same size at every hour and it is not supposed to be.
+ * `fullness` is a cosine on each room's own `peak` with §3.4's shift changes
+ * and meals on top of it, and summed over the gazetteer it says the drum holds
+ * **600 people at 13:00 and 311 at 04:00** — a station that half empties
+ * overnight, which is the whole point of having a clock. Eight of every kind
+ * at 13:00 is one body in seventy-five. Eight of every kind at 04:00 is one in
+ * thirty-nine, and holding it there would mean the rarest kinds are the ones
+ * who never go to bed: fifteen species standing in an empty station, which is
+ * the QUOTA the check already refuses at midday, arrived at from the other
+ * side.
+ *
+ * ── SO THE FLOOR RIDES THE CURVE THE STATION ALREADY HAS ─────────────────
+ *
+ * `speciesFloor(hour)` is `FLOOR` scaled by how full the drum is at that hour
+ * against its fullest, and nothing here is typed: the ratio is `headcount`
+ * summed over the gazetteer, which is `heads` and `fullness` and §3.4's
+ * rhythms and nothing else. Eight at the peak, seven through the evening,
+ * five or six over the morning, four in the small hours.
+ *
+ * IT NEVER GOES UNDER ONE, and that clause is not rounding hygiene. A species
+ * with nobody aboard at 03:00 is a species the player cannot be shown at
+ * 03:00, and §3.3's argument for having fifteen of them is that they are seen.
+ *
+ * AND THE FILL MEETS IT AT EVERY HOUR, not at one and by luck at the rest —
+ * see `floorFill`, which now counts the whole day before it moves anybody.
  */
 export const FLOOR = 8;
 
 /**
- * The hour the census is taken at. §3.4's midday meal, and the hour
- * `station.mjs` has always counted at. It has to be ONE hour and it has to be
- * fixed, because `occupant` may not read the clock: a face that changed
- * between 12:00 and 14:00 would be a worse failure than a thin census — see
- * the note at the top of `occupant`. So the top-up is sized against midday
- * and simply rides along at every other hour.
+ * How full the drum is at each hour of the day, as a fraction of its fullest
+ * hour. Derived, cached once: `headcount` is pure in `(place, hour)` once the
+ * event is out of it, and the gazetteer does not change at runtime.
+ *
+ * `headcount(p, h, null)` AND NOT THE DEFAULT. The default argument is the
+ * RUNNING event row (see `_event`), so a market day would otherwise make the
+ * floor — and therefore who is standing where — depend on which banner
+ * happened to be up when the first body of the day was drawn. The floor is a
+ * fact about the gazetteer's day; an event adds people on top of it.
  */
-const CENSUS_HOUR = 13;
+let _busy = null;
+function busyCurve() {
+  if (_busy) return _busy;
+  const tot = new Float64Array(24);
+  for (const p of PLACES) {
+    if (p.external || !p.heads) continue;
+    for (let h = 0; h < 24; h++) tot[h] += headcount(p, h, null);
+  }
+  let peak = 0;
+  for (let h = 0; h < 24; h++) if (tot[h] > peak) peak = tot[h];
+  _busy = new Float64Array(24);
+  for (let h = 0; h < 24; h++) _busy[h] = peak > 0 ? tot[h] / peak : 1;
+  return _busy;
+}
+
+/**
+ * §5.3's floor AT AN HOUR. `station.mjs` asserts this across all twenty-four
+ * of them; `floorFill` builds to it. One function, so the rule and the thing
+ * that satisfies it cannot drift apart.
+ */
+export function speciesFloor(hour) {
+  const h = ((Math.floor(hour) % 24) + 24) % 24;
+  return Math.max(1, Math.round(FLOOR * busyCurve()[h]));
+}
 
 /** day → (`placeId:slot` → species). Small, because only today is ever asked. */
 const _floor = new Map();
 
 /**
- * Who the day's own draw shorted, and which free slots pay for it.
+ * Who the day's own draw shorts, at every hour of the day, and which free
+ * slots pay for it.
  *
- * Deterministic in `day` alone: the natural species of every census slot is
+ * ── HOW A SLOT IS A DAY AND NOT AN HOUR ──────────────────────────────────
+ *
+ * `occupant` may not read the clock — a face that changed between 12:00 and
+ * 14:00 would be a worse failure than a thin census, and the note at the top
+ * of `occupant` is why. So the species in slot `i` of a place is fixed for the
+ * whole day, and what the hour moves is HOW MANY SLOTS ARE STANDING: a place
+ * holds `headcount(p, h)` of them, low index first. That makes each slot's
+ * presence a 24-bit mask — the hours at which `headcount` reaches it — and the
+ * census at an hour is just the slots whose mask has that bit.
+ *
+ * The old pass sized itself against 13:00 alone and rode along at the other
+ * twenty-three, which is exactly why the sweep found 1268 failures: topping a
+ * kind up into a seat that the room folds away at 20:00 buys nothing at 20:00.
+ * The fill now works the masks, so a body moved for one hour is counted at
+ * every hour it actually stands.
+ *
+ * A DONOR IS NEVER TAKEN BELOW THE FLOOR — at any of the hours it stands at,
+ * not merely at the hour being fixed. Topping up the Grome at 04:00 cannot be
+ * what puts the Llort under at 06:00, which is the shape a naive top-up has.
+ *
+ * Deterministic in `day` alone: the natural species of every slot is
  * `speciesFor` on the same `(place, slot, day)` seed `occupant` uses, the
- * order the slots are offered in is a hash of `(place, slot, day)`, and no
- * clock, quest or player state reaches any of it. `determinism.mjs` holds the
+ * order slots are offered in is a hash of `(place, slot, day)`, and no clock,
+ * quest or player state reaches any of it. `determinism.mjs` holds the
  * no-`Math.random` half of that.
- *
- * A DONOR IS NEVER TAKEN BELOW THE FLOOR. The loop refuses a slot whose own
- * species is at eight or fewer, so topping up the Grome cannot be what pushes
- * the Llort under — which is exactly the shape a naive top-up has.
  */
 function floorFill(day) {
   const hit = _floor.get(day);
   if (hit) return hit;
-  const have = new Map(SPECIES_KEYS.map((k) => [k, 0]));
+  const need = new Int32Array(24);
+  for (let h = 0; h < 24; h++) need[h] = speciesFloor(h);
+  /* species → how many stand at each of the 24 hours. */
+  const have = new Map(SPECIES_KEYS.map((k) => [k, new Int32Array(24)]));
   const free = [];
+  const add = (k, mask, s) => {
+    const row = have.get(k);
+    if (!row) return;
+    for (let h = 0; h < 24; h++) if ((mask >> h) & 1) row[h] += s;
+  };
   for (const p of PLACES) {
     if (p.external || !p.heads) continue;
-    const n = headcount(p, CENSUS_HOUR);
+    let nMax = 0;
+    const nAt = new Int32Array(24);
+    for (let h = 0; h < 24; h++) { nAt[h] = headcount(p, h, null); if (nAt[h] > nMax) nMax = nAt[h]; }
     const borz = BORZ_BY_PLACE.get(p.id);
     const b = borz ? borz.length : 0;
     /* A place id can be fractional (#40.2), so it is scaled to an integer
      * before it goes anywhere near `h2`'s integer arithmetic. */
     const pid = Math.round(p.id * 10);
-    for (let i = b; i < n; i++) {
+    for (let i = b; i < nMax; i++) {
+      let mask = 0;
+      for (let h = 0; h < 24; h++) if (nAt[h] > i) mask |= 1 << h;
+      if (!mask) continue;
       const bias = planBias(p, i - b);
-      if (bias) { have.set(bias, (have.get(bias) || 0) + 1); continue; }
+      if (bias) { add(bias, mask, 1); continue; }
       const k = speciesFor(`p${p.id}s${i}d${day}`);
-      have.set(k, (have.get(k) || 0) + 1);
-      free.push({ key: `${p.id}:${i}`, k, r: h2(pid * 1024 + i, day) });
+      add(k, mask, 1);
+      free.push({ key: `${p.id}:${i}`, k, mask, r: h2(pid * 1024 + i, day) });
     }
   }
   /* One deterministic order for the whole day, so which rooms pay is a
@@ -1224,23 +1775,34 @@ function floorFill(day) {
   let at = 0;
   for (const k of SPECIES_KEYS) {
     if (SPECIES_BY.get(k)?.singleton) continue;
-    while ((have.get(k) || 0) < FLOOR) {
-      let took = false;
-      for (let m = 0; m < free.length; m++) {
-        const s = free[(at + m) % free.length];
-        if (s.k === k || out.has(s.key)) continue;
-        if ((have.get(s.k) || 0) <= FLOOR) continue;
-        out.set(s.key, k);
-        have.set(s.k, have.get(s.k) - 1);
-        have.set(k, (have.get(k) || 0) + 1);
-        at = (at + m + 1) % free.length;
-        took = true;
-        break;
+    const mine = have.get(k);
+    for (let h = 0; h < 24; h++) {
+      while (mine[h] < need[h]) {
+        let took = false;
+        for (let m = 0; m < free.length; m++) {
+          const s = free[(at + m) % free.length];
+          if (s.k === k || out.has(s.key) || !((s.mask >> h) & 1)) continue;
+          /* The donor keeps its own floor at every hour it is standing at. */
+          const theirs = have.get(s.k);
+          if (!theirs) continue;
+          let spare = true;
+          for (let hh = 0; hh < 24 && spare; hh++) {
+            if ((s.mask >> hh) & 1) spare = theirs[hh] - 1 >= need[hh];
+          }
+          if (!spare) continue;
+          out.set(s.key, k);
+          add(s.k, s.mask, -1);
+          add(k, s.mask, 1);
+          s.k = k;
+          at = (at + m + 1) % free.length;
+          took = true;
+          break;
+        }
+        /* Nothing left that can spare a body at this hour. The station is too
+         * small for the floor and that is a fact about the gazetteer, not
+         * something to paper over here — `station.mjs` sweeps and says so. */
+        if (!took) break;
       }
-      /* Nothing left that can spare a body. The station is too small for the
-       * floor and that is a fact about the gazetteer, not something to paper
-       * over here — `station.mjs` sweeps the year and says so. */
-      if (!took) break;
     }
   }
   _floor.set(day, out);
@@ -2501,12 +3063,18 @@ export function dressTram(world, st, M) {
  *   THE LAUNCH CYCLE. It said the three flight rooms *"all move at once"*, and
  *   this one was measured rather than reasoned about: on deck 12, standing at
  *   the Cobra bay at 11:00 with the pool full, **45 bodies, 38 of them seated
- *   on the deck's own walk slots, and 0 with a planned route**; deck 32 reads
- *   23 of 37 and the same nought. `destsOn`/`planRoute` are the drum's ring,
- *   balcony and spines, and the two flight decks have none of the three — so
- *   NOBODY WALKS ON A FLIGHT DECK, event or no event. That is the walkway
- *   lane's to answer and not this table's; what this row may honestly say is
- *   that the three rooms are crewed, which is what the fill does.
+ *   on the deck's own walk slots, and 0 with a planned route**; deck 32 read
+ *   23 of 37 and the same nought. `destsOn`/`planRoute` were the drum's ring,
+ *   balcony and spines and the two flight decks have none of the three, so
+ *   NOBODY WALKED ON A FLIGHT DECK, event or no event. For one session this
+ *   row said only that the three rooms are CREWED, which is what the fill
+ *   does and was all the station could then deliver.
+ *
+ *   AND IT IS BACK. `APRONS` gives both decks their own lanes and
+ *   `apronRoute` walks them, so the row's `stir` means on 12 and 32 exactly
+ *   what the drill's means on 40: bodies that were standing at a console get
+ *   up and cross the deck. Measured on deck 12 at 09:00 with the row running,
+ *   the crews walk the bay's mouth, the gap by the rack and the lift.
  */
 export const EVENTS = [
   {
@@ -2569,11 +3137,13 @@ export const EVENTS = [
      * rooms the say names, and they are on two DIFFERENT decks, which is
      * exactly why the fill is a place table and not a place.
      *
-     * AND NO STIR. See the fourth entry in the note above: nobody walks on
-     * decks 12 or 32 at all, so a row promising movement there would be a row
-     * promising a thing the deck cannot do. */
-    fill: { 5: 4, 2: 4, 3: 6 },
-    say: ['LAUNCH CYCLE', 'the Cobra bay, the tower and the ready room are all crewed at once'],
+     * AND THE STIR IS `'deck'` FOR THE SAME REASON. The row fires on whichever
+     * of the two the player is standing on, and the three rooms are split
+     * across both; a list would move the crews on one deck and leave the other
+     * still. Six is the drill's fourteen scaled to a deck that holds a
+     * quarter as many people. */
+    fill: { 5: 4, 2: 4, 3: 6 }, stir: 6, stirIn: 'deck',
+    say: ['LAUNCH CYCLE', 'the Cobra bay, the tower and the ready room all move at once'],
   },
 ];
 
@@ -3139,13 +3709,23 @@ function stepWalkers(world, life, dt) {
     const L = legs[body.wayAt];
     if (L) {
       const f = L.len > 0 ? body.wayT / L.len : 1;
-      if (L.arc) { body.wayAngle = L.from + (L.to - L.from) * f; body.wayR = L.r; }
+      /* A STRAIGHT LANE IS THE FLIGHT DECKS' LEG KIND, and it is written back
+       * through the polar pair rather than beside it: `wayR`/`wayAngle` is the
+       * authority on where a walker is for the dwell branch above, for `stir`,
+       * for `pickDest` and for the cull, and a second answer on two decks is
+       * how the two `standing`s got out of step. The round trip is exact to
+       * the metre this cares about. */
+      if (L.line) {
+        const lx = L.x0 + (L.x1 - L.x0) * f, lz = L.z0 + (L.z1 - L.z0) * f;
+        body.wayR = Math.hypot(lx, lz); body.wayAngle = Math.atan2(lx, lz);
+      } else if (L.arc) { body.wayAngle = L.from + (L.to - L.from) * f; body.wayR = L.r; }
       else { body.wayR = L.from + (L.to - L.from) * f; body.wayAngle = L.a; }
     } else {
       /* THE END OF THE LAST LEG — it has arrived. */
       const E = legs[legs.length - 1];
       if (E) {
-        if (E.arc) { body.wayAngle = E.to; body.wayR = E.r; }
+        if (E.line) { body.wayR = Math.hypot(E.x1, E.z1); body.wayAngle = Math.atan2(E.x1, E.z1); }
+        else if (E.arc) { body.wayAngle = E.to; body.wayR = E.r; }
         else { body.wayR = E.to; body.wayAngle = E.a; }
       }
       /**

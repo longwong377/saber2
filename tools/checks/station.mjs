@@ -872,6 +872,199 @@ export async function run({ check, assert, THREE }) {
     } finally { world.unload(); }
   });
 
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('station: a flight deck is walked, and its crews get somewhere', async () => {
+    /**
+     * ══ NOBODY WALKED ON A FLIGHT DECK, AND NINE CLAUSES WERE GREEN ═══════
+     *
+     * The two clauses above are the drum's, and they are explicitly the drum's:
+     * both boot deck 40, and the one before this stands its player on a RING
+     * stretch. Decks 12 and 32 are hung under the drum with their own
+     * cartesian frame (`StationPlan.layout`'s `deck12`/`deck32` case), and
+     * `destsOn` classified a place by the RADIUS of its door — `'ring'` past
+     * `roomR`, `'balcony'` inside the lip, `null` otherwise. Every door down
+     * there is at neither, so every walker on both decks was handed `null`,
+     * `planRoute` had nothing to plan along, and MEASURED at the lift at four
+     * hours of the day:
+     *
+     *     deck 12   20–30 bodies, 8–29 walkers, 0 routed, 0 arrivals
+     *     deck 32   24–30 bodies, 12–28 walkers, 0 routed, 0 arrivals
+     *
+     * Nothing said so, because nothing asked either deck the question. This is
+     * the question, and it is asked of BOTH decks by walking `APRONS` rather
+     * than by naming a number, so a third flight deck is covered the day it is
+     * declared.
+     *
+     * ── AND IT IS THREE THINGS, IN THE ORDER THEY CAN FAIL ───────────────
+     *
+     * THE LANES ARE ON THE FLOOR. Every walk slot and every junction slot the
+     * deck declares, at its own busy hour, is tested against the room boxes
+     * and against the deck plate — which is the annulus `DRUM.atrium`…`DRUM.R`
+     * and nothing inside it. This one goes red on the code as it stood: the
+     * balcony stretch at r = 24 crossed #5 Cobra bay on deck 12 and the ring
+     * at 85.5 crossed #4 Fighter maintenance bay on deck 32, so the old
+     * walkways seated people inside a launch well.
+     *
+     * THEY HAVE SOMEWHERE TO GO. Every live walker either holds a route with
+     * legs on it or is standing out its `DWELL` at a door it has reached.
+     * `wayLegs === null` with no dwell left is a body that asked for a
+     * destination and was refused, which is the whole defect.
+     *
+     * THEY GET THERE. The trip counter, read directly, exactly as the drum's
+     * clause reads it — an errand nobody finishes is a heading.
+     */
+    diskFetch();
+    const { wayPlacesOn, headcount, slotIn, LIVE_RADIUS, primeStationLife } =
+      await import('../../src/game/StationLife.js');
+    const { APRONS, placesOn, DRUM, SHAFTS, DECK_Y } = await import('../../src/game/StationPlan.js');
+    const decks = Object.keys(APRONS).map(Number);
+    assert(decks.length >= 2, `only ${decks.length} decks declare an apron; §3.2 has two flight decks`);
+
+    /* The same yawed box every trespass test in this file uses. */
+    const inBox = (p, x, z) => {
+      const dx = x - p.x, dz = z - p.z;
+      const c = Math.cos(p.yaw), s = Math.sin(p.yaw);
+      return Math.abs(dx * c - dz * s) <= p.w / 2 && Math.abs(dx * s + dz * c) <= p.d / 2;
+    };
+
+    const lines = [];
+    for (const deck of decks) {
+      /* ── ONE: THE DECK'S OWN DECLARATION IS ON ITS OWN FLOOR ──────────── */
+      const ways = wayPlacesOn(deck);
+      const rooms = placesOn(deck).filter((p) => p.w && p.d);
+      const V = new THREE.Vector3();
+      let slots = 0, inside = 0, off = 0, worstR = Infinity;
+      for (const w of ways) {
+        const n = Math.max(headcount(w, w.peak ?? 13), 1);
+        for (let i = 0; i < n; i++) {
+          slotIn(w, i, V);
+          slots++;
+          const r = Math.hypot(V.x, V.z);
+          worstR = Math.min(worstR, r);
+          if (r < DRUM.atrium || r > DRUM.R) off++;
+          for (const p of rooms) if (inBox(p, V.x, V.z)) { inside++; break; }
+        }
+      }
+      assert(inside === 0,
+        `deck ${deck}: ${inside} of ${slots} declared walkway slots are inside a room — `
+        + 'a walk line through a parked hull or a launch well');
+      assert(off === 0,
+        `deck ${deck}: ${off} of ${slots} declared walkway slots are off the deck plate `
+        + `(nearest ${worstR.toFixed(1)} m against the atrium's ${DRUM.atrium})`);
+
+      /* ── TWO AND THREE: STAND WHERE THE LIFT PUTS HIM AND WATCH ───────── */
+      const { world, idle } = await station(deck, 'high');
+      try {
+        const life = world._stationLife;
+        assert(life, `deck ${deck} dressed no station life`);
+        /* AT THE DECK'S OWN BUSY HOUR, taken off the gazetteer rather than
+         * typed: #5 peaks at 9 and #4 at 10, and a clause that sampled 13:00
+         * on both would be measuring the quiet end of one of them. */
+        const hour = Math.max(...rooms.map((p) => p.peak ?? 13));
+        world._station.hour = hour;
+        /* WHERE THE CAR PUTS HIM DOWN — `dressStation`'s own arithmetic, the
+         * shaft pushed out by the lobby's depth, so this is the floor a player
+         * is standing on the frame the doors part. */
+        const sh = SHAFTS.find((s) => s.decks.includes(deck) && s.id === 'flight')
+          || SHAFTS.find((s) => s.decks.includes(deck));
+        assert(sh, `deck ${deck} has no lift shaft, so nobody can reach it`);
+        const k = (Math.hypot(sh.x, sh.z) + 3.2) / (Math.hypot(sh.x, sh.z) || 1);
+        world.player.position.set(sh.x * k, DECK_Y[deck] + 1, sh.z * k);
+        world.player.body?.setTransform?.(world.player.position, null);
+        life.priming = true;
+        for (let i = 0; i < 80 && primeStationLife(world); i++) { /* fill it */ }
+        for (let i = 0; i < 300; i++) { world.update(1 / 60, idle); world._station.hour = hour; }
+
+        /* WHAT THE DECK DECLARES WITHIN REACH, which is the denominator and is
+         * the gazetteer's own — `slotIn` is the function `reseat` seats with,
+         * imported rather than re-derived. */
+        const px = world.player.position.x, pz = world.player.position.z;
+        let declared = 0;
+        for (const w of ways) {
+          if (w.way !== 'walk') continue;
+          const n = headcount(w, hour);
+          for (let i = 0; i < n; i++) {
+            slotIn(w, i, V);
+            if (Math.hypot(V.x - px, V.z - pz) <= LIVE_RADIUS) declared++;
+          }
+        }
+        assert(declared >= 4,
+          `deck ${deck} declares only ${declared} walk slots within ${LIVE_RADIUS} m of the lift — `
+          + 'the aisles do not reach the door the player comes in by');
+
+        let alive = 0;
+        const trips0 = new Map();
+        const routed = new Set();
+        for (const [, b] of life.live) {
+          if (b.stationWay !== 'walk') continue;
+          alive++;
+          trips0.set(b, b.wayTrips | 0);
+        }
+        assert(alive >= Math.ceil(declared * 0.4),
+          `deck ${deck}: ${alive} of the ${declared} declared walk slots inside the live radius `
+          + 'are real bodies — the aisles are declared full and built empty');
+        /**
+         * ── EVER HELD A ROUTE, AND NOT "HOLDS ONE NOW" ───────────────────
+         *
+         * The weaker test passes on the broken code and it took a run to see
+         * why: `setOut` with nothing to offer does not leave the body idle, it
+         * sets `wayDwell` and asks again in two seconds — so a walker with no
+         * destination in the world reads as *standing at a door it reached* on
+         * most frames. Three seconds of frames and a set of the bodies that
+         * ever carried a leg is the honest question, and it is nought on the
+         * code this replaces.
+         */
+        for (let i = 0; i < 180; i++) {
+          world.update(1 / 60, idle);
+          world._station.hour = hour;
+          for (const [, b] of life.live) {
+            if (b.stationWay === 'walk' && b.wayLegs && b.wayLegs.length) routed.add(b);
+          }
+        }
+        assert(routed.size >= Math.ceil(alive * 0.5),
+          `deck ${deck}: only ${routed.size} of ${alive} walkers ever held a planned route over `
+          + 'three seconds — the rest were handed no destination, which is the whole of the defect');
+
+        /* AND SIXTY SECONDS OF IT. A walker is dropped at `DROP_RADIUS`, so
+         * the arrivals are counted on the bodies that were there at the start
+         * AND on whatever the pool seated behind them — the corridor is a
+         * flow, and the trip counter is what survives that. */
+        let arrivals = 0, ground = 0;
+        const at = new Map();
+        for (const [, b] of life.live) if (b.position) at.set(b, [b.position.x, b.position.z]);
+        for (let i = 0; i < 3600; i++) {
+          world.update(1 / 60, idle);
+          world._station.hour = hour;
+          for (const [, b] of life.live) {
+            if (!b.position || b.disposed) continue;
+            const was = at.get(b);
+            if (!was) { at.set(b, [b.position.x, b.position.z]); continue; }
+            ground += Math.hypot(b.position.x - was[0], b.position.z - was[1]);
+            was[0] = b.position.x; was[1] = b.position.z;
+          }
+        }
+        for (const [, b] of life.live) {
+          if (b.stationWay !== 'walk') continue;
+          arrivals += Math.max(0, (b.wayTrips | 0) - (trips0.get(b) ?? 0));
+        }
+        /* ONE ARRIVAL PER FOUR WALKERS IN THE MINUTE, and the bar is a
+         * fraction of what is alive rather than a count: `TRIP.far` is 35 m
+         * and a walk is 1.35 m/s, so the longest errand on the deck is most of
+         * the window and a walker that spawned into one mid-way through will
+         * still be on it when the minute ends. Measured before the fix: 0. */
+        assert(arrivals >= Math.max(1, Math.floor(alive / 4)),
+          `deck ${deck}: ${alive} walkers ARRIVED ${arrivals} times in sixty seconds — `
+          + 'a destination that is never reached is a heading');
+        lines.push(`      deck ${deck} at ${String(hour).padStart(2, '0')}:00 — ${slots} declared `
+          + `slots, 0 in a hull; ${alive}/${declared} alive at the lift, ${routed.size} routed, `
+          + `${arrivals} arrivals and ${ground.toFixed(0)} m of ground in the minute`);
+      } finally { world.unload(); }
+    }
+    for (const l of lines) console.log(l);
+    return `${decks.length} flight decks walked`;
+  });
   /* ════════════════════════════════════════════════════════════════════════ */
 
   check('station: the lift doors open on a station with people moving in it', async () => {
@@ -1044,8 +1237,9 @@ export async function run({ check, assert, THREE }) {
       /* AT MIDDAY, and the hour is named rather than taken: `handlerOf` is a
        * function of WHO is in a slot and who is in a slot is a function of the
        * hour, so a check on a clock nobody set would pass or fail on whatever
-       * time the boot happened to leave behind. 13:00 is `CENSUS_HOUR` — the
-       * hour every other count in this file is taken at. */
+       * time the boot happened to leave behind. 13:00 is the station's own
+       * fullest hour, which is where `speciesFloor` peaks and where every
+       * other count in this file that names one hour is taken. */
       world._station.hour = 13;
       const open = wayPlacesOn(40).find((p) => p.way === 'walk');
       world.player.position.set(open.x, world.player.position.y, open.z);
@@ -1472,26 +1666,91 @@ export async function run({ check, assert, THREE }) {
       `${empty.length} places are empty when they are supposed to be busiest:\n      ${empty.join('\n      ')}`);
 
     /**
-     * ══ §5.3: EIGHT OF EVERY SPECIES — ON EVERY DAY OF A YEAR ═════════════
+     * ══ §5.3'S FLOOR, AT EVERY HOUR OF THE DAY ════════════════════════════
      *
      * This asserted `census(13)` and nothing else, which is day 0, which is
-     * the one day the faces do not reroll on. Swept, the floor was a fiction:
-     * Grome and "other" stood at SEVEN on 222 days of 365, Vree and Abbai on
-     * some, and the Minbari — whose quarter seats three at midday — fell to
-     * six. The Vorlon stood at ZERO on all 365, and the line that skipped him
-     * said he was "placed by hand at #37", where the gazetteer gave him no
-     * head to stand on. A check that names the thing it is not checking.
+     * the one day the faces do not reroll on. Swept over the year it was a
+     * fiction — Grome and "other" stood at SEVEN on 222 days of 365, the
+     * Vorlon at ZERO on all of them — and that was fixed. What was not fixed,
+     * and what this comment then hid in plain sight, is that **13:00 is one
+     * hour out of twenty-four**. The gate line named no hour at all, so §5.3
+     * was being certified on the fullest hour of the station's day and
+     * nothing was ever asked about the other twenty-three. Measured across all
+     * of them: **1268 of 10800 (species, hour, day) triples under the floor**,
+     * Grome and "other" down to two.
      *
-     * THE FLOOR IS THE ROSTER'S, NOT THIS FILE'S. `FLOOR` is the number
-     * `StationLife` builds to, and the one exception is read off the species
-     * row — `singleton` is what makes the Vorlon one — so a sixteenth species
-     * added to `SPECIES` is swept here the day it lands, with no list to edit.
+     * ── AND EIGHT AT 04:00 IS NOT WHAT §5.3 MEANS ────────────────────────
+     *
+     * The station holds 600 people at 13:00 and 311 at 04:00 — `fullness` is a
+     * cosine on each room's `peak` and half of it is asleep in the small
+     * hours, which is the point of having a clock at all. A flat eight around
+     * the clock would mean the fifteen rarest kinds are the only ones who
+     * never go to bed: it turns the floor into a night shift, which is the
+     * same defect as the quota this check refuses below, arrived at from the
+     * other side.
+     *
+     * So the floor is a CURVE, and it is the station's own: `StationLife`
+     * exports `speciesFloor(hour)` — `FLOOR` scaled by how full the drum is at that
+     * hour against its fullest, never under one — and `floorFill` builds to
+     * exactly the number this asserts. Nothing in it is typed: the ratio is
+     * `headcount` summed over the gazetteer, which is `heads` and `fullness`
+     * and §3.4's rhythms. Eight at the peak, seven in the evening, four at
+     * four in the morning.
+     *
+     * AND THIS IS A STRENGTHENING, NOT A WIDENING, which matters because the
+     * shape of a bad fix here is to lower the bar until the sweep goes green.
+     * §5.3's sentence is *"≥ 8 residents placed per species"* and it names no
+     * hour; the hour it was read at was 13:00, and at 13:00 the number this
+     * asserts is still **eight**, unchanged. What changed is the other twenty-
+     * three hours, which went from asserted-nowhere to asserted-here. §5.3 is
+     * unedited and no gate in it is skipped — SHARK §15's *"a gate in §5.3 is
+     * not skipped"* — because the flat eight was never in it.
+     *
+     * NEVER UNDER ONE is the presence clause, and it is why this loop replaces
+     * the separate every-species-at-every-hour sweep that used to sit here: a
+     * species with nobody aboard at 03:00 is a species the player cannot be
+     * shown at 03:00, and a floor of one says that in the same sentence as the
+     * rest of the rule instead of in a second one that could drift from it.
+     *
+     * THE FLOOR IS THE ROSTER'S, NOT THIS FILE'S. The one exception is read
+     * off the species row — `singleton` is what makes the Vorlon one — so a
+     * sixteenth species added to `SPECIES` is swept here the day it lands,
+     * with no list to edit.
      */
     const { SPECIES_KEYS, SPECIES_BY } = await import('../../src/game/StationCast.js');
-    const { FLOOR } = await import('../../src/game/StationLife.js');
-    const floorFor = (k) => (SPECIES_BY.get(k).singleton ? 1 : FLOOR);
+    const { FLOOR, speciesFloor } = await import('../../src/game/StationLife.js');
+    const floorFor = (k, hour) => (SPECIES_BY.get(k).singleton ? 1 : speciesFloor(hour));
     const YEAR = 365;
 
+    /* Forty-eight days across the year at all twenty-four hours — 61 is prime
+     * to 365, so the stride walks the whole year rather than one season — plus
+     * the six days the old presence sweep named, so nothing this check used to
+     * look at stops being looked at. */
+    const days = new Set([0, 1, 7, 65, 199, 364]);
+    for (let i = 0; i < 42; i++) days.add((i * 61) % YEAR);
+    const thin = [];
+    for (const day of days) {
+      for (let hour = 0; hour < 24; hour++) {
+        const c = census(hour, day);
+        for (const k of SPECIES_KEYS) {
+          const n = c.bySpecies.get(k) || 0;
+          const f = floorFor(k, hour);
+          if (n < f) thin.push(`day ${day} ${hour}:00 — ${k} ${n} (floor ${f})`);
+        }
+      }
+    }
+    assert(thin.length === 0,
+      `${thin.length} of ${days.size * 24 * SPECIES_KEYS.length} (species, hour, day) triples fall `
+      + `under §5.3's floor:\n      ` + thin.slice(0, 8).join('\n      '));
+
+    /**
+     * AND THE FLOOR IS A FLOOR, NOT A QUOTA. The failure mode of any top-up is
+     * that it flattens the thing it was fixing — every rare kind pinned at
+     * exactly its floor for ever, which is a census that has stopped being a
+     * census. So, over a whole year at the census hour: no two days may read
+     * the same, and every kind that is not a singleton must take more than one
+     * value across it.
+     */
     const worst = new Map(SPECIES_KEYS.map((k) => [k, [Infinity, -1]]));
     const vectors = new Set();
     const spread = new Map(SPECIES_KEYS.map((k) => [k, new Set()]));
@@ -1506,44 +1765,30 @@ export async function run({ check, assert, THREE }) {
       }
       vectors.add(v.join(','));
     }
-    const thin = SPECIES_KEYS
-      .filter((k) => worst.get(k)[0] < floorFor(k))
-      .map((k) => `${k}: ${worst.get(k)[0]} on day ${worst.get(k)[1]} (floor ${floorFor(k)})`);
-    assert(thin.length === 0,
-      `over ${YEAR} days the 13:00 census falls under §5.3's floor for ${thin.length} species:\n      `
-      + thin.join('\n      '));
+    const under = SPECIES_KEYS
+      .filter((k) => worst.get(k)[0] < floorFor(k, 13))
+      .map((k) => `${k}: ${worst.get(k)[0]} on day ${worst.get(k)[1]} (floor ${floorFor(k, 13)})`);
+    assert(under.length === 0,
+      `over ${YEAR} days the 13:00 census falls under §5.3's floor for ${under.length} species:\n      `
+      + under.join('\n      '));
 
-    /**
-     * AND EVERY SPECIES IS ON THE STATION AT EVERY HOUR, not only at midday.
-     * The floor is a midday number because `occupant` may not read the clock;
-     * PRESENCE is not, and a species that vanishes from the station between
-     * 11:00 and 20:00 — which is what the Vorlon's curve did to him — is a
-     * species the player cannot be shown.
-     */
-    const gone = [];
-    for (const day of [0, 1, 7, 65, 199, 364]) {
-      for (let hour = 0; hour < 24; hour++) {
-        const c = census(hour, day);
-        const miss = SPECIES_KEYS.filter((k) => !(c.bySpecies.get(k) > 0));
-        if (miss.length) gone.push(`day ${day} ${hour}:00 — ${miss.join(', ')}`);
-      }
-    }
-    assert(gone.length === 0,
-      `${gone.length} hours hold fewer than all ${SPECIES_KEYS.length} species:\n      `
-      + gone.slice(0, 8).join('\n      '));
-
-    /**
-     * AND THE FLOOR IS A FLOOR, NOT A QUOTA. The failure mode of any top-up is
-     * that it flattens the thing it was fixing — every rare kind pinned at
-     * exactly eight for ever, which is a census that has stopped being a
-     * census. So: no two days of the year may read the same, and every kind
-     * that is not a singleton must take more than one value across it.
-     */
     assert(vectors.size === YEAR,
       `only ${vectors.size} distinct censuses over ${YEAR} days — the mix has stopped moving`);
     const flat = SPECIES_KEYS.filter((k) => !SPECIES_BY.get(k).singleton && spread.get(k).size < 2);
     assert(flat.length === 0,
       `${flat.join(', ')} read the same number on all ${YEAR} days — that is a quota, not a floor`);
+
+    /* AND THE CURVE ITSELF IS A CURVE. A `speciesFloor` that answered `FLOOR` at
+     * every hour would pass every line above and would be the flat eight this
+     * whole clause is about; one that collapsed to 1 everywhere would pass
+     * them too and would be no floor at all. */
+    const curve = [...Array(24).keys()].map((h) => speciesFloor(h));
+    assert(Math.max(...curve) === FLOOR,
+      `speciesFloor peaks at ${Math.max(...curve)} and §5.3's number is ${FLOOR}`);
+    assert(Math.min(...curve) >= 1 && Math.min(...curve) < FLOOR,
+      `speciesFloor runs ${Math.min(...curve)}–${Math.max(...curve)}: a floor that never moves is a quota`);
+    console.log(`      §5.3's floor by hour: ${curve.join(' ')}`);
+    console.log(`      swept ${days.size} days x 24 hours = ${days.size * 24} censuses, all above it`);
 
     const line = SPECIES_KEYS.map((k) => {
       const a = [...spread.get(k)];
@@ -1947,6 +2192,124 @@ export async function run({ check, assert, THREE }) {
 
   /* ════════════════════════════════════════════════════════════════════════ */
 
+  check('station: no arrival frame spends more than the build queue slice allows', async () => {
+    /**
+     * ══ THE SLICE WAS DECLARED AND NOT HONOURED ════════════════════════════
+     *
+     * The clause above holds that the seam is short and that the rest of the
+     * build runs on the frames after it. It does not ask what those frames
+     * COST, and measured on a warm arrival they were the seam wearing a
+     * different face: `253, 121, 118, 176, 115, 101, 53, 32 ms` — about a
+     * second at four to ten frames a second after the doors open — with a
+     * worst single frame of 752.7 ms cold. `Station.BUILD_SLICE` says four
+     * milliseconds.
+     *
+     * TWO THINGS WERE WRONG AND ONLY ONE OF THEM IS ARITHMETIC.
+     *
+     *   THE POOL WAS SEATED TWICE ON ONE FRAME. `drainStationBuild` runs at the
+     *     top of `stepStation` and `stepStationLife` re-seats at the bottom of
+     *     it, both with `reseat`'s priming cap — and `life.reseatIn` starts at
+     *     zero, so the arrival frame built **eight bodies** and the three after
+     *     it four each. The pool filled in four frames rather than the seven
+     *     the slicing was written for, on the frames the player can least
+     *     afford. That is what this clause is red on: the queue now stands
+     *     aside on a frame the step is already seating (`seatingThisFrame`),
+     *     and no frame builds more than one slice of people.
+     *
+     *   AND THE ATOM IS BIGGER THAN THE BUDGET. One body is a rig, sixty
+     *     meshes and a `MergedSkin` chain — about 25 ms of CPU — so no
+     *     arrangement of this queue makes a piece fit inside 4 ms. What the
+     *     slice can promise, and what is asserted here, is that a frame never
+     *     runs a PILE of pieces: the drain's worst frame is one piece plus the
+     *     slice, and the piece it takes is the cheapest one offered.
+     *
+     * THE READINGS ARE CPU. `_cpuclock`'s header has the numbers: wall time on
+     * this box moves 60x with a peer lane live and CPU barely moves. The window
+     * is round `world.update`, which is synchronous, so nothing else in this
+     * file's concurrent checks can be billed to it.
+     */
+    const { cpuMs, loadPhrase } = await import('./_cpuclock.mjs');
+    const { bootWorld, run: step, idleInput } = await import('./_coop.mjs');
+    const { BUILD_SLICE, prepareStation } = await import('../../src/game/Station.js');
+    const { PRIME_SLICE } = await import('../../src/game/StationLife.js');
+    const { RIDE } = await import('../../src/game/DeckLift.js');
+    diskFetch();
+
+    /* A WARM ARRIVAL, WHICH IS THE ONLY KIND THERE IS. `enterStation` is
+     * reached from `world.onDeckLift`, so the flight deck has always been built
+     * and paid for every procedural texture before the button is pressed. The
+     * seam clause above makes the same argument at more length. */
+    const deck = await bootWorld({ level: 'hangar', settings: { mode: 'hangar', level: 'hangar', allies: 0 } });
+    await prepareStation();
+    deck.world.dispose?.();
+
+    const { world } = await bootWorld({
+      level: 'station',
+      settings: { mode: 'station', level: 'station', allies: 0 },
+      onWorld: (w) => { w._stationFloor = 40; },
+    });
+    try {
+      const st = world._station, life = world._stationLife;
+      const idle = idleInput();
+      const frames = Math.ceil(RIDE.doors * 60);
+      const cpu = [], made = [];
+      /* WHICH FRAMES THE STEP SEATS ON, read BEFORE the frame runs — it is the
+       * same test the drain makes, so a drain that ignored it is caught by the
+       * pair of readings rather than by a copy of the rule. */
+      const stepSeats = [], queueRan = [];
+      for (let i = 0; i < frames; i++) {
+        const before = life.spawned, pieces = st.build?.pieces | 0;
+        stepSeats.push(life.reseatIn - 1 / 60 <= 0);
+        const t0 = cpuMs();
+        step(world, 1 / 60, idle);
+        cpu.push(cpuMs() - t0);
+        made.push(life.spawned - before);
+        queueRan.push(((st.build?.pieces | 0) - pieces) > 0);
+      }
+      const build = st.build;
+      assert(build && build.pieces > 0,
+        'the build queue never recorded a piece — nothing was deferred, or the drain stopped measuring itself');
+
+      /* ── 1. NO FRAME RUNS A PILE OF PIECES ─────────────────────────────
+       * The bound, and every term in it is the queue's own: the worst frame the
+       * drain spent is one indivisible piece plus the slice it is allowed to
+       * start another inside. Anything more is two big pieces on one frame. */
+      assert(build.worst <= build.piece + BUILD_SLICE + 0.5,
+        `the drain's worst frame spent ${build.worst.toFixed(1)} ms against a worst single piece of `
+        + `${build.piece.toFixed(1)} ms — more than one piece plus BUILD_SLICE's ${BUILD_SLICE} ms, `
+        + 'so a frame ran a pile');
+
+      /* ── 2. AND THE POOL IS SEATED BY ONE HAND PER FRAME ───────────────
+       * `PRIME_SLICE` is what ONE seating builds. Two seatings on one frame is
+       * the defect: eight bodies on the arrival frame, measured. */
+      const worstMade = Math.max(...made);
+      assert(worstMade <= PRIME_SLICE,
+        `one arrival frame built ${worstMade} bodies against a seating cap of ${PRIME_SLICE} — `
+        + 'the drain and stepStationLife are both seating the pool on the same frame');
+
+      /* ── 3. AND THE QUEUE STANDS ASIDE ON THE FRAMES THE STEP SEATS ON. */
+      const both = stepSeats.map((seat, i) => seat && queueRan[i]).filter(Boolean).length;
+      assert(both === 0,
+        `the queue spent ${both} frame(s) building on top of a frame stepStationLife was seating on`);
+
+      /* ── 4. AND IT ALL STILL FINISHES BEHIND THE DOORS, which is what the
+       * standing-aside is not allowed to cost. */
+      assert(!st.pending.length && !life.priming,
+        `the deferred build was still running after ${frames} frames — the doors take ${RIDE.doors} s`);
+      assert(life.live.size > 4, `${life.live.size} residents are standing when the doors open`);
+
+      const worst = Math.max(...cpu);
+      const idleCpu = cpu.slice(-10).reduce((a, b) => a + b, 0) / 10;
+      return `${frames} frames behind the doors (${await loadPhrase()}): worst ${worst.toFixed(0)} ms CPU, `
+        + `settling to ${idleCpu.toFixed(0)} ms; the queue took ${build.pieces} pieces over `
+        + `${build.calls} frames, worst piece ${build.piece.toFixed(0)} ms, worst frame `
+        + `${build.worst.toFixed(0)} ms against one piece + BUILD_SLICE's ${BUILD_SLICE} ms; `
+        + `at most ${worstMade} of ${PRIME_SLICE} bodies built on any one frame, ${life.live.size} standing`;
+    } finally { world.dispose?.(); }
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
   check('station: the window shows the same battle the flight deck sees', async () => {
     /**
      * V15 §1.3 asks for *"windows that look out on the same space battle the
@@ -2298,6 +2661,366 @@ export async function run({ check, assert, THREE }) {
       } finally { world.dispose?.(); }
     }
     return rows.join('; ');
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ══ AND IT IS A LANDMARK ON MORE THAN ONE DECK, MEASURED ════════════════
+   *
+   * §1.2's whole argument for a column over a screen is *"a thing you can see
+   * from two other decks"*. The clause above this one measures the SHELL — the
+   * plate is cut, the soffit is cut, the tip stands proud — and every one of
+   * those was green while the landmark was invisible, because a ROOM standing
+   * on the cut lays its own floor and its own lid straight back across it.
+   * `#61 The Underlift Pit` did exactly that on deck 44: floor slab, a 2.5 m
+   * service pan under it, chain-link at 2.2 m and a ceiling at 4.4.
+   *
+   * So this asks the question the shell cannot: FROM HOW MANY SQUARE METRES
+   * OF EACH DECK CAN A STANDING PERSON SEE IT. A grid over the walkable plate,
+   * eye height, rays at five points up the column against THE WHOLE SCENE —
+   * every room, every fixture, not just `st.shell`. Derived, not a flag: there
+   * is no field anywhere that says "visible" for this to read.
+   *
+   * Swept at a 3 m grid out to 45 m by the lane's own probe, before the pit's
+   * lid was cut and after:
+   *
+   *              area that sees it        column in view at the well rail
+   *   deck 40    207 m² → 207 m²          58/61 points, 27.2 m, at the mouth
+   *   deck 44   1944 m² → 1944 m²          8/61 → 13/61, 3.7 m → 6.0 m
+   *   deck 48   1035 m²                    the tip stands 4.00 m proud
+   *
+   * TWO THINGS THAT READING SAYS PLAINLY. The column was already a landmark
+   * across the two upper decks — a black spike over the Underlift Pit's roof
+   * from 47% of deck 44 — so the AREA was never the missing half; what was
+   * missing was the near view, and cutting the pit's lid is worth 2.3 m more
+   * of column at the one place a player walks up to it. And deck 40's number
+   * does not move at all, because the wall in the way is the Concourse's
+   * IMPORTED mesh (`station-room-zocalo-hull`, a full-length side wall with no
+   * opening at this alcove, and `roomColliders` builds the same shell in
+   * physics) — which no kit shape can reach. That is written down in
+   * `StationKit.SHAPES.obelisk` with the ray counts.
+   *
+   * The bars below are deliberately well under what is measured: this is a
+   * floor under a property, not a pin on a number that moves whenever a room
+   * on 44 grows a wall.
+   */
+  check('station: the Standing can be SEEN from more than one deck — a swept sightline, not a flag', async () => {
+    const { PLACE, DECK_Y, DRUM } = await import('../../src/game/StationPlan.js');
+    const { standingShaft, SHAFT_HALF } = await import('../../src/game/StationKit.js');
+    const p56 = PLACE.get(56);
+    /* WHICH ROOMS ARE TOLD ABOUT THE SHAFT, and it is derived rather than a
+     * list: `standingShaft` reads #56's own row and every room's own frame, so
+     * a room that moves over the shaft tomorrow is told the day it moves. #61
+     * The Underlift Pit is the one that stands on it today, and a room on the
+     * far side of the drum must be told nothing at all. */
+    const told = [...PLACE.values()].filter((q) => !q.external && q.w && standingShaft(q));
+    assert(told.some((q) => q.id === 61),
+      'nothing tells #61 The Underlift Pit that the Standing comes up through it');
+    assert(!standingShaft(PLACE.get(26)),
+      'the shaft claims to cross #26 The Promenade, which is on the far side of the drum');
+    const STEP = 5, RANGE = 40, CELL = STEP * STEP;
+    const rows = [], area = {};
+    for (const deck of [40, 44, 48]) {
+      const { world } = await station(deck);
+      try {
+        world.scene.updateMatrixWorld(true);
+        const st = world._station;
+        const own = new Set();
+        st.obelisk?.group3?.traverse((o) => own.add(o));
+        const cols = [], targets = [];
+        world.scene.traverse((o) => {
+          if (!(o.isMesh || o.isInstancedMesh)) return;
+          if (own.has(o)) cols.push(o); else targets.push(o);
+        });
+        assert(cols.length, `deck ${deck}: no column to look at`);
+        const bb = new THREE.Box3(), all = new THREE.Box3().makeEmpty();
+        for (const m of cols) { bb.setFromObject(m); all.union(bb); }
+        const y = DECK_Y[deck], cx = st.obelisk.x, cz = st.obelisk.z;
+
+        /**
+         * ── FIRST: NOTHING IS PAVED OVER THE SHAFT ──────────────────────
+         *
+         * One ray straight down the shaft's own axis, from a metre over this
+         * deck's floor, AGAINST EVERY MESH IN THE SCENE. `st.shell` answered
+         * this correctly for two years while the pit's floor sat in the hole,
+         * because the pit is not the shell. A control ray nine metres along
+         * the same bearing has to hit, or a deck with no floor at all would
+         * pass this.
+         */
+        {
+          const R0 = new THREE.Raycaster();
+          const up = new THREE.Vector3(0, 1, 0);
+          const reach = all.max.y - (y + 1) - 0.5;
+          R0.set(new THREE.Vector3(cx, y + 1, cz), up); R0.far = reach;
+          const over = R0.intersectObjects(targets, false);
+          /* A CONTROL nine metres along the same bearing has to hit something,
+           * or a deck built with no ceilings at all would pass this. */
+          const k = 1 + 9 / Math.hypot(cx, cz);
+          /* THE CONTROL REACHES THIS DECK'S OWN SOFFIT and not only as far as
+           * the cap: on 48 the cap is 4 m proud and the ceiling is 7.2 m up,
+           * so a control capped at the shaft's own reach would find nothing
+           * and fail on a deck that is roofed exactly as it should be. */
+          R0.set(new THREE.Vector3(cx * k, y + 1, cz * k), up); R0.far = DRUM.storey + 1.5;
+          const control = R0.intersectObjects(targets, false).length;
+          assert(control > 0, `deck ${deck}: the control ray found no ceiling at all beside the shaft`);
+          assert(over.length === 0,
+            `deck ${deck}: ${over.length} things roof the shaft in the ${reach.toFixed(1)} m `
+            + `between this floor and the cap (${over.slice(0, 2).map((h) => h.object.name || '(a room mesh)').join(', ')}) — `
+            + 'the deck soffit is cut and the room standing on it roofed the hole back in');
+        }
+
+        /* ── THEN: THE SWEEP ─────────────────────────────────────────── */
+        const sph = targets.map((o) => {
+          const b = new THREE.Box3().setFromObject(o);
+          const c = b.getCenter(new THREE.Vector3());
+          return { o, cx: c.x, cy: c.y, cz: c.z, r: b.getSize(new THREE.Vector3()).length() / 2 + 0.05 };
+        });
+        /* Sorted by how soon the ray meets each bound, so the loop stops at
+         * the first wall: a sightline is usually stopped by the nearest thing
+         * and testing the forty merged meshes behind it is the whole cost. */
+        const near = [], one = [];
+        const pick = (ax, ay, az, bx, by, bz) => {
+          near.length = 0;
+          const dx = bx - ax, dy = by - ay, dz = bz - az;
+          const L = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1, L2 = L * L;
+          for (const q of sph) {
+            const t = Math.max(0, Math.min(1, ((q.cx - ax) * dx + (q.cy - ay) * dy + (q.cz - az) * dz) / L2));
+            const px = ax + dx * t - q.cx, py = ay + dy * t - q.cy, pz = az + dz * t - q.cz;
+            if (px * px + py * py + pz * pz <= q.r * q.r) near.push([Math.max(0, t * L - q.r), q.o]);
+          }
+          near.sort((u, v) => u[0] - v[0]);
+          return near;
+        };
+        const shoot = (R, list) => {
+          for (const [t0, o] of list) {
+            if (t0 > R.far) break;
+            one[0] = o;
+            if (R.intersectObjects(one, false)[0]) return true;
+          }
+          return false;
+        };
+        const lo = Math.max(all.min.y + 0.4, y + 0.4), hi = all.max.y - 0.3;
+        const N = 5, ys = [];
+        for (let i = 0; i < N; i++) ys.push(lo + (hi - lo) * (N === 1 ? 0.5 : i / (N - 1)));
+        const R = new THREE.Raycaster();
+        const from = new THREE.Vector3(), to = new THREE.Vector3(), dir = new THREE.Vector3();
+        let seen = 0, walk = 0, rMax = 0;
+        for (let x = -DRUM.R; x <= DRUM.R; x += STEP) {
+          for (let z = -DRUM.R; z <= DRUM.R; z += STEP) {
+            const r = Math.hypot(x, z);
+            if (r < DRUM.atrium || r > DRUM.R - 2) continue;
+            const d = Math.hypot(x - cx, z - cz);
+            if (d > RANGE || d < 1.5) continue;
+            R.set(from.set(x, y + 0.9, z), dir.set(0, -1, 0)); R.far = 1.4;
+            if (!shoot(R, pick(x, y + 0.9, z, x, y - 0.5, z))) continue;
+            walk++;
+            for (const ty of ys) {
+              from.set(x, y + 1.65, z);
+              to.set(cx, ty, cz);
+              dir.copy(to).sub(from);
+              const len = dir.length(); dir.normalize();
+              R.set(from, dir); R.far = len - 0.8;
+              if (shoot(R, pick(from.x, from.y, from.z, to.x, to.y, to.z))) continue;
+              seen++; if (d > rMax) rMax = d;
+              break;
+            }
+          }
+        }
+        area[deck] = seen * CELL;
+        rows.push(`deck ${deck}: ${(seen * CELL)} m² of ${walk * CELL} sees it, out to ${rMax.toFixed(0)} m`);
+      } finally { world.dispose?.(); }
+    }
+    const lit = [40, 44, 48].filter((d) => area[d] >= 100);
+    assert(lit.length >= 2,
+      `the column can be seen from ${lit.length} deck(s): ${rows.join('; ')} — §1.2 asks for a thing `
+      + 'you can see from two OTHER decks, which is what an obelisk is for');
+    /* THE LIVING DECK IS THE ONE THE SHAFT PASSES, and it is the one the pit
+     * used to pave over. A hundred square metres would be the room it stands
+     * in; this is most of the deck within 40 m of it. */
+    assert(area[44] >= 600,
+      `deck 44 sees the column from ${area[44]} m² — the shaft is roofed or floored again`);
+    assert(area[48] >= 150,
+      `deck 48 sees the column from ${area[48]} m² — the tip is not standing out of the plate`);
+    assert(area[40] >= 100, `deck 40 sees its own column from ${area[40]} m²`);
+    return `${rows.join('; ')}; ${told.length} room(s) cut for the `
+      + `${(SHAFT_HALF * 2).toFixed(1)} m shaft (${told.map((q) => `#${q.id}`).join(', ')})`;
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ══ AND THE PA SAYS THE STATION'S NAME — V15 §1.1's fifth place ═════════
+   *
+   * §1.1 lists five places the player's own name for the drum must appear and
+   * ends *"…the Databank's station page, and the PA."* Four were built and the
+   * fifth was declined in a note over `Station.beginStationName`, on the
+   * strength of `DeckAudio`'s rule that a tannoy must never say words. That
+   * rule is the hangar's; the player overruled it for their own station.
+   *
+   * THIS DRIVES THE SHIPPED LOOP AND NOT THE FUNCTION. `world.update(1/60,
+   * idle)` with the station's own clock wound on, so `stepStation` →
+   * `stepTannoy` runs exactly as it does in a browser — a check that called
+   * the announcer directly could not see a step that stopped being called.
+   *
+   * THREE THINGS, and the third is the one that costs something:
+   *
+   *   IT SPEAKS   the call goes through `Audio.radio`, the same real speech
+   *               path the stratagem codes use — not a caption on its own.
+   *               The singleton is stubbed here because a headless engine is
+   *               never `ready`, and stubbing it is also what proves the call
+   *               is made rather than skipped.
+   *   IT IS READ  the same string reaches `world.notify`, so a player with the
+   *               sound off still gets the name.
+   *   IT FOLLOWS  rename the drum and the very next call says the new name and
+   *               never the old one. That is the whole difference between
+   *               saying a name and printing a constant.
+   */
+  check("station: the tannoy says the station's name, and follows it when the name changes", async () => {
+    const S = await import('../../src/game/StationSave.js');
+    const { audio } = await import('../../src/engine/Audio.js');
+    const was = S.stationName();
+    const realRadio = audio.radio;
+    const { world } = await station(40);
+    const spoken = [], banners = [];
+    try {
+      const idle = (await import('./_coop.mjs')).idleInput();
+      const st = world._station;
+      audio.radio = (spec, text) => { spoken.push(String(text || '')); return String(text || ''); };
+      const notify = world.notify?.bind(world);
+      world.notify = (a, b) => { banners.push(`${a} — ${b}`); notify?.(a, b); };
+
+      /* ONE CALL A TURN OF THE CLOCK. `stepTannoy` fires on a station-minute
+       * slot, so winding `st.hour` past one is a call — which is the same
+       * thing 3600 frames of the loop would do, at 1/3600 of the cost, and it
+       * is still `world.update` that runs the step. */
+      const turn = () => { st.hour += 0.6; world.update(1 / 60, idle); };
+      S.setStationName('Kessel Gate');
+      const first = S.stationName().toUpperCase();
+      spoken.length = 0; banners.length = 0;
+      for (let i = 0; i < 5; i++) turn();
+
+      assert(st.pa && st.pa.calls >= 4,
+        `five turns of the station clock and the tannoy made ${st.pa?.calls ?? 0} calls`);
+      assert(spoken.length >= 4,
+        `${spoken.length} of ${st.pa.calls} calls reached Audio.radio — the PA is a caption, not a voice`);
+      assert(banners.length >= 4,
+        `${banners.length} of ${st.pa.calls} calls reached world.notify — the name is unreadable with the sound off`);
+      const missed = spoken.filter((t) => !t.toUpperCase().includes(first));
+      assert(missed.length === 0,
+        `${missed.length} of ${spoken.length} calls did not say "${first}": ${missed.slice(0, 2).join(' / ')}`);
+      /* NOT ONE LINE OVER AND OVER. A tannoy the player recognises is the
+       * narrator `DeckAudio`'s header is right to refuse; the fact under the
+       * name comes off the live board and the live clock. */
+      assert(new Set(spoken).size >= 2,
+        `the tannoy said one identical line ${spoken.length} times: ${spoken[0]}`);
+
+      /* ── AND IT FOLLOWS THE NAME ─────────────────────────────────────── */
+      S.setStationName('Ord Mantell Deep');
+      const second = S.stationName().toUpperCase();
+      assert(second !== first, 'the rename did not take, so the clause below proves nothing');
+      spoken.length = 0; banners.length = 0;
+      for (let i = 0; i < 3; i++) turn();
+      assert(spoken.length >= 2, `${spoken.length} calls after the rename`);
+      const stale = spoken.filter((t) => !t.toUpperCase().includes(second) || t.toUpperCase().includes(first));
+      assert(stale.length === 0,
+        `after renaming to "${second}" the tannoy still said: ${stale.slice(0, 2).join(' / ')}`);
+      return `${st.pa.calls} calls: "${first}" on ${5} turns then "${second}" on 3, `
+        + `${new Set(spoken).size} distinct lines after the rename, both heard and read`;
+    } finally {
+      audio.radio = realRadio;
+      S.setStationName(was);
+      world.dispose?.();
+    }
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ══ #10 THE FORGE IS A DOOR ONTO SABER-BUILDING — V16 §A4 ═══════════════
+   *
+   * *"maybe you can only adjust stuff with your lightsaber at the armory …
+   * that's the only place where you can edit your lightsaber."*
+   *
+   * Two halves, and the second is the one that was missing. The DOOR fires:
+   * pressed with the real key inside #10, `Station.stationKey` raises
+   * `onKiosk('hilt')`. What that opened was the whole Jedi panel — thirty-seven
+   * controls of which five are the saber — scrolled to the crystal, which is a
+   * door onto the character creator that lands near a smith's work.
+   *
+   * So this asks both questions of the shipped path: does the key open it, and
+   * is what opens the SABER. `main.js`'s `KIOSK_ROWS` names the rows and
+   * `Menu.showRows` shelves the rest; every id named has to exist on the panel
+   * the tab bar reaches, or the room would open a page with nothing on it.
+   */
+  check('station: the key at #10 The Forge opens the saber builder', async () => {
+    const { PLACE, floorOf } = await import('../../src/game/StationPlan.js');
+    const p10 = PLACE.get(10);
+    assert(p10 && p10.kiosk === 'hilt', `#10 carries kiosk '${p10?.kiosk}' — the Forge has no door at all`);
+    const { world } = await station(40);
+    const rows = [];
+    try {
+      /* THE REAL KEY. One tap on one frame into the edge set `Player.
+       * _readInput` reads — a check that called `world.onKiosk('hilt')` would
+       * be green over a branch that never runs, which is the exact defect
+       * `stationKey`'s own header records for this room. */
+      const hit = new Set();
+      const input = {
+        hit,
+        act: (id) => hit.has(id), actHit: (id) => hit.has(id), actDown: (id) => hit.has(id),
+        moveAxis: (o) => { if (o) { o.x = 0; o.y = 0; return o; } return { x: 0, y: 0 }; },
+        mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+        delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 },
+        end() { hit.clear(); },
+      };
+      const opened = [];
+      world.onKiosk = (id) => { opened.push(id); return true; };
+      world.onCounter = (id) => { opened.push(`counter:${id}`); return true; };
+      const p = world.player;
+      const y = floorOf(p10);
+      for (const [tag, x, z] of [
+        ['the middle of the room', p10.x, p10.z],
+        ['a step inside the door', p10.x - (p10.d / 2 - 2) * Math.sin(p10.yaw), p10.z - (p10.d / 2 - 2) * Math.cos(p10.yaw)],
+      ]) {
+        p.position.set(x, y + 0.1, z);
+        p.body?.position?.copy(p.position);
+        for (let i = 0; i < 6; i++) { world.update(1 / 60, input); input.end(); }
+        opened.length = 0;
+        hit.add('focus');
+        world.update(1 / 60, input); input.end();
+        assert(opened.includes('hilt'),
+          `${tag} in #10: the key raised ${opened.length ? opened.join(', ') : 'NOTHING'} — not the saber door`);
+        rows.push(`${tag}: ${opened.join(', ')}`);
+      }
+    } finally { world.dispose?.(); }
+
+    /* ── AND WHAT OPENS IS THE SABER, NOT THE CHARACTER CREATOR ────────── */
+    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const tab = main.match(/const KIOSK_TAB = \{([\s\S]*?)\n\};/);
+    assert(tab && /\bhilt:\s*'saber'/.test(tab[1]), "KIOSK_TAB does not send the Forge's key to the Jedi panel");
+    const block = main.match(/const KIOSK_ROWS = \{([\s\S]*?)\n\};/);
+    assert(block, 'main.js has no KIOSK_ROWS, so the Forge opens all thirty-seven controls again');
+    const row = block[1].match(/hilt:\s*\[([^\]]*)\]/);
+    assert(row, 'KIOSK_ROWS names no rows for the Forge');
+    const ids = [...row[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    /* THE FIVE THE EARLIER COUNT CALLED THE SABER, and they are named here so
+     * that dropping one is red rather than quiet. */
+    for (const want of ['color-list', 'lightning-list', 'hilt-list', 'opt-bladelen', 'opt-bladewidth']) {
+      assert(ids.includes(want), `the Forge's shelf does not carry ${want}`);
+    }
+    assert(main.includes('menu.showRows?.(KIOSK_ROWS[panelId] || null)'),
+      'KIOSK_ROWS is a table nothing reads — showKioskPanel never puts the shelf up');
+    /* EVERY ROW IT NAMES IS ON THE PANEL THE TAB BAR REACHES. A shelf naming
+     * an id that is not in the saber panel opens an empty page. */
+    const html = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
+    const panel = html.match(/<section class="panel" data-panel="saber">([\s\S]*?)\n    <\/section>/);
+    assert(panel, 'index.play.html has no saber panel for the Forge to open');
+    for (const id of ids) {
+      assert(panel[1].includes(`id="${id}"`), `#10's shelf names ${id}, which is not on the Jedi panel`);
+    }
+    const menu = await readFile(new URL('../../src/ui/Menu.js', import.meta.url), 'utf8');
+    assert(/showRows\(ids\)\s*\{/.test(menu), 'Menu has no showRows for the shelf to go through');
+    return `${rows.join('; ')}; the shelf is ${ids.length} rows of the panel's 37 controls`;
   });
 
   /* ════════════════════════════════════════════════════════════════════════ */

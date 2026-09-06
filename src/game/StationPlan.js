@@ -600,14 +600,47 @@ export const PLACES = [
    * GAP off the ring — the length of walkway between the laundry and the
    * officers' doors where the plating is up and nobody has a reason to be.
    *
-   * ITS HOUR IS 02:00, WHICH IS THE ONLY PLACE ON DECK 44 WITH ONE. Every
-   * other row on this deck peaks in the day or the evening; a `peak` in the
-   * small hours is what makes "not always available or offered" a fact about
-   * the station's day rather than a flag in a file, because `headcount` reads
-   * `peak` and the gap is genuinely empty at noon.
+   * ITS HOUR IS 02:00, and so is the market's next door. Every other row on
+   * this deck peaks in the day or the evening; a `peak` in the small hours is
+   * what makes "not always available or offered" a fact about the station's
+   * day rather than a flag in a file, because `headcount` reads `peak` and the
+   * gap is genuinely empty at noon.
    *
    * `heads` is 16 standing at the lip — no benches, no tiers, and nowhere to
    * sit is half of what makes it read as the wrong kind of room.
+   *
+   * ── AND IT IS THE FAR END OF #58's GAP, WHICH IS WHAT §G5 SAYS ────────
+   *
+   * §G5 puts this *"off `#58 The Underlift` (Lane B4's black market, deck
+   * 44)"* and §B4 puts that market *"into the ring's service gap on deck 44,
+   * behind the laundry"*. The two rows said otherwise for as long as both
+   * existed: the pit sat here on deck 44 and the market on the Working deck a
+   * storey below — **102 m apart across the plan** and a lift ride, which is
+   * not a back room, it is two rooms that share a name. Both are in this one
+   * gap now, doors 16.8 m apart along the ring: the market's mouth is first
+   * off the laundry end and the pit's is the next one along, with 0.48 m of
+   * plating between the two footprints.
+   *
+   * WHAT IS STILL NOT TRUE OF IT: you walk to the pit past the market, not
+   * through it. A door in the market's back wall is `StationKit.containerrow`'s
+   * `walls()` call to open, and the reachability check wants every door on the
+   * ring, the balcony or the skin; both are somebody else's lane and neither is
+   * worth faking from here.
+   *
+   * AND THE MOVE PUT #56'S SHAFT BACK INSIDE THIS ROOM. `The Standing` runs
+   * three decks up through a cut, and `StationKit.standingShaft` hands the
+   * room it crosses a hole to leave in its own floor. At 6 degrees the hole
+   * ran **4.1 m past this room's own wall** — half of it was being cut out of
+   * a floor that is not here — and the builder laid the other half against the
+   * wall. At 9.7 the whole 6.2 m square is inside the footprint with 0.6 m to
+   * spare, which is the first bearing this room has had where that is true.
+   *
+   * THE BEARING IS THE STAR BAY'S. Every degree of this gap is spoken for —
+   * the `Night market` fixture holds 344–352 and `The star bay` 17–23, and the
+   * two door arcs together want 21.5 of the 25 degrees between them. 9.7 and
+   * −2.3 are what is left when the 3.5 degrees of slack are split three ways:
+   * 1.1 degrees to the night market, 1.1 to the star bay, and the rest between
+   * the rooms. Measured, not chosen.
    */
   {
     id: 61, deck: 44, name: 'The Underlift Pit', shape: 'chainpit',
@@ -617,7 +650,7 @@ export const PLACES = [
     who: '16 at the lip, two handlers, a man taking the book',
     idle: 'a card runs from 22:00 on the nights it runs at all; money changes hands at the rail',
     verb: 'fight a bout — no referee',
-    band: 'outer', at: 6, w: 16, d: 14, h: 4.4, peak: 2, heads: 16,
+    band: 'outer', at: 9.7, w: 16, d: 14, h: 4.4, peak: 2, heads: 16,
   },
   /**
    * ── #58 THE UNDERLIFT — V16 §B4's black market ────────────────────────
@@ -631,34 +664,36 @@ export const PLACES = [
    * of the seven shops in the game, and the only one gated on your order, had
    * no room to stand in.
    *
-   * ON THE SERVICE DECK, BESIDE THE CARGO HOLD, and that is where the
-   * measurement put it rather than where the name first suggested.
+   * ── AND THE FIRST ANSWER PUT IT FOUR DECKS FROM ITS OWN BACK ROOM ─────
    *
-   * THREE CUTS AND THE STATION REFUSED TWO OF THEM. The obvious place is the
-   * living deck beside `#61 The Underlift Pit`, and deck 44's outer band has
-   * no room left: clockwise of the pit, `#30`'s doors begin at 30.8 degrees
-   * and `The star bay` stands at 20 in the middle of what is left;
-   * anticlockwise, the `Night market` fixture holds -16 to -8 and the laundry
-   * has the rest. The station said both in its own words — "#30 × #58 by 4.0
-   * m", then "The star bay at 20 degrees is in the door of #58", then "Night
-   * market at 348 degrees is in the door of #58". Moving somebody else's
-   * window bay to make room would have been the wrong repair.
+   * The row that fixed that put it on deck 48 between `The fab bench` and
+   * `#52 The cargo hold`, at 84.5 degrees, and wrote the argument for it: deck
+   * 44's outer band had no room left, so the market went a deck down and the
+   * pit stayed up here. Read back against the brief that is two defects, not
+   * one compromise. §B4 says this market is *"welded into the ring's service
+   * gap on deck 44, behind the laundry"*, and §G5 says `#61 The Underlift Pit`
+   * is *"off #58 The Underlift (Lane B4's black market, deck 44)"*. Deck 48 at
+   * 84.5 is neither: 102 metres of ring and a lift ride from the pit, on the
+   * wrong deck for both sentences, and named for an underlift it was nowhere
+   * near.
    *
-   * Deck 48 has the widest unclaimed arc on either deck, between `The fab
-   * bench` and `#52 The cargo hold`, and it is the better room anyway:
-   * smuggled cargo arrives in the cargo hold, and a man working out of
-   * containers on the service deck is where it goes next. The pit stays on 44
-   * and this is one deck under it, which is what the underlift is — the space
-   * around the lift core that nobody drew a room on.
+   * THE ARC WAS THERE; THE SEARCH LOOKED CLOCKWISE. That note measured the gap
+   * on the star-bay side of the pit — *"#30's doors begin at 30.8 degrees and
+   * The star bay stands at 20 in the middle of what is left"* — and it is
+   * right that nothing fits there. The market's own sentence says the laundry
+   * side, which is where the room is: `#39 Laundry & showers` ends at 341.2,
+   * the `Night market` fixture holds 344 to 352, and from 352 round to the
+   * star bay's 17 there are 25 clear degrees. Both door arcs fit in it — 9.14
+   * for this room's twelve metres and 12.34 for the pit's sixteen — with 3.5
+   * degrees over. What it cost is a degree and a half of the pit's bearing:
+   * it moves from 6 to 9.7 and this sits at −2.3, and the leftover is split
+   * evenly, 1.1 degrees of clearance to each fixture and the rest as the wall
+   * between the two rooms.
    *
-   * 84.5 DEGREES AND TWELVE METRES, and both numbers came off the station's
-   * own two tests rather than off a ruler. A room is a rectangle at a radius,
-   * not an arc, so its corners swing further round than its width suggests:
-   * the separating-axis test leaves 77.5 to 85 clear for twelve metres and
-   * only 79 to 83.5 for sixteen. And the door arc has to miss `The fab bench`
-   * at 77, which needs 6.7 degrees of clearance for a twelve-metre door —
-   * 83.8 at the earliest. The two windows overlap in about a degree, and this
-   * sits in it.
+   * SO THEY ARE ONE GAP NOW. The market's mouth is the first opening past the
+   * night market, the pit's is the next one along, and there is half a metre
+   * of deck plating between the two footprints — which is the closest a plan
+   * whose every door opens on the ring can put a room and its back room.
    *
    * `peak: 1` — the small hours, the same as the pit, so a player who walks
    * down for one may as well try the other.
@@ -667,14 +702,14 @@ export const PLACES = [
    * it is a market.
    */
   {
-    id: 58, deck: 48, name: 'The Underlift', shape: 'containerrow',
+    id: 58, deck: 44, name: 'The Underlift', shape: 'containerrow',
     look: 'a service gap with cargo containers stacked two high down one side and one down the '
       + 'other, an aisle between; every box shut but one, a plank across its mouth for a counter, '
       + 'a hand lamp clamped to the door frame and pointed in',
     who: '2 — a smuggler and whoever is ahead of you',
     idle: 'the shutter is down two days in three; when it is up he does not look at your face',
     verb: 'see what he has',
-    band: 'outer', at: 84.5, w: 12, d: 12, h: 5.0, peak: 1, heads: 2,
+    band: 'outer', at: -2.3, w: 12, d: 12, h: 5.0, peak: 1, heads: 2,
   },
   /* #40 is FOUR platforms and they are four DIFFERENT rooms (§3.2). They keep
    * one id because the gazetteer gives them one; `station.mjs` measures rule 4
@@ -1259,3 +1294,126 @@ export function sectorAt(deck, deg) {
   if (a < js[0].at) best = js[js.length - 1];
   return best.sector || null;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE TWO FLIGHT DECKS' OWN WALKABLE SHAPE                                  */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ A HANGAR FLOOR IS NOT AN ANNULUS AND THE PLAN ALREADY SAYS SO ═════════
+ *
+ * `layout()`'s `deck32`/`deck12` case is one line of code and a whole
+ * decision: *"Already cartesian: the flight deck's frame is `Hangar.js`'s and
+ * the drum's polar one would be a second answer to where its own pad is."*
+ * Every other band on the station declares a BEARING and gets an (x, z); these
+ * two decks declare the (x, z) outright, because the bay, the rack, the tower,
+ * the ready room and the pit are laid out against a launch rail and a hangar
+ * mouth rather than against the drum's axis.
+ *
+ * `StationLife`'s walker was built on the other frame — a route is an ARC at a
+ * fixed radius or a RADIAL on a spine's bearing — and MEASURED on these two
+ * decks it produced nothing at all: deck 12 seated 38 bodies on walk slots
+ * with **zero planned routes** and deck 32 read 23 of 37 and the same nought,
+ * because `destsOn` classifies a place by the radius of its door and no door
+ * down here is on the ring or on the balcony.
+ *
+ * ── AND THE POLAR FRAME CANNOT BE PATCHED INTO FITTING, MEASURED ──────────
+ *
+ * The obvious cheap fix is to keep the arcs and pick clear radii. It does not
+ * survive contact with the two decks:
+ *
+ *   deck 12   the balcony walk at r = 24 passes THROUGH #5 Cobra bay
+ *             (x 17–35, z −9…−27) between bearings 111° and 135° — a walk
+ *             line straight down a launch well. The ring at 85.5 is clear,
+ *             but a radial in from it to #5's door at 107° crosses #6
+ *             Fighter rack, which spans 100°–123° at r 40.5–65.9.
+ *   deck 32   the ring at 85.5 passes through #4 Fighter maintenance bay
+ *             (r 60.9–94.8). The balcony at 24 is clear — and every door on
+ *             the deck is outboard of it, so it reaches nothing.
+ *
+ * The rooms shadow each other radially because they are a CLUSTER in one
+ * quadrant rather than a rhythm round a turn. So the flight decks get their
+ * own span kind, which is the straight lane, and the drum's arcs and radials
+ * are left exactly as they were — see `planRoute`'s note for the argument
+ * about which of the two changes is smaller.
+ *
+ * ── WHAT IS DECLARED HERE AND WHAT IS DERIVED ─────────────────────────────
+ *
+ * ONLY THE AISLES. Each row is `[x0, z0, x1, z1]` — a straight lane of open
+ * floor, in the deck's own cartesian frame, that a crew walks down. Together
+ * they are a circuit round the deck's hardware: `StationLife.apronGraph`
+ * splits them at their crossings, hangs a stub off each one onto every room's
+ * door and onto the lift, and walks the result. Nothing else about them is
+ * typed — not the nodes, not the junctions, not one destination.
+ *
+ * THE LANES ARE CHOSEN AGAINST THE ROOM RECTANGLES AND `station.mjs` HOLDS
+ * THEM THERE: every lane and every derived stub is asserted clear of every
+ * room box on its deck and on the deck plate (the floor is the annulus
+ * `DRUM.atrium`…`DRUM.R`, so a lane that wanders inside r = 18 is over the
+ * void). A bearing moved in `PLACES` that puts a hull across an aisle goes red
+ * rather than putting a deck hand through a parked fighter.
+ *
+ *   DECK 12 — the launch well.  #5 Cobra bay is x 17…35, z −9…−27; #6 Fighter
+ *     rack is x 39…61, z −11…−25; the flight shaft lands at (26, 0). The
+ *     aisles are the strip north of the bay (z = −7.5, which is 1.5 m off its
+ *     face), the four-metre gap between the bay and the rack (x = 37), the
+ *     strip south of both (z = −29) and the east return (x = 64). A crew
+ *     walks the lift, the bay's mouth, the rack and back round.
+ *
+ *   DECK 32 — the flight deck.  #2 tower is x 25.6…42.4, #3 ready room is
+ *     x 26.5…45.5 (both yawed −0.42), #4 maintenance pit is x 41…67,
+ *     z −45…−67. The aisles are a west trunk past the tower and the ready
+ *     room (x = 23), a north cross (z = −2) off the lift, an east return
+ *     (x = 48), a south cross under the ready room (z = −43) and the run out
+ *     to the pit's gantry door (z = −50).
+ */
+export const APRONS = {
+  12: {
+    /**
+     * How wide a lane is, in metres — the spread a walk slot is scattered
+     * across it, exactly as `DRUM.spineW` sizes a spine's, and the number
+     * `station.mjs` measures the clearance against.
+     *
+     * DECK 12 IS THE NARROW ONE and 3.2 is not a preference: the only way to
+     * #6 Fighter rack's door is the gap between the rack's west face (x = 39)
+     * and the bay's east face (x = 35), which is four metres of floor. At
+     * 3.2 m the scatter is ±1.15 and the worst slot is 0.85 m off a wall; at
+     * five it would be inside one.
+     */
+    w: 3.2,
+    lanes: [
+      /* North of the bay's mouth, between it and the lift — 4.0 m clear. */
+      [22, -5, 65, -5],
+      /* The gap between the bay and the rack — 2.0 m clear, the deck's
+       * tightest, and the rack has no other door. */
+      [37, -5, 37, -31],
+      /* South of both, and the east return round the rack — 4.0 m each. */
+      [22, -31, 65, -31],
+      [65, -5, 65, -31],
+    ],
+  },
+  32: {
+    w: 5,
+    lanes: [
+      /* Off the lift, across the head of the deck — 4.6 m clear of the tower. */
+      [22, -2, 50, -2],
+      /* The west trunk, past the tower and the ready room — 3.6 m. */
+      [22, -2, 22, -52],
+      /* The east return, stopped short of the pit's north wall — 3.0 m. */
+      [50, -2, 50, -42],
+      /**
+       * AND THE CROSS BETWEEN THE TOWER AND THE READY ROOM, which is the one
+       * lane on either deck that is not square to anything. Both rooms are
+       * yawed −0.42, so the gap between them runs on the diagonal; the best
+       * line through it was searched rather than guessed and clears 3.8 m,
+       * against 0.7 for the square lane that was tried first.
+       */
+      [22, -28, 50, -18.6],
+      /* And the run out to the maintenance pit's gantry door — 3.0 m. */
+      [22, -52, 38, -52],
+    ],
+  },
+};
+
+/** The flight decks' own walkable shape, or null for a deck of the drum. */
+export function apronOn(deck) { return APRONS[deck] || null; }
