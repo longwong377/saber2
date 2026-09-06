@@ -98,8 +98,17 @@ function tvScreen(kit, M, ctx, x, y, z, ry, w = 2.4, h = 1.35) {
 /** A floor plate. Every place has one; what differs is what stands on it. */
 function floor(kit, M, w, d, y = 0, mat = null, opts = {}) {
   const hole = opts.hole || null;
+  const S = sectorOf(kit);
+  /* In a sector the slab is strips clipped to the converging walls, under one
+   * rectangular collider — the plate under the room is the same height and
+   * the same material, so what a strip does not cover is not a hole. */
+  const lay = (m, x0, x1, z0, z1) => {
+    if (!S) { kit.slab(m, x1 - x0, 0.4, z1 - z0, (x0 + x1) / 2, y - 0.2, (z0 + z1) / 2, { collide: true, bevel: 0 }); return; }
+    sectorStrips(kit, S, m, x0, x1, z0, z1, y - 0.2, 0.4, 2.0, 0.2, { collide: false, bevel: 0 });
+    kit.collider((x0 + x1) / 2, y - 0.2, (z0 + z1) / 2, (x1 - x0) / 2, 0.2, (z1 - z0) / 2);
+  };
   if (!hole) {
-    kit.slab(mat || M.deep, w, 0.4, d, 0, y - 0.2, 0, { collide: true, bevel: 0 });
+    lay(mat || M.deep, -w / 2, w / 2, -d / 2, d / 2);
   } else {
     /**
      * ══ A FLOOR WITH A WELL IN IT IS A FRAME, NOT A SLAB — V18 ════════════
@@ -118,10 +127,10 @@ function floor(kit, M, w, d, y = 0, mat = null, opts = {}) {
     const F = { collide: true, bevel: 0 };
     const m = mat || M.deep;
     const zN = hz - hd / 2, zS = hz + hd / 2, xW = hx - hw / 2, xE = hx + hw / 2;
-    if (zN > -d / 2 + 0.05) kit.slab(m, w, 0.4, zN + d / 2, 0, y - 0.2, (-d / 2 + zN) / 2, F);
-    if (zS < d / 2 - 0.05) kit.slab(m, w, 0.4, d / 2 - zS, 0, y - 0.2, (zS + d / 2) / 2, F);
-    if (xW > -w / 2 + 0.05) kit.slab(m, xW + w / 2, 0.4, hd, (-w / 2 + xW) / 2, y - 0.2, hz, F);
-    if (xE < w / 2 - 0.05) kit.slab(m, w / 2 - xE, 0.4, hd, (xE + w / 2) / 2, y - 0.2, hz, F);
+    if (zN > -d / 2 + 0.05) lay(m, -w / 2, w / 2, -d / 2, zN);
+    if (zS < d / 2 - 0.05) lay(m, -w / 2, w / 2, zS, d / 2);
+    if (xW > -w / 2 + 0.05) lay(m, -w / 2, xW, zN, zS);
+    if (xE < w / 2 - 0.05) lay(m, xE, w / 2, zN, zS);
     if (hole.round) {
       /* A ROUND well: the frame is round its circumscribed square, and the
        * four corners between the square and the circle are filled with a
@@ -445,13 +454,17 @@ function dressSoffit(kit, M, w, d, h, ribs, skip) {
     const r = Math.max(r0, r1), hx = o && o.rz ? ph2 / 2 : r, hz = o && o.rx ? ph2 / 2 : r;
     if (!keptOutBox(kit, x, z, hx, hz)) kit.post(mat, r0, r1, ph2, x, y, z, o);
   };
-  const hidden = (x, z) => skip && skip(x, z);
+  /* In a sector, a piece is as wide as the room is where it hangs, and a
+   * lamp that would hang past a converging wall is not hung. */
+  const S = sectorOf(kit);
+  const wAt = (z, m) => S ? Math.min(w - m, 2 * sectorHalfW(S, z) - m) : w - m;
+  const hidden = (x, z) => (skip && skip(x, z)) || (S && !inSector(S, x, z, 0.8));
   if (style === 'warm') {
     /* Coffered panels between the ribs and hanging amber lamps on a grid. */
     for (let i = 0; i < ribs; i++) {
       const z = -d / 2 + bay * (i + 0.5);
       if (hidden(0, z)) continue;
-      if (i % 2 === 1 && bay > 2.2) slab(M.wing, w - 1.6, 0.08, bay - 0.9, 0, h - 0.06, z, F);
+      if (i % 2 === 1 && bay > 2.2) slab(M.wing, wAt(z + bay / 2, 1.6), 0.08, bay - 0.9, 0, h - 0.06, z, F);
     }
     const nx = Math.max(1, Math.round(w / 6)), nz = Math.max(1, Math.round(d / 6));
     const drop = Math.min(1.4, Math.max(0.5, h - 2.9));
@@ -467,7 +480,7 @@ function dressSoffit(kit, M, w, d, h, ribs, skip) {
     const step = 1.25;
     for (let z = -d / 2 + 0.6; z < d / 2 - 0.4; z += step) {
       if (hidden(0, z)) continue;
-      slab(M.dark, w - 0.8, 0.1, 0.09, 0, h - 0.05, z, F);
+      slab(M.dark, wAt(z, 0.8), 0.1, 0.09, 0, h - 0.05, z, F);
     }
     const nz = Math.max(1, Math.round(d / 5.5));
     for (let k = 0; k < nz; k++) {
@@ -482,7 +495,8 @@ function dressSoffit(kit, M, w, d, h, ribs, skip) {
     /* Ducts the length of the room, a cable tray down the middle with its
      * rungs, and a caged status lamp at every rib. */
     const dr = Math.min(0.45, h * 0.08 + 0.15);
-    const ducts = w > 9 ? [-w / 3, w / 3] : [w / 4];
+    const dm = Math.min(w / 3, S ? sectorHalfW(S, d / 2) - 0.8 : w / 3);
+    const ducts = w > 9 ? [-dm, dm] : [w / 4];
     for (const x of ducts) {
       if (hidden(x, 0)) continue;
       post(M.dark, dr, dr, d - 1.0, x, h - dr - 0.22, 0, { radial: 8, rx: Math.PI / 2 });
@@ -493,7 +507,8 @@ function dressSoffit(kit, M, w, d, h, ribs, skip) {
     for (let z = -d / 2 + 0.6; z < d / 2 - 0.5; z += 1.0) slab(M.dark, 0.46, 0.05, 0.05, tx, h - 0.45, z, F);
     for (let i = 0; i < ribs; i++) {
       const z = -d / 2 + bay * (i + 0.5);
-      const x = R.range(-w / 2 + 1.5, w / 2 - 1.5);
+      const xr = R.range(-w / 2 + 1.5, w / 2 - 1.5);
+      const x = S ? Math.max(-wAt(z, 3) / 2, Math.min(wAt(z, 3) / 2, xr)) : xr;
       if (hidden(x, z)) continue;
       slab(M.status, 0.18, 0.18, 0.14, x, h - 0.55, z + 0.5, F);
       for (const dx of [-0.11, 0.11]) slab(M.dark, 0.02, 0.24, 0.02, x + dx, h - 0.55, z + 0.62, F);
@@ -502,7 +517,7 @@ function dressSoffit(kit, M, w, d, h, ribs, skip) {
     for (let i = 0; i < ribs; i++) {
       const z = -d / 2 + bay * (i + 0.5);
       if (hidden(0, z)) continue;
-      slab(M.wing, w - 2, 0.05, bay - 1.2, 0, h - 0.04, z, F);
+      slab(M.wing, wAt(z + bay / 2, 2), 0.05, bay - 1.2, 0, h - 0.04, z, F);
     }
   }
 }
@@ -514,16 +529,29 @@ function dressFloor(kit, M, w, d, y) {
   const inset = 0.9;
   if (w < 4 || d < 4) return;
   const slab = (mat, sw, sh, sd, x, y, z, o) => { if (!keptOutBox(kit, x, z, sw / 2, sd / 2)) kit.slab(mat, sw, sh, sd, x, y, z, o); };
-  /* The border band. */
+  /* The border band. In a sector the side bands run along the radial walls,
+   * the back band is as wide as the back, and the front band starts inside
+   * the front arc's corners. */
+  const S = sectorOf(kit);
   const bm = style === 'warm' ? M.mark : style === 'living' ? M.wing : M.dark;
+  const zF = S ? sectorZFront(S, w / 2 - inset) + inset : -d / 2 + inset;
+  const wAt = (z) => S ? Math.min(w, 2 * sectorHalfW(S, z)) - inset * 2 : w - inset * 2;
+  slab(bm, wAt(zF), 0.03, 0.22, 0, y + 0.015, zF, F);
+  slab(bm, wAt(d / 2 - inset), 0.03, 0.22, 0, y + 0.015, d / 2 - inset, F);
   for (const s of [-1, 1]) {
-    slab(bm, w - inset * 2, 0.03, 0.22, 0, y + 0.015, s * (d / 2 - inset), F);
-    slab(bm, 0.22, 0.03, d - inset * 2, s * (w / 2 - inset), y + 0.015, 0, F);
+    if (S) radialSlab(kit, S, bm, s, S.R - inset, S.Ri + inset, y, y + 0.03, 0.22, -inset, { collide: false });
+    else slab(bm, 0.22, 0.03, d - inset * 2, s * (w / 2 - inset), y + 0.015, 0, F);
   }
   /* Plate seams on the working decks: deck plate is laid in sheets. */
   if (style === 'working') {
-    for (let z = -d / 2 + 2.4; z < d / 2 - 1; z += 2.4) slab(M.dark, w - inset * 2, 0.02, 0.06, 0, y + 0.012, z, F);
-    for (let x = -w / 2 + 2.4; x < w / 2 - 1; x += 2.4) slab(M.dark, 0.06, 0.02, d - inset * 2, x, y + 0.012, 0, F);
+    for (let z = -d / 2 + 2.4; z < d / 2 - 1; z += 2.4) slab(M.dark, wAt(z), 0.02, 0.06, 0, y + 0.012, z, F);
+    for (let x = -w / 2 + 2.4; x < w / 2 - 1; x += 2.4) {
+      /* a seam along z stops where the converging wall meets it */
+      const z1 = S ? Math.min(d / 2 - inset, S.c - (Math.abs(x) + inset) / Math.tan(S.th)) : d / 2 - inset;
+      const z0 = S ? Math.max(-d / 2 + inset, sectorZFront(S, x) + inset) : -d / 2 + inset;
+      if (z1 - z0 < 1) continue;
+      slab(M.dark, 0.06, 0.02, z1 - z0, x, y + 0.012, (z0 + z1) / 2, F);
+    }
   }
   /* The threshold: a lit line just inside the door, which is at −Z. */
   slab(M.strip, Math.min(w - 2, 3.2), 0.025, 0.1, 0, y + 0.012, -d / 2 + 0.9, F);
@@ -628,6 +656,112 @@ function holed(kit, mat, w, t, d, y, o, opts) {
 }
 
 /**
+ * ══ THE WHOLE ROOM FOLLOWS THE RING — V18 cool 20 / hole 2 ════════════════
+ *
+ * An outer-band room is a SECTOR of the drum: its front is a chord-run of
+ * the ring's circle (radius `R`, `arcFront`), its two side walls are RADIAL
+ * — they converge on the axis, which is behind the room at `(0, c)` in its
+ * frame — and its back is an arc of the inner circle at `Ri = R − d`. The
+ * front subtends `2·th` where `sin th = (w/2) / R`, so the back is narrower
+ * than the front by the ratio `Ri / R`: the cantina is 26 m at the ring and
+ * 18.3 m at the back. `kit.arc` carries all of it, set in `buildPlace` for
+ * every box-walled outer room, and the floor, the lid, the soffit's and the
+ * floor's dressing and `furnish` read the same numbers, so nothing they lay
+ * reaches through a wall that is no longer where the rectangle said.
+ *
+ * Half-width of the sector at depth `z` (the room's frame: −Z the ring).
+ */
+function sectorHalfW(S, z) { return (S.c - z) * Math.tan(S.th); }
+/** The front arc, as z at x. */
+function sectorZFront(S, x) { return S.c - Math.sqrt(Math.max(0, S.R * S.R - x * x)); }
+/** Is (x, z) inside the sector by at least `m` metres on every side? */
+export function inSector(S, x, z, m = 0) {
+  const r = Math.hypot(x, S.c - z);
+  if (r > S.R - m || r < S.Ri + m) return false;
+  return Math.abs(x) <= sectorHalfW(S, z) - m / Math.cos(S.th);
+}
+/** The sector, if `kit` is building one. */
+function sectorOf(kit) { return kit.arc && kit.arc.th ? kit.arc : null; }
+/**
+ * How far from the centre line a box spanning `z0..z1` may reach and stay
+ * inside the room: the sector's half-width at its narrow end, or the front
+ * arc at its front edge, whichever is less — `w / 2` in a rectangle. The
+ * builders that stand things against a side wall ask this instead of `w / 2`.
+ */
+/** Where the front wall is at `x`: the ring's arc in a sector, `−d / 2` in a
+ * rectangle — for what hangs on the front wall. */
+function roomFrontZ(kit, d, x) { const S = sectorOf(kit); return S ? sectorZFront(S, x) : -d / 2; }
+function roomHalfW(kit, w, z0, z1 = z0) {
+  const S = sectorOf(kit);
+  if (!S) return w / 2;
+  const zA = Math.min(z0, z1), zB = Math.max(z0, z1);
+  const dz = S.c - zA;
+  const front = dz < S.R ? Math.sqrt(S.R * S.R - dz * dz) : w / 2;
+  return Math.min(w / 2, sectorHalfW(S, zB), front);
+}
+/**
+ * A horizontal rectangle `x0..x1 × z0..z1`, laid as strips across z and each
+ * strip clipped to the sector's width at its own wide end, `over` metres past
+ * the wall line (a lid overhangs, a floor runs under the wall's foot). The
+ * strips are boxes, so each leaves a sliver of a triangle at the wall
+ * between its wide end and its narrow one — `step` sets how thin: 1.5 m at
+ * the Arrivals hall's 16.5° is 0.44 m, inside a 0.45 m overhang. The strips
+ * are visual; the caller lays its one rectangular collider.
+ */
+function sectorStrips(kit, S, mat, x0, x1, z0, z1, y, t, step, over, opts) {
+  const n = Math.max(1, Math.ceil((z1 - z0) / step));
+  let laid = 0;
+  for (let i = 0; i < n; i++) {
+    const za = z0 + (z1 - z0) * (i / n), zb = z0 + (z1 - z0) * ((i + 1) / n);
+    const hw = sectorHalfW(S, za) + over;
+    const a = Math.max(x0, -hw), b = Math.min(x1, hw);
+    if (b - a < 0.2) continue;
+    kit.slab(mat, b - a, t, zb - za, (a + b) / 2, y, (za + zb) / 2, opts);
+    laid++;
+  }
+  return laid;
+}
+/**
+ * A box lying along the side-`s` RADIAL wall of a sector, from radius `r0`
+ * to `r1` (measured from the axis), between heights `y0` and `y1`, `t`
+ * thick, its centre `off` metres OUTWARD of the wall's inner face line
+ * (negative is into the room). The wall's face line is the ray at ±th.
+ */
+function radialSlab(kit, S, mat, s, r0, r1, y0, y1, t, off, opts = {}) {
+  const th = S.th, sn = Math.sin(th), cs = Math.cos(th);
+  const rm = (r0 + r1) / 2;
+  const x = s * (rm * sn + off * cs), z = S.c - rm * cs + off * sn;
+  kit.slab(mat, Math.abs(r1 - r0), y1 - y0, t, x, (y0 + y1) / 2, z, { bevel: 0, ry: s * (Math.PI / 2 - th), ...opts });
+}
+/** `dressWallRun` along a side-`s` radial wall from radius `r0` to `r1`. */
+function dressRadial(kit, M, S, s, r0, r1, h, salt) {
+  const th = S.th, sn = Math.sin(th), cs = Math.cos(th);
+  const rm = (r0 + r1) / 2;
+  dressWallRun(kit, M, Math.abs(r1 - r0), h, s * rm * sn, 0, S.c - rm * cs, s * (Math.PI / 2 - th), { salt });
+}
+/**
+ * The back of a sector: chords of the inner circle at `Ri`, the room at the
+ * larger radius. `mat` null lays glass from waist to head instead (a
+ * builder that opens its back and glazes it, see `walls`).
+ */
+function arcBack(kit, M, S, h, mat, dress) {
+  const t = 0.4, Ri = S.Ri, th = S.th;
+  const n = Math.max(2, Math.ceil((2 * Ri * th) / 2.4));
+  const wide = 2 * (Ri - t / 2) * Math.tan(th / n) * 1.04;
+  for (let i = 0; i < n; i++) {
+    const a = -th + 2 * th * ((i + 0.5) / n);
+    const rc = Ri - t / 2;
+    const x = rc * Math.sin(a), z = S.c - rc * Math.cos(a);
+    if (mat) {
+      kit.slab(mat, wide, h, t, x, h / 2, z, { ry: -a, collide: true, bevel: 0 });
+      if (dress) dressWallRun(kit, M, wide - 0.1, h, Ri * Math.sin(a), 0, S.c - Ri * Math.cos(a), -a, { salt: 1 + i, sparse: true });
+    } else {
+      kit.slab(M.glass, wide, h - 0.6, 0.2, Ri * Math.sin(a), h / 2, S.c - Ri * Math.cos(a), { ry: -a, collide: true, bevel: 0 });
+    }
+  }
+}
+
+/**
  * ══ THE FRONT FOLLOWS THE RING — V18 hole 2 ═══════════════════════════════
  *
  * A room on the outer band opens onto the ring, and the ring's inner edge is
@@ -676,6 +810,43 @@ function arcFront(kit, M, w, d, h, gap, mat, arc, dress) {
 }
 
 /**
+ * ══ A RADIAL SIDE WALL, AND THE WINDOW IN IT — V18 hole 3 ═════════════════
+ *
+ * One side of a sector, from 0.4 m outside the ring's line to 0.4 m past the
+ * back's, so the corners close. Where `S.panes` names this side, a PANE is
+ * cut in it: 2.4 m along the wall centred at radius `pane.r`, sill 1.0, head
+ * 2.4, the kit's glass between (a static box — glass stops a body), a dark
+ * sill and head, and a strip over the head on BOTH faces, so the room next
+ * door sees a lit window and not a dark hole. `pane.r` is computed from the
+ * PAIR in `buildPlace`, so both rooms' panes stand at the same radius and
+ * look straight at each other across the plate between them.
+ */
+function radialSide(kit, M, S, s, h, mat, dress) {
+  const t = 0.4, R = S.R + t, Ri = S.Ri - t;
+  const pane = (S.panes || []).find((p) => p.s === s);
+  if (!pane || h < 3.0) {
+    radialSlab(kit, S, mat, s, R, Ri, 0, h, t, t / 2, { collide: true });
+    if (dress) dressRadial(kit, M, S, s, S.R, S.Ri, h, 2 + s);
+    return;
+  }
+  const r1 = pane.r + 1.2, r0 = pane.r - 1.2, sill = 1.0, head = 2.4;
+  radialSlab(kit, S, mat, s, R, Ri, 0, sill, t, t / 2, { collide: true });
+  radialSlab(kit, S, mat, s, R, Ri, head, h, t, t / 2, { collide: true });
+  radialSlab(kit, S, mat, s, R, r1, sill, head, t, t / 2, { collide: true });
+  radialSlab(kit, S, mat, s, r0, Ri, sill, head, t, t / 2, { collide: true });
+  radialSlab(kit, S, M.glass, s, r1 - 0.08, r0 + 0.08, sill + 0.05, head - 0.05, 0.12, t / 2, { collide: true });
+  radialSlab(kit, S, M.dark, s, r1, r0, sill - 0.06, sill + 0.06, t + 0.1, t / 2, { collide: false });
+  radialSlab(kit, S, M.dark, s, r1, r0, head - 0.06, head + 0.06, t + 0.1, t / 2, { collide: false });
+  /* the light in the reveal, inside and out */
+  radialSlab(kit, S, M.strip, s, r1 - 0.2, r0 + 0.2, head + 0.12, head + 0.22, 0.12, -0.06, { collide: false });
+  radialSlab(kit, S, M.strip, s, r1 - 0.2, r0 + 0.2, head + 0.12, head + 0.22, 0.12, t + 0.06, { collide: false });
+  if (dress) {
+    dressRadial(kit, M, S, s, S.R, r1 + 0.1, h, 2 + s);
+    dressRadial(kit, M, S, s, r0 - 0.1, S.Ri, h, 12 + s);
+  }
+}
+
+/**
  * Four walls with a gap for the door, which is always at local −Z (the plan
  * table puts every door on the side a walk arrives from). `open` names sides
  * to leave out entirely — a place with a window onto another place (§3.1
@@ -686,15 +857,23 @@ function walls(kit, M, w, d, h, opts = {}) {
   const mat = opts.mat || M.hull;
   const open = new Set(opts.open || []);
   const dress = opts.dress !== false;
-  /* +Z, the back. */
+  const S = sectorOf(kit);
+  /* +Z, the back — an arc of the inner circle in a sector. */
   if (!open.has('back')) {
-    kit.slab(mat, w + t * 2, h, t, 0, h / 2, d / 2 + t / 2, { collide: true, bevel: 0 });
-    if (dress) dressWallRun(kit, M, w, h, 0, 0, d / 2, 0, { salt: 1 });
-  } else if (opts.glaze) kit.slab(M.glass, w, h - 0.6, 0.2, 0, h / 2, d / 2, { collide: true, bevel: 0 });
+    if (S) arcBack(kit, M, S, h, mat, dress);
+    else {
+      kit.slab(mat, w + t * 2, h, t, 0, h / 2, d / 2 + t / 2, { collide: true, bevel: 0 });
+      if (dress) dressWallRun(kit, M, w, h, 0, 0, d / 2, 0, { salt: 1 });
+    }
+  } else if (opts.glaze) {
+    if (S) arcBack(kit, M, S, h, null, false);
+    else kit.slab(M.glass, w, h - 0.6, 0.2, 0, h / 2, d / 2, { collide: true, bevel: 0 });
+  }
   /* ±X, the sides. The room is at −Z in the wall's own frame, so the +X wall
    * turns a quarter one way and the −X wall the other. */
   for (const s of [-1, 1]) {
     if (open.has(s < 0 ? 'left' : 'right')) continue;
+    if (S) { radialSide(kit, M, S, s, h, mat, dress); continue; }
     kit.slab(mat, t, h, d, s * (w / 2 + t / 2), h / 2, 0, { collide: true, bevel: 0 });
     if (dress) dressWallRun(kit, M, d, h, s * w / 2, 0, 0, s * Math.PI / 2, { salt: 2 + s });
   }
@@ -716,7 +895,15 @@ function walls(kit, M, w, d, h, opts = {}) {
 /** A soffit. `ribs` gives it the structure that stops it reading as a lid. */
 function ceiling(kit, M, w, d, h, opts = {}) {
   const o = opts.omit || null;
-  holed(kit, opts.mat || M.dark, w + 0.8, 0.4, d + 0.8, h + 0.2, o, { collide: true, bevel: 0 });
+  const S = sectorOf(kit);
+  if (S && !o) {
+    /* The lid over a sector: strips to the converging walls, 0.45 m over
+     * them, on one rectangular collider — see `sectorStrips`. */
+    sectorStrips(kit, S, opts.mat || M.dark, -w / 2 - 0.4, w / 2 + 0.4, -d / 2 - 0.4, d / 2 + 0.4, h + 0.2, 0.4, 1.5, 0.45, { collide: false, bevel: 0 });
+    kit.collider(0, h + 0.2, 0, w / 2 + 0.4, 0.2, d / 2 + 0.4);
+  } else holed(kit, opts.mat || M.dark, w + 0.8, 0.4, d + 0.8, h + 0.2, o, { collide: true, bevel: 0 });
+  /* A rib or a strip is as wide as the room is where it hangs. */
+  const wAt = (z, m) => S ? Math.min(w, 2 * sectorHalfW(S, z) - m) : w;
   const n = opts.ribs ?? Math.max(2, Math.round(d / 3.5));
   /* A RIB IS A BEAM AND IT STOPS AT THE HOLE. One that ran across an open
    * shaft would be the lid this cut exists to remove, in stick form. */
@@ -730,13 +917,13 @@ function ceiling(kit, M, w, d, h, opts = {}) {
       }
       continue;
     }
-    kit.slab(M.hull, w, 0.34, 0.34, 0, h - 0.2, z, { collide: false, bevel: 0 });
+    kit.slab(M.hull, wAt(z + 0.17, -0.8), 0.34, 0.34, 0, h - 0.2, z, { collide: false, bevel: 0 });
   }
   if (opts.strips !== false) {
     for (let i = 0; i < n; i += 2) {
       const z = -d / 2 + d * ((i + 0.5) / n);
       if (spans(z)) continue;
-      kit.slab(M.strip, w * 0.66, 0.09, 0.16, 0, h - 0.42, z, { collide: false, bevel: 0 });
+      kit.slab(M.strip, Math.min(w * 0.66, wAt(z, 1.6)), 0.09, 0.16, 0, h - 0.42, z, { collide: false, bevel: 0 });
     }
   }
   /* And what hangs between the ribs — kept clear of the shaft, like them. */
@@ -1712,11 +1899,14 @@ export const SHAPES = {
     walls(kit, M, w, d, h, { doorW: w - 3 });
     tvScreen(kit, M, ctx, w / 2 - 0.12, h - 1.2, -d / 4, -Math.PI / 2, 2.2, 1.25);
     ceiling(kit, M, w, d, h, { ribs: 8, strips: false });
+    /* Three counters across the BACK, which in a sector is narrower than
+     * the front — see `roomHalfW`. */
+    const wb = 2 * roomHalfW(kit, w, d / 2 - 2.6, d / 2 - 0.25);
     for (let i = 0; i < 3; i++) {
-      const x = (i - 1) * (w / 3);
-      counter(kit, M, w / 3 - 0.6, 1.1, x, d / 2 - 1.4, 0, 1.15);
-      kit.slab(M.dark, w / 3 - 0.6, 1.5, 0.5, x, h - 0.9, d / 2 - 0.5, { collide: false, bevel: 0 });
-      kit.slab(M.screen, w / 3 - 1.4, 0.8, 0.06, x, h - 0.95, d / 2 - 0.8, { collide: false, bevel: 0 });
+      const x = (i - 1) * (wb / 3);
+      counter(kit, M, wb / 3 - 0.6, 1.1, x, d / 2 - 1.4, 0, 1.15);
+      kit.slab(M.dark, wb / 3 - 0.6, 1.5, 0.5, x, h - 0.9, d / 2 - 0.5, { collide: false, bevel: 0 });
+      kit.slab(M.screen, wb / 3 - 1.4, 0.8, 0.06, x, h - 0.95, d / 2 - 0.8, { collide: false, bevel: 0 });
       /* The steam vent above each — the thing that makes a counter a kitchen. */
       kit.post(M.wing, 0.18, 0.18, 1.2, x, h - 0.6, d / 2 - 2.4, { radial: 6 });
       /* …AND THE RANGE UNDER THE VENT. A hood over a bare desk was three
@@ -1724,8 +1914,9 @@ export const SHAPES = {
        * plays out on this. See `cookRange`. */
       cookRange(kit, M, i, x, d / 2 - 1.4 + 0.26, 1.15);
     }
+    const hs = roomHalfW(kit, w, d / 2 - 3.2, d / 2 - 2.4) - 1.6;
     for (let i = 0; i < 10; i++) {
-      loose(kit, -w / 2 + 1.6 + i * ((w - 3.2) / 9), 0, d / 2 - 2.8, (world, q) => boxBody(world, q, M, 0.4, 0.72, 0.4, M.deep, 6, 'stool'));
+      loose(kit, -hs + i * ((2 * hs) / 9), 0, d / 2 - 2.8, (world, q) => boxBody(world, q, M, 0.4, 0.72, 0.4, M.deep, 6, 'stool'));
     }
   },
 
@@ -1736,15 +1927,17 @@ export const SHAPES = {
     floor(kit, M, w, d, 0, M.dark);
     walls(kit, M, w, d, h, { doorW: 2.4 });
     ceiling(kit, M, w, d, h, { ribs: 6, strips: false });
-    /* The cashier: a box of bars in the far corner. */
-    kit.push(w / 2 - 2.2, 0, d / 2 - 1.8, 0);
+    /* The cashier: a box of bars in the far corner — the far corner of a
+     * sector is nearer the centre line than `w / 2` says. */
+    const hb = roomHalfW(kit, w, d / 2 - 2.6, d / 2);
+    kit.push(hb - 2.2, 0, d / 2 - 1.8, 0);
     kit.slab(M.dark, 4, h, 0.4, 0, h / 2, 1.6, { collide: true, bevel: 0 });
     counter(kit, M, 3.6, 0.7, 0, 1.0, 0, 1.05);
     for (let i = 0; i * 0.3 < 3.6; i++) kit.post(M.wing, 0.04, 0.04, h - 1.1, -1.8 + i * 0.3, 1.1 + (h - 1.1) / 2, 1.0, { radial: 4 });
     kit.pop();
     /* The dice cage on its stand. */
-    kit.post(M.dark, 0.35, 0.35, 1.0, -w / 2 + 2, 0.5, d / 2 - 2, { radial: 8, collide: true });
-    kit.post(M.wing, 0.6, 0.6, 0.9, -w / 2 + 2, 1.45, d / 2 - 2, { radial: 8, open: true });
+    kit.post(M.dark, 0.35, 0.35, 1.0, -hb + 2, 0.5, d / 2 - 2, { radial: 8, collide: true });
+    kit.post(M.wing, 0.6, 0.6, 0.9, -hb + 2, 1.45, d / 2 - 2, { radial: 8, open: true });
     /* Four tables, each with a lamp hung over it — the room's only light. */
     for (let i = 0; i < 4; i++) {
       const x = ((i % 2) - 0.5) * 5, z = (i < 2 ? -2.2 : 2.2);
@@ -1800,7 +1993,8 @@ export const SHAPES = {
      * floor the crowd is below rather than on. */
     const daisD = 4.4, daisZ = d / 2 - daisD / 2 - 0.6;
     for (let i = 0; i < 2; i++) {
-      kit.slab(M.deep, w - 2.4 - i * 1.6, 0.34, daisD + 1.2 - i * 1.2, 0, 0.17 + i * 0.34, daisZ - 0.6 + i * 0.6,
+      const dd = daisD + 1.2 - i * 1.2, dz = daisZ - 0.6 + i * 0.6;
+      kit.slab(M.deep, 2 * roomHalfW(kit, w, dz - dd / 2, dz + dd / 2) - 2.4 - i * 1.6, 0.34, dd, 0, 0.17 + i * 0.34, dz,
         { collide: true, bevel: 0.03 });
     }
     kit.slab(M.strip, w - 4.6, 0.06, 0.1, 0, 0.72, daisZ - 2.3, { collide: false, bevel: 0 });
@@ -1869,14 +2063,22 @@ export const SHAPES = {
 
     /* ── THE STANDING RAIL down the other wall, at drinking height. Nowhere
      * to sit on that side is what makes the room read as a night room. */
-    kit.slab(M.wing, 0.5, 0.09, d - 6.5, w / 2 - 0.6, 1.05, -1.0, { collide: true, bevel: 0.02 });
-    for (let i = 0; i < 4; i++) {
-      kit.post(M.dark, 0.06, 0.06, 1.05, w / 2 - 0.6, 0.525, -4.0 + i * 2.0, { radial: 6 });
-    }
+    {
+      /* Along the wall — which converges, so in a sector the rail is laid
+       * radially and each post and stool stands at the wall's own x there. */
+      const S = sectorOf(kit), z0 = -1.0 - (d - 6.5) / 2, z1 = -1.0 + (d - 6.5) / 2;
+      if (S) radialSlab(kit, S, M.wing, 1, S.c - z0, S.c - z1, 1.005, 1.095, 0.5, -0.6, { collide: true, bevel: 0.02 });
+      else kit.slab(M.wing, 0.5, 0.09, d - 6.5, w / 2 - 0.6, 1.05, -1.0, { collide: true, bevel: 0.02 });
+      for (let i = 0; i < 4; i++) {
+        const z = -4.0 + i * 2.0;
+        kit.post(M.dark, 0.06, 0.06, 1.05, roomHalfW(kit, w, z) - 0.6, 0.525, z, { radial: 6 });
+      }
 
-    /* §11 — loose things. Stools at the rail and a crate of the house's own. */
-    for (let i = 0; i < 4; i++) {
-      loose(kit, w / 2 - 1.9, 0, -4.0 + i * 2.0, (world, q) => boxBody(world, q, M, 0.42, 0.76, 0.42, M.deep, 7, 'stool'));
+      /* §11 — loose things. Stools at the rail and a crate of the house's own. */
+      for (let i = 0; i < 4; i++) {
+        const z = -4.0 + i * 2.0;
+        loose(kit, roomHalfW(kit, w, z) - 1.9, 0, z, (world, q) => boxBody(world, q, M, 0.42, 0.76, 0.42, M.deep, 7, 'stool'));
+      }
     }
     loose(kit, -w / 2 + 2.0, 0, -d / 2 + 4.4, (world, q) => makeCrate(world, q));
   },
@@ -1895,13 +2097,27 @@ export const SHAPES = {
       const wide = 2 * rr * Math.tan((to - from) / n / 2) * 1.06;
       for (let k = 0; k < n; k++) {
         const a = from + (to - from) * ((k + 0.5) / n);
-        kit.slab(M.dark, wide, 0.42, 1.6, rr * Math.sin(a), y - 0.21 + 0.42, rr * Math.cos(a) - d / 2 + 3 + rr * 0 , { ry: a, collide: true, bevel: 0 });
+        const sx = rr * Math.sin(a), sz = rr * Math.cos(a) - d / 2 + 3;
+        /* A seat at the end of a wide row would stand through a converging
+         * wall: the row stops where the room does. */
+        const S = sectorOf(kit);
+        if (S) {
+          let out = false;
+          for (const [ex, ez] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+            const px = sx + ex * (wide / 2) * Math.cos(a) + ez * 0.8 * Math.sin(a);
+            const pz = sz - ex * (wide / 2) * Math.sin(a) + ez * 0.8 * Math.cos(a);
+            if (!inSector(S, px, pz, 0.15)) { out = true; break; }
+          }
+          if (out) continue;
+        }
+        kit.slab(M.dark, wide, 0.42, 1.6, sx, y - 0.21 + 0.42, sz, { ry: a, collide: true, bevel: 0 });
       }
     }
     /* The stage, and the holo volume standing on it. */
-    kit.slab(M.deep, w - 6, 0.6, 4, 0, 0.3, d / 2 - 2.6, { collide: true, bevel: 0 });
+    const ws = Math.min(w - 6, 2 * roomHalfW(kit, w, d / 2 - 4.6, d / 2 - 0.6) - 1.2);
+    kit.slab(M.deep, ws, 0.6, 4, 0, 0.3, d / 2 - 2.6, { collide: true, bevel: 0 });
     kit.post(M.screen, 3.2, 2.4, 3.4, 0, 2.3, d / 2 - 2.6, { radial: 12 });
-    kit.slab(M.strip, w - 7, 0.08, 0.12, 0, 0.62, d / 2 - 4.6, { collide: false, bevel: 0 });
+    kit.slab(M.strip, ws - 1, 0.08, 0.12, 0, 0.62, d / 2 - 4.6, { collide: false, bevel: 0 });
     /* ── AND THE VOLUME HAS THE RACE IN IT (V16 Lane D, "A WINDOW") ──────
      * The cone above is a lit cylinder and was the whole of #19's holo: sixty
      * seats facing a shape. The feed hangs on its front face, at the height a
@@ -2014,8 +2230,8 @@ export const SHAPES = {
     walls(kit, M, w, d, h, { doorW: 5 });
     /* No ceiling: the cut is what the place IS. What closes the top is the
      * deck 44 balcony that looks down into it. */
-    kit.slab(M.dark, w + 0.8, 0.4, 3, 0, DRUM.pitch, -d / 2 + 1.5, { collide: true, bevel: 0 });
-    kit.slab(M.dark, w + 0.8, 0.4, 3, 0, DRUM.pitch, d / 2 - 1.5, { collide: true, bevel: 0 });
+    kit.slab(M.dark, 2 * roomHalfW(kit, w, -d / 2, -d / 2 + 3) + 0.8, 0.4, 3, 0, DRUM.pitch, -d / 2 + 1.5, { collide: true, bevel: 0 });
+    kit.slab(M.dark, 2 * roomHalfW(kit, w, d / 2 - 3, d / 2) + 0.8, 0.4, 3, 0, DRUM.pitch, d / 2 - 1.5, { collide: true, bevel: 0 });
     /* The stream: a channel of glass down the middle with a bank each side. */
     kit.slab(M.glass, 2.2, 0.2, d - 3, 0, 0.06, 0, { collide: false, bevel: 0 });
     for (const s of [-1, 1]) kit.slab(M.mark, 0.7, 0.35, d - 3, s * 1.45, 0.17, 0, { collide: true, bevel: 0 });
@@ -2023,7 +2239,8 @@ export const SHAPES = {
      * the station that gets it (§3.2 #23 names the file). */
     ctx.trees.push({ w: w - 4, d: d - 4, n: 9 });
     for (let i = 0; i < 5; i++) {
-      loose(kit, ((i % 2) ? -1 : 1) * (w / 2 - 2.5), 0, -d / 2 + 3 + i * ((d - 6) / 4),
+      const z = -d / 2 + 3 + i * ((d - 6) / 4);
+      loose(kit, ((i % 2) ? -1 : 1) * (roomHalfW(kit, w, z - 1.2, z + 1.2) - 2.5), 0, z,
         (world2, q) => boxBody(world2, q, M, 2.2, 0.44, 0.6, M.wing, 26, 'bench'));
     }
   },
@@ -2392,7 +2609,10 @@ export const SHAPES = {
     /* Piers: a grid of heavy stone posts. The room is what is between them. */
     for (let i = 0; i < 4; i++) {
       for (let k = 0; k < 4; k++) {
-        const x = -w / 2 + (w / 4) * (i + 0.5), z = -d / 2 + (d / 4) * (k + 0.5);
+        const z = -d / 2 + (d / 4) * (k + 0.5);
+        /* each rank of piers is spaced across what the room is at its z */
+        const hw = roomHalfW(kit, w, z - 0.55, z + 0.55);
+        const x = -hw + (2 * hw / 4) * (i + 0.5);
         if ((i === 1 || i === 2) && (k === 1 || k === 2)) continue;
         kit.slab(M.deep, 1.1, h, 1.1, x, h / 2, z, { collide: true, bevel: 0 });
       }
@@ -2557,13 +2777,15 @@ export const SHAPES = {
     tvScreen(kit, M, ctx, 0, 2.4, d / 2 - 0.12, Math.PI, 2.2, 1.25);
     ceiling(kit, M, w, d, h, { ribs: 6 });
     for (const s of [-1, 1]) {
+      /* five capsules across the row — across what the room is at that row */
+      const hw = roomHalfW(kit, w, s * (d / 2 - 1.2) - 1.1, s * (d / 2 - 1.2) + 1.1), cw = 2 * hw / 5;
       for (let i = 0; i < 5; i++) {
         for (let k = 0; k < 3; k++) {
-          const x = -w / 2 + (w / 5) * (i + 0.5), y = 0.3 + k * 1.25;
+          const x = -hw + cw * (i + 0.5), y = 0.3 + k * 1.25;
           if (s < 0 && i === 2) continue; /* the doorway (V18) */
-          kit.slab(M.wing, w / 5 - 0.2, 1.1, 2.2, x, y + 0.55, s * (d / 2 - 1.2), { collide: true, bevel: 0 });
-          kit.slab(M.dark, w / 5 - 0.6, 0.9, 0.2, x, y + 0.55, s * (d / 2 - 2.3), { collide: false, bevel: 0 });
-          if ((i + k) % 2) kit.slab(M.strip, w / 5 - 0.9, 0.06, 0.08, x, y + 1.0, s * (d / 2 - 2.35), { collide: false, bevel: 0 });
+          kit.slab(M.wing, cw - 0.2, 1.1, 2.2, x, y + 0.55, s * (d / 2 - 1.2), { collide: true, bevel: 0 });
+          kit.slab(M.dark, cw - 0.6, 0.9, 0.2, x, y + 0.55, s * (d / 2 - 2.3), { collide: false, bevel: 0 });
+          if ((i + k) % 2) kit.slab(M.strip, cw - 0.9, 0.06, 0.08, x, y + 1.0, s * (d / 2 - 2.35), { collide: false, bevel: 0 });
         }
       }
     }
@@ -2578,13 +2800,14 @@ export const SHAPES = {
     walls(kit, M, w, d, h, { doorW: 2.4 });
     ceiling(kit, M, w, d, h, { ribs: 5, strips: false });
     for (const s of [-1, 1]) {
+      const hw = roomHalfW(kit, w, s * (d / 2 - 0.9) - 0.7, s * (d / 2 - 0.9) + 0.7), mw = 2 * hw / 6;
       for (let i = 0; i < 6; i++) {
-        const x = -w / 2 + (w / 6) * (i + 0.5);
+        const x = -hw + mw * (i + 0.5);
         if (s < 0 && (i === 2 || i === 3)) continue; /* the doorway (V18) */
-        kit.slab(M.wing, w / 6 - 0.25, 1.5, 1.1, x, 0.75, s * (d / 2 - 0.9), { collide: true, bevel: 0 });
+        kit.slab(M.wing, mw - 0.25, 1.5, 1.1, x, 0.75, s * (d / 2 - 0.9), { collide: true, bevel: 0 });
         kit.post(M.glass, 0.42, 0.42, 0.12, x, 0.95, s * (d / 2 - 1.5), { rx: Math.PI / 2, radial: 10 });
       }
-      kit.slab(M.dark, w, 0.4, 1.4, 0, 1.7, s * (d / 2 - 0.9), { collide: false, bevel: 0 });
+      kit.slab(M.dark, 2 * hw, 0.4, 1.4, 0, 1.7, s * (d / 2 - 0.9), { collide: false, bevel: 0 });
     }
     /* The showers, stalled off at one end. */
     for (let i = 0; i < 3; i++) {
@@ -2653,7 +2876,7 @@ export const SHAPES = {
       kit.slab(M.wing, 0.1, 0.06, cd + 0.4, sx * (cw / 2 + 0.3), 1.0, 0, { collide: true, bevel: 0 });
       for (let i = 0; i * 1.4 < cd; i++) kit.slab(M.dark, 0.06, 1.0, 0.06, sx * (cw / 2 + 0.3), 0.5, -cd / 2 + 0.2 + i * 1.4, { collide: false, bevel: 0 });
     }
-    kit.slab(M.wing, cw * 0.8, 0.24, depth + 0.9, 0, (depth + 0.9) / 2 - 0.4, d / 2 - 0.9,
+    kit.slab(M.wing, cw * 0.8, 0.24, depth + 0.9, 0, (depth + 0.9) / 2 - 0.4, d / 2 - 1.75,
       { rx: 0.28, collide: true, bevel: 0 });
 
     /* THE CHAIN. Two crossed sets of thin bars at 2.2 m over the cut, on a
@@ -2899,12 +3122,13 @@ export const SHAPES = {
     /* The waiting bays watch the holonet — every hospital does. */
     tvScreen(kit, M, ctx, -w / 2 + 0.12, 2.3, -d / 4, Math.PI / 2, 2.0, 1.15);
     ceiling(kit, M, w, d, h, { ribs: 7 });
+    const hb = roomHalfW(kit, w, d / 2 - 2.7, d / 2 - 0.2), bw = 2 * hb / 6;
     for (let i = 0; i < 6; i++) {
-      const x = -w / 2 + (w / 6) * (i + 0.5);
+      const x = -hb + bw * (i + 0.5);
       /* The bay: a bed, a rail, a curtain, a monitor. */
       kit.slab(M.wing, 2.0, 0.7, 0.9, x, 0.35, d / 2 - 1.6, { collide: true, bevel: 0 });
       kit.slab(M.deep, 1.9, 0.16, 0.8, x, 0.78, d / 2 - 1.6, { collide: false, bevel: 0 });
-      kit.slab(M.mark, 0.1, 2.2, 2.4, x - w / 12, 1.1, d / 2 - 1.4, { collide: false, bevel: 0 });
+      kit.slab(M.mark, 0.1, 2.2, 2.4, x - bw / 2, 1.1, d / 2 - 1.4, { collide: false, bevel: 0 });
       kit.slab(M.screen, 0.7, 0.5, 0.05, x, 2.0, d / 2 - 0.25, { collide: false, bevel: 0 });
     }
     /* The surgery, glazed, at the far end. */
@@ -2944,17 +3168,21 @@ export const SHAPES = {
     walls(kit, M, w, d, h, { doorW: 2.4 });
     ceiling(kit, M, w, d, h, { ribs: 4, strips: false });
     /* The drawers: a grid of handles, five wide and four high. */
+    const hd = roomHalfW(kit, w, d / 2 - 0.7, d / 2 - 0.15), dw = 2 * hd / 6;
     for (let i = 0; i < 6; i++) {
       for (let k = 0; k < 4; k++) {
-        kit.slab(M.wing, w / 6 - 0.14, 0.7, 0.5, -w / 2 + (w / 6) * (i + 0.5), 0.5 + k * 0.75, d / 2 - 0.4, { collide: true, bevel: 0 });
-        kit.slab(M.dark, 0.4, 0.1, 0.1, -w / 2 + (w / 6) * (i + 0.5), 0.5 + k * 0.75, d / 2 - 0.68, { collide: false, bevel: 0 });
+        kit.slab(M.wing, dw - 0.14, 0.7, 0.5, -hd + dw * (i + 0.5), 0.5 + k * 0.75, d / 2 - 0.4, { collide: true, bevel: 0 });
+        kit.slab(M.dark, 0.4, 0.1, 0.1, -hd + dw * (i + 0.5), 0.5 + k * 0.75, d / 2 - 0.68, { collide: false, bevel: 0 });
       }
     }
-    /* The roll. One lit panel per rank of names, and a candle under it. */
+    /* The roll. One lit panel per rank of names, and a candle under it — each
+     * panel on the front wall where the front wall IS at its x (the ring's
+     * arc, in a sector). */
     for (let i = 0; i < 7; i++) {
-      kit.slab(M.mark, w / 7 - 0.2, 2.4, 0.05, -w / 2 + (w / 7) * (i + 0.5), 1.7, -d / 2 + 0.28, { collide: false, bevel: 0 });
+      const px = -w / 2 + (w / 7) * (i + 0.5);
+      kit.slab(M.mark, w / 7 - 0.2, 2.4, 0.05, px, 1.7, roomFrontZ(kit, d, px) + 0.28, { collide: false, bevel: 0 });
     }
-    kit.slab(M.strip, w - 1, 0.07, 0.16, 0, 3.1, -d / 2 + 0.42, { collide: false, bevel: 0 });
+    kit.slab(M.strip, w - 1, 0.07, 0.16, 0, 3.1, roomFrontZ(kit, d, w / 2 - 0.5) + 0.42, { collide: false, bevel: 0 });
     /* V18 cool 7: THE NAMES ON THE WALL. The company's dead, one column a
      * panel, in the words the chapel vigil reads (`Vigil.memorialRows` is the
      * one list both read). Drawn the way `dressBoards` draws text on a slab —
@@ -2963,11 +3191,12 @@ export const SHAPES = {
      * disposed with the room. `world._station.memorial` hands the rows back. */
     let rows = [];
     try { rows = memorialRows(7); } catch { rows = []; }
-    const pw = w / 7 - 0.3, py = 1.7, pz = -d / 2 + 0.28 + 0.04;
+    const pw = w / 7 - 0.3, py = 1.7;
     const made = [];
     for (let i = 0; i < 7; i++) {
       if (!rows[i]?.length) continue;
       const px = -w / 2 + (w / 7) * (i + 0.5);
+      const pz = roomFrontZ(kit, d, px) + 0.28 + 0.04;
       const lines = rows[i];
       loose(kit, px, py, pz, (world, q) => {
         const panel = signPanel(lines, { name: `memorial${i}`, px: 256, pyx: 256, head: false, bg: '#171410', ink2: '#e9dcc0' });
@@ -2992,16 +3221,21 @@ export const SHAPES = {
     walls(kit, M, w, d, h, { doorW: 3 });
     ceiling(kit, M, w, d, h, { ribs: 8 });
     /* The cages. */
+    const hc = roomHalfW(kit, w, d / 2 - 1.2, d / 2 - 0.1), cw = 2 * hc / 5;
     for (let i = 0; i < 4; i++) {
-      const x = -w / 2 + (w / 5) * (i + 0.5);
-      rack(kit, M, w / 5 - 0.4, h - 1.0, x, d / 2 - 0.6, 0, 4);
-      for (let k = 0; k * 0.3 < w / 5 - 0.4; k++) {
-        kit.post(M.wing, 0.04, 0.04, h - 1.0, x - (w / 5 - 0.4) / 2 + k * 0.3, (h - 1.0) / 2, d / 2 - 1.0, { radial: 4 });
+      const x = -hc + cw * (i + 0.5);
+      rack(kit, M, cw - 0.4, h - 1.0, x, d / 2 - 0.6, 0, 4);
+      for (let k = 0; k * 0.3 < cw - 0.4; k++) {
+        kit.post(M.wing, 0.04, 0.04, h - 1.0, x - (cw - 0.4) / 2 + k * 0.3, (h - 1.0) / 2, d / 2 - 1.0, { radial: 4 });
       }
     }
-    /* The saber vault: a heavy round door in the end wall. */
-    kit.post(M.wing, 1.3, 1.3, 0.4, -w / 2 + 1.2, 1.6, -d / 2 + 1.2, { rz: Math.PI / 2, radial: 14, collide: true });
-    kit.post(M.strip, 0.3, 0.3, 0.1, -w / 2 + 1.0, 1.6, -d / 2 + 1.2, { rz: Math.PI / 2, radial: 10 });
+    /* The saber vault: a heavy round door in the end wall — the wall's own x
+     * at that depth, which in a sector is inside `w / 2`. */
+    const vx0 = -roomHalfW(kit, w, -d / 2, -d / 2 + 2.6) + 1.4;
+    const vz = roomFrontZ(kit, d, vx0 - 1.3) + 1.45;
+    const vx = -roomHalfW(kit, w, vz - 1.3, vz + 1.3) + 1.4;
+    kit.post(M.wing, 1.3, 1.3, 0.4, vx, 1.6, vz, { rz: Math.PI / 2, radial: 14, collide: true });
+    kit.post(M.strip, 0.3, 0.3, 0.1, vx - 0.2, 1.6, vz, { rz: Math.PI / 2, radial: 10 });
     counter(kit, M, 4.0, 1.0, -w / 2 + 4.5, -d / 2 + 1.4, 0, 1.05); // beside the door, not across it (V18)
     /* The range: glass, then a lane with targets down it. */
     kit.slab(M.glass, 10, h - 0.8, 0.16, w / 2 - 7, h / 2 - 0.4, -d / 2 + 3.0, { collide: true, bevel: 0 });
@@ -3066,13 +3300,27 @@ export const SHAPES = {
     walls(kit, M, w, d, h, { doorW: 3 });
     ceiling(kit, M, w, d, h, { ribs: 6 });
     /* The grating: a grid of bars you walk on and see through. */
-    for (let i = 0; i * 0.5 < w; i++) kit.slab(M.dark, 0.1, 0.1, d, -w / 2 + i * 0.5, 0.05, 0, { collide: i % 4 === 0, bevel: 0 });
-    for (let i = 0; i * 0.5 < d; i++) kit.slab(M.dark, w, 0.08, 0.08, 0, 0.02, -d / 2 + i * 0.5, { collide: false, bevel: 0 });
+    /* A bar along the room stops where the wall is — at the front arc and
+     * at the converging side; a bar across it is as long as the room is there. */
+    const S = sectorOf(kit);
+    for (let i = 0; i * 0.5 < w; i++) {
+      const x = -w / 2 + i * 0.5;
+      const z0 = Math.max(-d / 2, roomFrontZ(kit, d, x));
+      const z1 = S ? Math.min(d / 2, S.c - Math.abs(x) / Math.tan(S.th) - 0.1) : d / 2;
+      if (z1 - z0 < 0.5) continue;
+      kit.slab(M.dark, 0.1, 0.1, z1 - z0, x, 0.05, (z0 + z1) / 2, { collide: i % 4 === 0, bevel: 0 });
+    }
+    for (let i = 0; i * 0.5 < d; i++) {
+      const z = -d / 2 + i * 0.5;
+      kit.slab(M.dark, 2 * roomHalfW(kit, w, z), 0.08, 0.08, 0, 0.02, z, { collide: false, bevel: 0 });
+    }
     kit.slab(M.dark, w, 0.3, d, 0, -0.16, 0, { collide: true, bevel: 0 });
     /* The tanks and the pipe banks. */
-    for (let i = 0; i < 3; i++) tank(kit, M, 1.5, h - 1.4, -w / 2 + 3 + i * 4.2, d / 2 - 2.4);
+    const ht = roomHalfW(kit, w, d / 2 - 3.9, d / 2 - 0.9);
+    for (let i = 0; i < 3; i++) tank(kit, M, 1.5, h - 1.4, -ht + 3 + i * 4.2, d / 2 - 2.4);
     for (let k = 0; k < 4; k++) {
-      kit.post(M.wing, 0.3, 0.3, w - 1, 0, h - 1.2 - (k % 2) * 0.5, -d / 2 + 3 + k * 1.1, { rz: Math.PI / 2, radial: 8 });
+      const z = -d / 2 + 3 + k * 1.1;
+      kit.post(M.wing, 0.3, 0.3, 2 * roomHalfW(kit, w, z) - 1, 0, h - 1.2 - (k % 2) * 0.5, z, { rz: Math.PI / 2, radial: 8 });
     }
     kit.slab(M.strip, w - 2, 0.06, 0.4, 0, -0.9, 0, { collide: false, bevel: 0 });
   },
@@ -3084,9 +3332,10 @@ export const SHAPES = {
     floor(kit, M, w, d);
     walls(kit, M, w, d, h, { doorW: 4 });
     ceiling(kit, M, w, d, h, { ribs: 6 });
+    const hl = roomHalfW(kit, w, d / 2 - 2.4, d / 2 - 1.2), lw = 2 * hl / 4;
     for (let i = 0; i < 4; i++) {
-      const x = -w / 2 + (w / 4) * (i + 0.5);
-      kit.slab(M.wing, w / 4 - 0.8, 1.1, 1.2, x, 0.55, d / 2 - 1.8, { collide: true, bevel: 0 });
+      const x = -hl + lw * (i + 0.5);
+      kit.slab(M.wing, lw - 0.8, 1.1, 1.2, x, 0.55, d / 2 - 1.8, { collide: true, bevel: 0 });
       kit.post(M.dark, 0.3, 0.3, 1.4, x, 1.8, d / 2 - 1.8, { rz: Math.PI / 2, radial: 8 });
       kit.slab(M.status, 0.3, 0.14, 0.14, x + 0.6, 1.25, d / 2 - 2.3, { collide: false, bevel: 0 });
     }
@@ -3096,7 +3345,7 @@ export const SHAPES = {
     kit.slab(M.strip, 2.0, 0.06, 1.2, -w / 2 + 3.4, 0.92, -d / 2 + 3.0, { collide: false, bevel: 0 });
     /* The bench with the droid on it. */
     loose(kit, w / 2 - 4, 0, -d / 2 + 2.6, (world, q) => tableBody(world, q, M, 2.6, 1.2, 0.85));
-    for (let i = 0; i < 5; i++) loose(kit, w / 2 - 6 + i * 1.2, 0, 0, (world, q) => makeCrate(world, q, 0.55));
+    for (let i = 0; i < 5; i++) loose(kit, roomHalfW(kit, w, -0.5, 0.5) - 6 + i * 1.2, 0, 0, (world, q) => makeCrate(world, q, 0.55));
   },
 
   /** #51 Droid pool: CHARGING ROWS. Alcoves in both long walls with a droid
@@ -3128,18 +3377,23 @@ export const SHAPES = {
     /* The stacks: static below shoulder height (they are the canyon walls),
      * loose on top (they are the sandbox). */
     for (const s of [-1, 1]) {
+      /* Five stacks across the row — across what the room IS at that row,
+       * which in a sector is narrower at the back than the front. */
+      const zc = s * (d / 2 - 3);
+      const hw = roomHalfW(kit, w, zc - 2.3, zc + 2.3) - 0.2;
       for (let i = 0; i < 5; i++) {
         /* the middle stack on the door side would stand in the doorway (V18) */
         if (s < 0 && i === 2) continue;
+        const x = -hw + (2 * hw / 5) * (i + 0.5);
         for (let k = 0; k < 3; k++) {
-          const x = -w / 2 + (w / 5) * (i + 0.5), y = k * 2.6;
-          kit.slab(k % 2 ? M.deep : M.wing, w / 5 - 0.4, 2.5, 4.6, x, y + 1.25, s * (d / 2 - 3), { collide: true, bevel: 0 });
+          const y = k * 2.6;
+          kit.slab(k % 2 ? M.deep : M.wing, 2 * hw / 5 - 0.4, 2.5, 4.6, x, y + 1.25, zc, { collide: true, bevel: 0 });
         }
-        loose(kit, -w / 2 + (w / 5) * (i + 0.5), 7.8, s * (d / 2 - 3), (world, q) => makeCrate(world, q, 1.2));
+        loose(kit, x, 7.8, zc, (world, q) => makeCrate(world, q, 1.2));
       }
     }
     /* The crane rail and its trolley. */
-    for (const s of [-1, 1]) kit.slab(M.wing, w, 0.4, 0.5, 0, h - 1.2, s * 3.4, { collide: false, bevel: 0 });
+    for (const s of [-1, 1]) kit.slab(M.wing, 2 * roomHalfW(kit, w, s * 3.4 - 0.25, s * 3.4 + 0.25), 0.4, 0.5, 0, h - 1.2, s * 3.4, { collide: false, bevel: 0 });
     kit.slab(M.dark, 2.4, 0.8, 7.4, -w / 4, h - 1.8, 0, { collide: false, bevel: 0 });
     kit.post(M.dark, 0.08, 0.08, 4.0, -w / 4, h - 4.0, 0, { radial: 4 });
     scatter(kit, 14, w * 0.5, 5, 91, (x, z) => loose(kit, x, 0, z, (world, q) => makeCrate(world, q, 0.8)));
@@ -3475,6 +3729,8 @@ function furnish(kit, M, place, ctx) {
     const x = (rnd() - 0.5) * (w - 2.6), z = (rnd() - 0.5) * (d - 2.6);
     /* Not across the door — the front third of the centre line stays clear. */
     if (z < -d / 2 + 3.0 && Math.abs(x) < 2.6) continue;
+    /* Not through a converging wall, in a sector. */
+    if (kit.arc?.th && !inSector(kit.arc, x, z, 1.0)) continue;
     let bad = false;
     for (const q of taken) if (Math.hypot(q.x - x, q.z - z) < 1.15) { bad = true; break; }
     if (!bad) for (const r of keep) if (Math.abs(x - r.x) <= r.w / 2 + 0.5 && Math.abs(z - r.z) <= r.d / 2 + 0.5) { bad = true; break; }
@@ -3502,6 +3758,63 @@ function spin(body, yaw) {
   return body;
 }
 
+/**
+ * The shapes whose builder calls `walls` — the box rooms, which the sector
+ * turns into wedges. A round room (`arcWall`) or one that stands its own
+ * walls keeps its own geometry. `station.mjs` holds this list against the
+ * builders' source, so a new box shape cannot be left off it silently.
+ */
+export const BOX_SHAPES = new Set(['vault', 'daispit', 'curvedhall', 'alcoveshop', 'cage', 'glassfront', 'sunkenround',
+  'terrace', 'balconysalon', 'workroom', 'lowcounters', 'lowden', 'wheelhall', 'fanauditorium', 'runninggallery',
+  'cutthrough', 'noticewall', 'obelisk', 'twinroom', 'mezzanine', 'bunkhall', 'lightwell', 'stonelow', 'giltcourt',
+  'fightingpit', 'walkwaypools', 'capsulewall', 'steamrows', 'chainpit', 'containerrow', 'triagehall', 'tankrow',
+  'namewall', 'cagerange', 'wetgrating', 'machineshop', 'chargingrows', 'canyon', 'compactor', 'latticecell',
+  'lowroom', 'deeppit', 'cellar']);
+/** Rooms that keep a wall to the ring and to their neighbours. */
+const PRIVATE = /brig|morgue|armoury|reactor|coolant|waste|cargo|droid|comms|command|quarter|cabin|residential|methane|vorlon|underlift|barracks|officers|laundry|fabric|maint|rack|cobra|tower|ready|chapel/i;
+const D2R = Math.PI / 180;
+/** An outer room that is a sector: box-walled, on the outer band, 8 m or wider. */
+function isSectorRoom(p) { return p.band === 'outer' && !p.room && !p.arc && !p.external && p.w >= 8 && BOX_SHAPES.has(p.shape); }
+export function isPublicOuter(p) { return isSectorRoom(p) && !PRIVATE.test(p.name); }
+/**
+ * ══ THE SECTOR A PLACE IS, AND THE WINDOWS TO ITS NEIGHBOURS ══════════════
+ *
+ * `R` the ring's inner circle, `c` its centre in the room's frame (+Z, behind
+ * the back — `R − d/2`, which is the room's own radius on the plan, and not
+ * read off `place.x, z` so a room built at the origin by a check is the
+ * same room), `th` the half-angle the front subtends, `Ri` the back's
+ * radius. `glass` glazes the front beside the door on a public room.
+ *
+ * `panes`: one per PUBLIC neighbour on the same deck whose facing side wall
+ * is within 12.5 m of arc of this room's, with no spine between — the
+ * cantina and the Pit (11.9 m apart), the Pit and the Wheelhouse (3.5), the
+ * theatre and the food court (7.3), Arrivals and the arboretum (9.6), the
+ * medbay and the bacta ward (8.1). Side `s` is the room's own (+X is toward
+ * the LOWER bearing, since −Z faces the ring), and `r` is the radius both
+ * panes are centred on: a third of the SHORTER room's depth in from the
+ * ring, the same number from both rooms, so the two panes face each other.
+ */
+export function sectorOfPlace(place) {
+  if (!isSectorRoom(place)) return null;
+  const R = DRUM.roomR;
+  const th = Math.asin(Math.min(1, (place.w / 2) / R));
+  const S = { R, c: R - place.d / 2, th, Ri: R - place.d, glass: isPublicOuter(place) && (place.heads || 0) >= 6, panes: [] };
+  if (!isPublicOuter(place)) return S;
+  const edge = (p) => Math.asin(Math.min(1, (p.w / 2) / R)) / D2R;
+  for (const q of PLACE.values()) {
+    if (q.deck !== place.deck || q.id === place.id || !isPublicOuter(q)) continue;
+    const da = ((q.at - place.at) % 360 + 540) % 360 - 180;
+    const gap = Math.abs(da) - edge(place) - edge(q);
+    if (gap < -0.5 || gap * D2R * R > 12.5) continue;
+    const sg = Math.sign(da);
+    const a0 = place.at + sg * edge(place), a1 = q.at - sg * edge(q);
+    const between = (sp) => { const u = ((sp - a0) % 360 + 540) % 360 - 180, v = ((a1 - a0) % 360 + 540) % 360 - 180; return v > 0 ? u > 0 && u < v : u < 0 && u > v; };
+    if (DRUM.spines.some(between)) continue;
+    S.panes.push({ s: da > 0 ? -1 : 1, r: R - Math.max(2.0, Math.min(place.d, q.d) / 3), with: q.id });
+  }
+  return S;
+}
+
 export function buildPlace(world, group, place, M, st) {
   const fn = SHAPES[place.shape];
   if (!fn) throw new Error(`StationKit: place #${place.id} (${place.name}) declares shape '${place.shape}', which has no builder`);
@@ -3516,11 +3829,7 @@ export function buildPlace(world, group, place, M, st) {
   /* An outer-band room's front is a chord of the ring — see `arcFront`. The
    * public rooms get glass beside the door; anything private, secure or
    * industrial keeps a wall. */
-  if (place.band === 'outer' && !place.room && !place.arc && place.w >= 8) {
-    const rc = Math.hypot(place.x, place.z);
-    const PRIVATE = /brig|morgue|armoury|reactor|coolant|waste|cargo|droid|comms|command|quarter|cabin|residential|methane|vorlon|underlift|barracks|officers|laundry|fabric|maint|rack|cobra|tower|ready|chapel/i;
-    kit.arc = { R: DRUM.roomR, c: rc, glass: !PRIVATE.test(place.name) && (place.heads || 0) >= 6 };
-  }
+  kit.arc = sectorOfPlace(place);
   const ctx = {
     sunk: [],
     trees: [],

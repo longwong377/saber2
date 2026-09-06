@@ -1510,6 +1510,165 @@ export async function run({ check, assert, THREE }) {
     assert(bad.length === 0, `${bad.length} rooms block their own doorway:\n      ${bad.join('\n      ')}`);
   });
 
+  /** A room built alone at the origin with no yaw, its colliders and its
+   * loose bodies kept — the `walked into` check's method, shared by the two
+   * sector checks below. */
+  async function roomAlone(p) {
+    const { stationMats } = await import('../../src/game/Station.js');
+    const { buildPlace } = await import('../../src/game/StationKit.js');
+    const M = stationMats(p.deck);
+    const boxes = [];
+    const world = {
+      scene: new THREE.Scene(), statics: [], props: [],
+      physics: { add() {}, remove() {}, addStaticBox(c, h, qq) { boxes.push({ c: c.clone(), h: h.clone(), q: qq ? qq.clone() : null }); return {}; }, staticBoxes: [] },
+      spawnEnemy() { return null; },
+    };
+    const st = { draws: 0, tris: 0, solids: 0, places: new Map(), sunk: [] };
+    const out = buildPlace(world, new THREE.Group(), { ...p, x: 0, z: 0, yaw: 0 }, M, st);
+    /* The kit emits in WORLD space: a room on deck 48 records its colliders
+     * 25 m up. Back into the room's own frame, so a height means a height. */
+    const { floorOf } = await import('../../src/game/StationPlan.js');
+    const y0 = floorOf(p);
+    for (const b of boxes) b.c.y -= y0;
+    for (const pr of world.props) { const pos = pr.body?.position || pr.mesh?.position; if (pos) pos.y -= y0; }
+    return { boxes, props: world.props, out };
+  }
+
+  check('station: every outer room\'s side walls converge to the axis and nothing pokes through them', async () => {
+    /**
+     * ══ A ROOM ON A RING IS A WEDGE (V18 cool 20 / hole 2) ═══════════════
+     *
+     * The outer band's rooms hang inboard of the ring walk between two
+     * circles round the drum's axis, so a box-walled room there is a SECTOR:
+     * the front a run of chords at `DRUM.roomR`, the sides radial, the back
+     * an arc at `roomR − d`. `StationKit.sectorOfPlace` is the one table of
+     * that geometry and `walls`, `floor`, `ceiling`, the dressing and
+     * `furnish` all read it — but fifty builders also stand their own
+     * counters, racks, stacks and benches at `±w / 2`, which in a wedge is
+     * a metre or four OUTSIDE the wall at the back. So each sector room is
+     * built alone and every collider in it is held against the wedge: a box
+     * with one corner more than 0.15 m inside a side line and another more
+     * than 0.12 m outside it stands THROUGH that wall (a wall itself has no
+     * corner inside its own line; a rib, a lid or a floor is not tested).
+     * Loose bodies must land 0.5 m inside. And the walls are checked to BE
+     * the wedge: a collider on each side turned by ±(π/2 − th), and the
+     * back's chords standing at the inner circle.
+     *
+     * `BOX_SHAPES` is held against the builders' own source, so a new shape
+     * that calls `walls` cannot be left off the list and built square.
+     */
+    const { PLACES } = await import('../../src/game/StationPlan.js');
+    const { SHAPES, BOX_SHAPES, sectorOfPlace, inSector } = await import('../../src/game/StationKit.js');
+    const listed = [];
+    for (const k of Object.keys(SHAPES)) {
+      const uses = /\bwalls\(/.test(String(SHAPES[k]));
+      if (uses !== BOX_SHAPES.has(k)) listed.push(`${k} ${uses ? 'calls walls and is not in BOX_SHAPES' : 'is in BOX_SHAPES and does not call walls'}`);
+    }
+    assert(listed.length === 0, `BOX_SHAPES disagrees with the builders:\n      ${listed.join('\n      ')}`);
+    const v = new THREE.Vector3(), e = new THREE.Euler();
+    const bad = [];
+    let rooms = 0, narrowest = 1, widestBack = 0;
+    for (const p of PLACES) {
+      const S = sectorOfPlace(p);
+      if (!S) continue;
+      rooms++;
+      const { boxes, props } = await roomAlone(p);
+      const yawOf = (b) => b.q ? e.setFromQuaternion(b.q, 'YXZ').y : 0;
+      /* the sides: a collider at least 3 m long turned by ±(π/2 − th) */
+      for (const sd of [-1, 1]) {
+        const want = sd * (Math.PI / 2 - S.th);
+        const ok = boxes.some((b) => b.h.x * 2 >= 3 && Math.abs(yawOf(b) - want) < 1e-3 && Math.sign(b.c.x) === sd);
+        if (!ok) bad.push(`#${p.id} ${p.name}: no side wall on ${sd < 0 ? '-X' : '+X'} turned by ${(want * 180 / Math.PI).toFixed(1)}°`);
+      }
+      /* the back: chords standing at Ri − 0.2 from the axis */
+      const chords = boxes.filter((b) => b.h.y * 2 >= p.h - 0.01 && Math.abs(Math.hypot(b.c.x, S.c - b.c.z) - (S.Ri - 0.2)) < 0.05);
+      const shape = SHAPES[p.shape];
+      const opensBack = /open:\s*\[[^\]]*'back'/.test(String(shape));
+      if (!opensBack && chords.length < 2) bad.push(`#${p.id} ${p.name}: back wall is ${chords.length} chord(s) at the inner circle — a straight wall?`);
+      /* what stands through a wall */
+      for (const b of boxes) {
+        const top = b.c.y + b.h.y, bot = b.c.y - b.h.y;
+        if (top < 0.1 || bot > 2.4) continue;
+        let sMax = -Infinity, sMin = Infinity, rMax = -Infinity, rMin = Infinity;
+        for (const [ex, ez] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+          v.set(ex * b.h.x, 0, ez * b.h.z);
+          if (b.q) v.applyQuaternion(b.q);
+          const x = b.c.x + v.x, z = b.c.z + v.z;
+          const over = (Math.abs(x) - (S.c - z) * Math.tan(S.th)) * Math.cos(S.th);
+          const r = Math.hypot(x, S.c - z);
+          const overR = Math.max(r - S.R, S.Ri - r);
+          sMax = Math.max(sMax, over); sMin = Math.min(sMin, over);
+          rMax = Math.max(rMax, overR); rMin = Math.min(rMin, overR);
+        }
+        if ((sMax > 0.12 && sMin < -0.15) || (sMax < -0.15 && rMax > 0.12 && rMin < -0.15)) {
+          bad.push(`#${p.id} ${p.name} [${p.shape}]: a ${(b.h.x * 2).toFixed(1)}x${(b.h.y * 2).toFixed(1)}x${(b.h.z * 2).toFixed(1)} box at ${b.c.x.toFixed(1)},${b.c.y.toFixed(1)},${b.c.z.toFixed(1)} stands ${Math.max(sMax, rMax).toFixed(2)} m through a wall`);
+        }
+      }
+      for (const pr of props) {
+        const pos = pr.body?.position || pr.mesh?.position;
+        if (pos && !inSector(S, pos.x, pos.z, 0.5)) bad.push(`#${p.id} ${p.name}: a loose ${pr.kind} at ${pos.x.toFixed(1)},${pos.z.toFixed(1)} is outside the wedge`);
+      }
+      narrowest = Math.min(narrowest, S.Ri / S.R);
+      widestBack = Math.max(widestBack, p.w - 2 * S.Ri * Math.sin(S.th));
+    }
+    assert(rooms >= 20, `only ${rooms} sector rooms — the outer band has more than that`);
+    assert(bad.length === 0, `${bad.length} faults in the wedges:\n      ${bad.join('\n      ')}`);
+    return `${rooms} wedge rooms · back/front down to ${narrowest.toFixed(2)} · the back up to ${widestBack.toFixed(1)} m narrower than the front`;
+  });
+
+  check('station: neighbouring public rooms share a window, cut at one world position', async () => {
+    /**
+     * ══ RULE 5 AS GLASS BETWEEN ROOMS (V18 hole 3) ════════════════════════
+     *
+     * Two public rooms side by side on the outer band each cut a pane in the
+     * side wall that faces the other — `StationKit.sectorOfPlace` derives
+     * the pair and the pane's RADIUS from both rooms, so the two panes stand
+     * on one radial line and look at each other across the plate between
+     * the walls. This holds the derivation symmetric (A lists B iff B lists
+     * A, at the same radius, on opposite sides), puts each pane at its world
+     * position from its own room's frame and measures that the two are at
+     * the same radius and less than 12.5 m of arc apart, and finds the
+     * glass itself in the built room: a 2.24 × 1.3 × 0.12 collider centred
+     * at 1.7 m on the wall line where the pane was asked for.
+     */
+    const { PLACES, PLACE } = await import('../../src/game/StationPlan.js');
+    const { sectorOfPlace } = await import('../../src/game/StationKit.js');
+    const UP = new THREE.Vector3(0, 1, 0);
+    const bad = [], pairs = new Set();
+    let panes = 0;
+    const worldOf = (p, lx, lz) => new THREE.Vector3(lx, 0, lz).applyAxisAngle(UP, p.yaw).add(new THREE.Vector3(p.x, 0, p.z));
+    for (const p of PLACES) {
+      const S = sectorOfPlace(p);
+      if (!S || !S.panes.length) continue;
+      const { boxes } = await roomAlone(p);
+      for (const pane of S.panes) {
+        const q = PLACE.get(pane.with);
+        const Sq = q && sectorOfPlace(q);
+        const back = Sq && Sq.panes.find((x) => x.with === p.id);
+        if (!back) { bad.push(`#${p.id} ${p.name} lists a pane to #${pane.with}, which does not list one back`); continue; }
+        if (Math.abs(back.r - pane.r) > 1e-6) bad.push(`#${p.id}/#${q.id}: panes at radius ${pane.r.toFixed(2)} and ${back.r.toFixed(2)}`);
+        if (back.s !== -pane.s) bad.push(`#${p.id}/#${q.id}: panes on the same side (${pane.s}, ${back.s})`);
+        /* the world positions of the two panes */
+        const at = (P, SS, pn) => worldOf(P, pn.s * pn.r * Math.sin(SS.th), SS.c - pn.r * Math.cos(SS.th));
+        const a = at(p, S, pane), b = at(q, Sq, back);
+        const ra = Math.hypot(a.x, a.z), rb = Math.hypot(b.x, b.z);
+        if (Math.abs(ra - pane.r) > 0.05 || Math.abs(rb - pane.r) > 0.05) bad.push(`#${p.id}/#${q.id}: panes at world radius ${ra.toFixed(2)} and ${rb.toFixed(2)}, asked for ${pane.r.toFixed(2)}`);
+        const apart = a.distanceTo(b);
+        if (apart < 1 || apart > 12.5) bad.push(`#${p.id}/#${q.id}: panes ${apart.toFixed(1)} m apart`);
+        /* the glass in the room */
+        const gx = pane.s * (pane.r * Math.sin(S.th) + 0.2 * Math.cos(S.th)), gz = S.c - pane.r * Math.cos(S.th) + 0.2 * Math.sin(S.th);
+        const glass = boxes.find((bx) => Math.abs(bx.h.x - 1.12) < 0.02 && Math.abs(bx.h.y - 0.65) < 0.02 && Math.abs(bx.h.z - 0.06) < 0.01
+          && Math.abs(bx.c.y - 1.7) < 0.02 && Math.hypot(bx.c.x - gx, bx.c.z - gz) < 0.05);
+        if (!glass) bad.push(`#${p.id} ${p.name}: no pane collider at ${gx.toFixed(1)},${gz.toFixed(1)} on side ${pane.s}`);
+        panes++;
+        pairs.add([p.id, q.id].sort((u, w) => u - w).join('+'));
+      }
+    }
+    assert(panes >= 8, `only ${panes} panes — the cantina and the Pit alone are two`);
+    assert(bad.length === 0, `${bad.length} faults in the windows between rooms:\n      ${bad.join('\n      ')}`);
+    return `${panes} panes in ${pairs.size} pairs: ${[...pairs].map((k) => k.split('+').map((id) => PLACE.get(+id).name.replace(/ ".*"/, '')).join(' ↔ ')).join(', ')}`;
+  });
+
   check('station: a sunken well is open — nothing solid over it, and a floor under it', async () => {
     /**
      * ══ THE BASEMENTS — V18 ═══════════════════════════════════════════════
