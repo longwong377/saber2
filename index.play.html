@@ -578,6 +578,12 @@
            UI, the tagline described the game in a menu that is already the
            game, and the byline is gone outright. What is left is the name. -->
       <div class="logo small"><h1 class="wm"><img class="wordmark" src="./assets/menu/logo.webp" width="1729" height="470" alt="Battlefield Borz" decoding="async"></h1></div>
+      <!-- THE STATION'S NAME AND THE DAY (V19 §9). The menu is opened from
+           the station's own kiosks, so under the game's title it says where
+           you are and what day it is there: `StationSave.stationName()` and
+           `stationDay()`, painted by `Menu.showMenu` off the `station` hook
+           main.js passes. Both spans empty until then; the line hides itself. -->
+      <p class="station-line" id="menu-station"><b id="menu-station-name"></b><span id="menu-station-day"></span></p>
       <!-- EMPTY, AND EMPTY IS ITS RESTING STATE. This carried
            `Progress.progressLines()` — runs, kills, deepest wave, facets
            reached, boons crowned — under the title of the game, and it was
@@ -965,6 +971,9 @@
         <label class="check"><input type="checkbox" id="opt-bladehold"> Blade holds position</label>
         <p class="hint">On, the blade stays where your last flick left it. Off, it eases back to the ready
           guard between swings.</p>
+        <!-- RESET THIS TAB (V19 §9): every control in this column back to
+             its default. Menu._bindResets wires it; the column is its scope. -->
+        <button class="reset-tab secondary" data-reset-col="control">Reset control settings</button>
         <!--
           FULL SCREEN. A checkbox AND a button, because they answer two
           different questions: the box is "do this every time I Ignite" and the
@@ -1117,6 +1126,7 @@
         <label class="check"><input type="checkbox" id="opt-slowmo" checked> Cinematic slow-motion</label>
         <label class="check"><input type="checkbox" id="opt-letterbox" checked> Letterbox bars</label>
         <label class="check"><input type="checkbox" id="opt-deathdrain" checked> Colour drains when you fall</label>
+        <button class="reset-tab secondary" data-reset-col="fidelity">Reset fidelity &amp; feel</button>
         <p class="hint"><b>Letterbox bars</b> close in when a boss arrives. <b>Colour drains</b> when you
           fall. Both work with Camera shake off, and are the only signal for either event if it is.</p>
         <label class="slider">Controller rumble <input type="range" id="opt-rumble" min="0" max="1" step="0.05" value="1"><b></b></label>
@@ -1205,6 +1215,7 @@
           <b>Allied troops</b> above is off zero. Rank, name, health and nerve, over the head of the man
           carrying them.</p>
         <label class="check"><input type="checkbox" id="opt-minimap-sense" checked> Read the map with the Force</label>
+        <button class="reset-tab secondary" data-reset-col="interface">Reset sound &amp; interface</button>
         <p class="hint">On, the map only lights when you use <b>Force sense</b>: hold the power and it stays
           lit while the pool drains, or tap it for a reading that fades over a few seconds. It costs what the
           power costs and no more. Off, the map is always there and costs nothing.</p>

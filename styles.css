@@ -46,10 +46,26 @@
      gone. Nothing about the STRUCTURE moved — the four laws in this header
      still hold, the ink is still the darkest thing, the panels still come up to
      meet it — because the structure was never the problem. */
+  /* ── V19 §9: THE PALETTE IS THE STATION'S ──────────────────────────────
+     Every colour below is read off `Station.DECK_PALETTE[40]` — the
+     Concourse deck, the room the player stands in between runs: hull, dark,
+     deep, strip, status, wing, mark, screen, glass. The nine are declared as
+     tokens first, verbatim, so the interface and the deck cannot drift
+     apart without the number changing in two files; the roles under them
+     (`--ink`, `--accent`, …) are DERIVED from those nine, and every
+     text-on-surface pair the roles make is measured in
+     tools/checks/frontend.mjs at WCAG's 4.5:1. The four surfaces are the
+     deck's own darks (`fog`, `bg`) lifted only far enough for a 2 px ink
+     line to still read on them — the panels come up to meet the ink. */
+  --st-hull:#b9a894; --st-dark:#6c5f52; --st-deep:#8a5b42;
+  --st-strip:#ffd9a0; --st-status:#ff5a2a; --st-wing:#c9bda9;
+  --st-mark:#e4d3b4; --st-screen:#ffbe6a; --st-glass:#a8c6d8;
+  /* ── spacing: one scale, 4 / 8 / 16 ── */
+  --s1:4px; --s2:8px; --s3:16px;
   --void:#17100c;          /* the page, and the darkest thing in the product */
-  --ink:#f6ecda;           /* type. Warm off-white: this game has no pure white */
-  --dim:#c3a88f;
-  --dimmer:#95765e;
+  --ink:#f3e8d2;           /* type. The deck's `mark` lifted a step: no pure white */
+  --dim:#cfb89e;           /* secondary type — the `hull` plate, lit */
+  --dimmer:#b89f86;        /* tertiary; still 4.5:1 on the brightest panel */
   --stroke:#150b06;        /* THE INK. Every outline in the interface is this */
   /* THE PANELS ARE LIT, and that is the correction that made the whole thing
      work. First cut had them at #171a2c against a #05060c ink, and the ink was
@@ -64,7 +80,7 @@
      looked like this game. */
   --panel:#2c211a;
   --panel-2:#3a2c22;
-  --panel-hi:#54402f;
+  --panel-hi:#4a3627;
   --line:var(--stroke);
   --line-hot:var(--accent);
 
@@ -78,14 +94,16 @@
      end now sits on. Hot metal replaces it — the colour of the plain at the
      hour the plate is painted at — and the blade keeps its own colour where it
      belongs, which is on the blade. */
-  --accent:#e08b52;        /* HOT METAL. Selection, focus, anything live */
-  --accent-warm:#d9a441;   /* BRASS. Cost, mastery, a permanent choice */
+  --accent:#ffbe6a;           /* THE SCREEN LIGHT (= --st-screen). Selection, anything live */
+  --strip:#ffd9a0;            /* THE STRIP (= --st-strip; a literal so the ring check reads it). The deck's one emissive: progress,
+                                 the focus ring, a value, the chosen mark */
+  --accent-warm:#e6b45a;   /* BRASS. Cost, mastery, a permanent choice */
   --borz:#cf7f66;          /* THE MARK. The second word of the logo, and only
                               ever that: it is the one colour in this file that
                               names a thing rather than a role */
-  --danger:#d2452c;        /* EMBER. Damage, a boss, a mistake */
-  --good:#9bb862;
-  --force:#a07dff;         /* the Force itself — the pool, the Holocron */
+  --danger:#ff8568;        /* EMBER — the deck's status lamp, lifted to read as type */
+  --good:#a9c76e;
+  --force:#b79dff;         /* the Force itself — the pool, the Holocron */
   /* `--blade` was here, a second name for `--accent`'s exact value, and its
      last reader was `.logo-blade` — the lit saber bar beside the wordmark,
      removed from the boot screen on instruction. A token nothing reads is the
@@ -183,7 +201,17 @@ b{font-weight:800}
    gradient, a full-opacity url() or a backdrop-filter on any of them. */
 .screen{position:fixed;inset:0;z-index:40;display:flex;align-items:center;justify-content:center;
   background:rgba(0,0,0,.18);
-  animation:fadeIn .34s cubic-bezier(.22,1,.36,1) both}
+  animation:fadeIn .16s cubic-bezier(.22,1,.36,1) both}
+/* ── MOTION, V19 §9: EVERY PANEL OPENS THE SAME WAY AND NONE TAKES LONGER
+   THAN A FRAME OF THOUGHT. 160 ms is the ceiling on every transition and
+   every entrance in the interface (tools/checks/frontend.mjs reads the
+   durations); a card that takes half a second to stamp itself onto the
+   screen is a card the player is waiting for. And a player who has asked
+   the OS for less motion gets none: the one rule below is the whole of the
+   reduced-motion story, so nothing can forget to honour it. */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none !important;transition:none !important}}
+@keyframes panelIn{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:none}}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 @keyframes riseIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 /* A stamp, not a fade: the scale overshoots and lands. Every panel and card in
@@ -233,8 +261,8 @@ b{font-weight:800}
   animation:stampIn .6s cubic-bezier(.22,1,.36,1) both}
 .boot-bar{width:300px;height:10px;margin:34px auto 16px;background:var(--panel);
   border:2px solid var(--stroke);clip-path:var(--cut-sm);overflow:hidden}
-.boot-bar i{display:block;height:100%;width:0%;background:var(--accent);
-  box-shadow:0 0 14px var(--accent);transition:width .35s cubic-bezier(.22,1,.36,1)}
+.boot-bar i{display:block;height:100%;width:0%;background:var(--strip);
+  box-shadow:0 0 14px var(--strip);transition:width .16s cubic-bezier(.22,1,.36,1)}
 .boot-msg{font:var(--mono);font-weight:700;letter-spacing:.24em;text-transform:uppercase;color:var(--accent)}
 /* THE UNSUPPORTED SCREEN'S CARD. index.html gives that screen the menu's
    plate now — it is the one screen that never has a world behind it and it
@@ -440,11 +468,27 @@ b{font-weight:800}
   #loading.seam{animation:none}
   #loading .seam-lights{display:none}}
 .load-wrap{position:relative;z-index:2;width:min(720px,88vw);text-align:center;
-  animation:stampIn .35s cubic-bezier(.22,1,.36,1) both}
+  animation:panelIn .16s cubic-bezier(.22,1,.36,1) both}
+/* THE SEAM STILL IS KEPT; THE BAR ON IT IS THE STRIP. The loading plate's
+   one moving part is the light the decks are lit by. */
+#loading .boot-bar i{background:var(--strip);box-shadow:0 0 14px var(--strip)}
+#loading .boot-msg{color:var(--strip)}
 .load-wrap .boot-bar{margin-top:30px}
 .menu-wrap{position:relative;z-index:2;width:min(1180px,94vw);height:min(770px,92vh);
-  display:flex;flex-direction:column;animation:stampIn .5s cubic-bezier(.22,1,.36,1) both}
+  display:flex;flex-direction:column;animation:panelIn .16s cubic-bezier(.22,1,.36,1) both}
 .menu-head{text-align:center;padding:4px 0 12px}
+/* THE STATION'S NAME AND THE DAY, under the game's own title (V19 §9). The
+   menu is a room on the station — the kiosks open it — so the title says
+   where you are. Mono, tracked, inked: the same treatment as `.record`, on
+   the same plate, for the same reason. `Menu.showMenu` paints it from the
+   `station` hook main.js passes; empty in a check with no station. */
+.station-line{display:flex;justify-content:center;align-items:center;gap:var(--s2);margin-top:6px;
+  min-height:20px;font:var(--mono);font-size:11px;font-weight:800;letter-spacing:.2em;text-transform:uppercase;
+  color:var(--ink);text-shadow:1px 0 var(--stroke),-1px 0 var(--stroke),0 1px var(--stroke),0 -1px var(--stroke),
+    0 0 10px rgba(5,6,12,.9)}
+.station-line b{color:var(--strip)}
+.station-line span:empty,.station-line b:empty{display:none}
+.station-line span::before{content:"·";margin-right:var(--s2);color:var(--dim)}
 /* The version, top right, barely visible: small, dim, out of the layout. */
 .version-tag{position:absolute;top:10px;right:14px;z-index:3;font-size:11px;letter-spacing:.08em;
   color:var(--ink,#e8dcc8);opacity:.28;pointer-events:none;user-select:none}
@@ -482,14 +526,14 @@ b{font-weight:800}
    who opened Jedi or Databank at 740 px could not click Deploy again. Wrapping
    costs a second row of folders at narrow widths and loses nothing. */
 .menu-tabs{display:flex;flex-wrap:wrap;gap:4px;justify-content:center;margin-bottom:-2px;position:relative;z-index:2}
-.tab{background:var(--panel);border:2px solid var(--stroke);border-bottom:0;
+.tab{min-height:36px;background:var(--panel);border:2px solid var(--stroke);border-bottom:0;
   color:var(--dim);font:var(--ui);font-weight:800;letter-spacing:.14em;text-transform:uppercase;
   font-size:11px;padding:10px 24px 9px;cursor:pointer;transition:.14s;clip-path:var(--cut-tab)}
-.tab:hover{color:var(--ink);background:var(--panel-2)}
+.tab:hover{color:var(--ink);background:var(--panel-hi);transform:translateY(-2px)}
 .tab.active{color:var(--stroke);background:var(--accent)}
 .panel{display:none;flex:1;gap:24px;padding:22px;overflow:hidden;
   background:#231a14;border:2px solid var(--stroke);box-shadow:var(--stamp-lg)}
-.panel.active{display:flex;animation:stampIn .3s cubic-bezier(.22,1,.36,1) both}
+.panel.active{display:flex;animation:panelIn .16s cubic-bezier(.22,1,.36,1) both}
 /* AND THE SCROLLBAR IS RESERVED AND OPAQUE, for the reason spelled out on
    `.col.narrow.pinned>.col-scroll` below — which is where that was fixed, and
    only there. Measured on the shipped page at 1100x620, every tab: fifteen of
@@ -649,7 +693,7 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
    1 px accent border is not. */
 .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(228px,1fr));gap:14px}
 .cards.small{grid-template-columns:repeat(auto-fill,minmax(124px,1fr))}
-.card{position:relative;border:2px solid var(--stroke);overflow:hidden;cursor:pointer;
+.card{position:relative;min-height:32px;border:2px solid var(--stroke);overflow:hidden;cursor:pointer;
   background:var(--panel);box-shadow:var(--stamp);clip-path:var(--cut);
   transition:transform .14s cubic-bezier(.22,1,.36,1),background .14s,box-shadow .14s;text-align:left}
 .card:hover{transform:translate(-2px,-2px);box-shadow:var(--stamp-lg);background:var(--panel-2)}
@@ -658,7 +702,13 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
    ink. It survives greyscale, it survives a colourblind eye, and it is the
    same mark the difficulty rows and the swatches use. */
 .card.sel::before{content:"";position:absolute;left:0;top:0;bottom:0;width:6px;
-  background:var(--accent);z-index:3}
+  background:var(--strip);z-index:3}
+/* THE THEATRE CARD'S SWATCH (V19 §9): the ground's own colour, off
+   `TERRAIN_PRESETS[level.terrain].sandColor`, as a chip beside the name —
+   so the list is not seven words. Inked and cut like every other object. */
+.card.theatre .meta{position:relative;padding-left:44px}
+.card .swatch{position:absolute;left:12px;top:12px;width:22px;height:22px;
+  border:2px solid var(--stroke);clip-path:var(--cut-sm);box-shadow:2px 2px 0 var(--stroke)}
 .card .art{height:100px;position:relative;background:var(--void);
   border-bottom:2px solid var(--stroke)}
 /* The notch has to be CUT OUT of something, and a card clipped on its own
@@ -675,7 +725,7 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
 
 /* difficulty / mode list */
 .difflist{display:flex;flex-direction:column;gap:8px}
-.diff{display:flex;align-items:center;gap:11px;padding:9px 12px;border:2px solid var(--stroke);
+.diff{display:flex;align-items:center;gap:11px;min-height:32px;padding:9px 12px;border:2px solid var(--stroke);
   background:var(--panel);cursor:pointer;transition:.14s;clip-path:var(--cut-sm);box-shadow:var(--stamp)}
 .diff:hover{background:var(--panel-2);transform:translate(-1px,-1px)}
 .diff.sel{background:var(--panel-hi);transform:translate(-2px,-2px);box-shadow:var(--stamp-lg)}
@@ -683,7 +733,7 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
    artefact, and it is the same mark as the card's leading bar. */
 .diff .dot{width:11px;height:11px;background:var(--panel-hi);flex:none;transition:.14s;
   border:2px solid var(--stroke)}
-.diff.sel .dot{background:var(--accent);box-shadow:0 0 10px var(--accent)}
+.diff.sel .dot{background:var(--strip);box-shadow:0 0 10px var(--strip)}
 .diff .txt b{display:block;font-size:12.5px;font-weight:800;letter-spacing:.04em}
 .diff .txt span{font-size:10.5px;color:var(--dim);line-height:1.35;display:block}
 
@@ -729,7 +779,7 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
    stay scrollable. Tighter margin for the same reason: these sit directly
    under the row of cards they belong to and read as part of it. */
 .swatches.tone{gap:7px;margin-top:9px}
-.swatches.tone .sw{width:26px;height:26px}
+.swatches.tone .sw{width:32px;height:32px}
 /* "As the robe" — the first swatch in every tone row, painted with the tone
    the builder really derives from the chosen palette. Marked with a notch of
    ink rather than a label, because the row has no room for words and the
@@ -763,8 +813,10 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
 .card:focus-visible,.diff:focus-visible,.sw:focus-visible,.dc:focus-visible,
 .tab:focus-visible,.primary:focus-visible,.secondary:focus-visible,.ghost:focus-visible,
 .bindrow .keys b:focus-visible,.slider input:focus-visible,.check input:focus-visible,
-.netname input:focus-visible,#join-code:focus-visible{
-  outline:3px solid var(--accent-warm);outline-offset:3px;border-radius:0}
+.netname input:focus-visible,#join-code:focus-visible,.shots .shot:focus-visible,
+.hol-rung:focus-visible,.kit-chip:focus-visible,.mu:focus-visible,.pane button:focus-visible,
+.pane input:focus-visible,.diff .step button:focus-visible,textarea:focus-visible{
+  outline:3px solid var(--strip);outline-offset:3px;border-radius:0}
 
 /* The Theatre column when the mode owns the theatre — see Menu._syncTheatre.
    Inert rather than hidden: the places are still worth looking at, they are
@@ -817,7 +869,7 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
   padding:2px 3px;border:2px solid var(--stroke);background:var(--void);clip-path:var(--cut-sm)}
 .diff .step b{min-width:20px;text-align:center;font:var(--mono);font-size:12px;font-weight:800;
   color:var(--ink);font-variant-numeric:tabular-nums}
-.diff .step button{width:22px;height:22px;padding:0;border:0;background:var(--panel-2);
+.diff .step button{width:32px;height:32px;min-height:32px;padding:0;border:0;background:var(--panel-2);
   color:var(--ink);font:var(--mono);font-size:14px;font-weight:800;line-height:1;cursor:pointer;
   clip-path:var(--cut-sm);transition:.12s}
 .diff .step button:hover:not(:disabled){background:var(--accent);color:var(--stroke)}
@@ -843,21 +895,32 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
 /* The seed field borrows the co-op name field's shape — same socket, same ink,
    one size down because it holds a number and not a name. */
 .seedbox{margin-top:18px}
-.seedbox input{padding:9px 11px;font-size:13px}
+.seedbox input{min-height:32px;padding:9px 11px;font-size:13px}
 
 /* sliders & checks ────────────────────────────────────────────────────
    The track is a socket cut into the panel and the thumb is a block in it.
    A 2 px hairline with a glowing circle on it is the stock HTML range restyle;
    this is a machined control. */
-.slider{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--dim);margin:12px 0}
-.slider input{flex:1;-webkit-appearance:none;appearance:none;height:10px;background:var(--void);
-  border:2px solid var(--stroke);outline:none;clip-path:var(--cut-sm)}
-.slider input::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;
+/* A SLIDER IS A GRID ROW (V19 §9): name | track | value, so every row in a
+   column lines its three parts up with the row above it. The value is a PILL
+   — inked, cut, lit in the strip colour — rather than a bare number, because
+   the number is the thing the player is setting. The input is 32 px tall
+   (the hit target) and draws its own 10 px track inside that. */
+.slider{display:grid;grid-template-columns:minmax(72px,auto) 1fr auto;align-items:center;
+  column-gap:var(--s2);min-height:32px;margin:var(--s2) 0;font-size:12px;color:var(--dim)}
+.slider input{-webkit-appearance:none;appearance:none;height:32px;margin:0;background:transparent;
+  border:0;outline:none;cursor:pointer}
+.slider input::-webkit-slider-runnable-track{height:10px;background:var(--void);
+  border:2px solid var(--stroke);clip-path:var(--cut-sm)}
+.slider input::-webkit-slider-thumb{-webkit-appearance:none;width:20px;height:20px;margin-top:-7px;
   background:var(--accent);border:2px solid var(--stroke);cursor:pointer;
-  box-shadow:0 0 10px var(--accent)}
+  box-shadow:var(--stamp);transition:transform .12s cubic-bezier(.22,1,.36,1)}
+.slider input:hover::-webkit-slider-thumb{transform:translate(-1px,-1px);background:var(--strip)}
+.slider input::-moz-range-track{height:10px;background:var(--void);border:2px solid var(--stroke)}
 .slider input::-moz-range-thumb{width:16px;height:16px;background:var(--accent);
-  border:2px solid var(--stroke);border-radius:0;cursor:pointer;box-shadow:0 0 10px var(--accent)}
-.slider b{font:var(--mono);font-weight:800;color:var(--ink);min-width:40px;text-align:right;
+  border:2px solid var(--stroke);border-radius:0;cursor:pointer;box-shadow:var(--stamp)}
+.slider b{font:var(--mono);font-weight:800;color:var(--strip);min-width:52px;text-align:center;
+  padding:3px var(--s2) 4px;background:var(--void);border:2px solid var(--stroke);clip-path:var(--cut-sm);
   font-variant-numeric:tabular-nums}
 /* A RANGE INPUT WILL NOT SHRINK UNLESS TOLD TO. Its `min-width:auto` as a flex
    item floors it at its intrinsic ~129px, so in a 265px column the row runs out
@@ -870,9 +933,9 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
    spare, whatever the input does. So the wide variant is two lines — name and
    value on the first, the slider across the second — which cannot clip at any
    column width because nothing on either line competes for the same space. */
-.slider.wide{flex-wrap:wrap;row-gap:8px}
-.slider.wide b{min-width:0;margin-left:auto}
-.slider.wide input{order:3;flex:1 0 100%}
+.slider.wide{grid-template-columns:1fr auto;row-gap:var(--s1)}
+.slider.wide b{grid-row:1;grid-column:2}
+.slider.wide input{grid-row:2;grid-column:1/-1}
 .ret-preview{display:flex;align-items:center;justify-content:center;height:100px;margin:10px 0 4px;
   border:2px solid var(--stroke);background:var(--void);clip-path:var(--cut)}
 .ret-preview svg{filter:drop-shadow(0 0 2px rgba(0,0,0,.95))}
@@ -880,14 +943,19 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
 .ret-preview .ret-tick{stroke-width:2.2;fill:none;stroke-linecap:round}
 /* A box that is ticked or not ticked, drawn as one. `accent-color` hands the
    shape to the platform, and the platform draws a rounded web checkbox. */
-.check{display:flex;align-items:center;gap:10px;font-size:12px;color:var(--dim);margin:11px 0;cursor:pointer}
-.check input{-webkit-appearance:none;appearance:none;width:18px;height:18px;flex:none;
+/* A TOGGLE IS A SWITCH (V19 §9): a 40 × 22 inked track and a knob that
+   slides across it, so on and off are two POSITIONS and not a tick that has
+   to be read. The whole label row is the hit target, 32 px tall. */
+.check{display:grid;grid-template-columns:40px 1fr;align-items:center;column-gap:10px;
+  min-height:32px;padding:var(--s1) 0;margin:var(--s1) 0;font-size:12px;color:var(--dim);cursor:pointer}
+.check input{-webkit-appearance:none;appearance:none;width:40px;height:22px;margin:0;
   background:var(--void);border:2px solid var(--stroke);cursor:pointer;position:relative;
-  box-shadow:var(--stamp)}
+  box-shadow:var(--stamp);clip-path:var(--cut-sm);transition:background .14s}
+.check input::after{content:"";position:absolute;left:2px;top:2px;width:14px;height:14px;
+  background:var(--dim);border:2px solid var(--stroke);
+  transition:transform .14s cubic-bezier(.22,1,.36,1),background .14s}
 .check input:checked{background:var(--accent)}
-.check input:checked::after{content:"";position:absolute;left:50%;top:44%;width:4px;height:9px;
-  border:2.5px solid var(--stroke);border-top:0;border-left:0;
-  transform:translate(-50%,-50%) rotate(42deg)}
+.check input:checked::after{transform:translateX(16px);background:var(--strip)}
 .check.overruled{opacity:.55}
 .check input:disabled{cursor:not-allowed}
 /* A SLIDER THE MODE HAS OVERRULED, greyed exactly like the checkbox above and
@@ -904,20 +972,24 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
    page on :active — the offset shadow collapses and the button moves onto it,
    which is a real button's whole behaviour and costs two properties. */
 button{font-family:inherit}
-.primary,.secondary,.ghost{display:block;width:100%;padding:14px 18px;font:var(--ui);font-weight:800;
+.primary,.secondary,.ghost{display:block;width:100%;min-height:36px;padding:12px var(--s3);font:var(--ui);font-weight:800;
   font-size:12px;letter-spacing:.18em;text-transform:uppercase;cursor:pointer;
   border:2px solid var(--stroke);clip-path:var(--cut);
   transition:transform .12s cubic-bezier(.22,1,.36,1),box-shadow .12s,background .14s}
 .primary{margin-top:auto;background:var(--accent);color:var(--stroke);
   box-shadow:var(--stamp-lg),0 0 30px -8px var(--accent)}
-.primary:hover{background:#eda765;transform:translate(-2px,-2px);
+.primary:hover{background:var(--strip);transform:translate(-2px,-2px);
   box-shadow:7px 7px 0 var(--stroke),0 0 40px -6px var(--accent)}
 .primary:active{transform:translate(3px,3px);box-shadow:0 0 0 var(--stroke),0 0 24px -8px var(--accent)}
 .secondary{background:var(--panel-2);color:var(--ink);margin-top:9px;box-shadow:var(--stamp)}
 .secondary:hover{background:var(--panel-hi);transform:translate(-2px,-2px);box-shadow:var(--stamp-lg)}
 .secondary:active{transform:translate(2px,2px);box-shadow:none}
 .ghost{background:transparent;color:var(--dim);margin-top:9px;border-color:var(--panel-hi);box-shadow:none}
-.ghost:hover{color:var(--ink);border-color:var(--stroke);background:var(--panel)}
+.ghost:hover{color:var(--ink);border-color:var(--stroke);background:var(--panel-hi)}
+/* ONE 'RESET' PER SETTINGS TAB (V19 §9). `Menu._bindResets` puts every
+   control in the button's own column back to DEFAULT_SETTINGS; the key
+   table has had its own for a year and keeps it. */
+.reset-tab{margin-top:var(--s3)}
 
 /* preview ─────────────────────────────────────────────────────────────
    The window the character is looked at through, and it is a WINDOW: inked,
@@ -941,27 +1013,26 @@ button{font-family:inherit}
    always lit unless the wheel has been used — "free" is a real state and the
    row says so by lighting none of them. */
 .shots{display:flex;gap:7px;margin-top:10px}
-.shots .shot{flex:1;padding:7px 4px 8px;font:var(--mono);font-size:9.5px;font-weight:800;
+.shots .shot{flex:1;min-height:32px;padding:7px 4px 8px;font:var(--mono);font-size:9.5px;font-weight:800;
   letter-spacing:.16em;text-transform:uppercase;color:var(--dim);cursor:pointer;
   background:var(--panel);border:2px solid var(--stroke);clip-path:var(--cut-sm);
   transition:.12s;box-shadow:var(--stamp)}
 .shots .shot:hover{background:var(--panel-2);color:var(--ink);transform:translate(-1px,-1px)}
 .shots .shot.sel{background:var(--accent);color:var(--stroke);transform:translate(-2px,-2px);
   box-shadow:var(--stamp-lg)}
-.shots .shot:focus-visible{outline:3px solid var(--accent-warm);outline-offset:3px}
 
 /* co-op */
 .netrow{display:flex;flex-direction:column;gap:11px;max-width:340px}
 .netrow .primary,.netrow .secondary{margin-top:0}
 .or{text-align:center;font:var(--mono);font-weight:800;letter-spacing:.2em;color:var(--dimmer);
   text-transform:uppercase;margin:2px 0}
-#join-code{width:100%;padding:14px 16px;background:var(--void);border:2px solid var(--stroke);
+#join-code{width:100%;min-height:32px;padding:14px 16px;background:var(--void);border:2px solid var(--stroke);
   color:var(--accent);font:var(--mono);font-size:18px;font-weight:800;letter-spacing:.34em;
   text-align:center;text-transform:uppercase;outline:none;clip-path:var(--cut-sm)}
 #join-code:focus{background:#1a120d;box-shadow:inset 0 0 0 2px var(--accent)}
 .netname{display:flex;flex-direction:column;gap:7px;font:var(--mono);font-size:10px;font-weight:800;
   letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
-.netname input{width:100%;padding:12px 14px;background:var(--void);border:2px solid var(--stroke);
+.netname input{width:100%;min-height:32px;padding:12px 14px;background:var(--void);border:2px solid var(--stroke);
   color:var(--ink);font:var(--ui);font-size:14px;letter-spacing:.04em;
   text-transform:none;outline:none;clip-path:var(--cut-sm)}
 .netname input:focus{box-shadow:inset 0 0 0 2px var(--accent)}
@@ -1901,7 +1972,7 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
   text-transform:uppercase;color:var(--dim);max-width:min(560px,86vw);text-align:center}
 #deck-tag.hidden{display:none}
 #deck-tag b{color:var(--ink);font-size:12px;letter-spacing:.16em}
-#deck-tag span{color:var(--accent);letter-spacing:.14em}
+#deck-tag span{color:var(--strip);letter-spacing:.14em}
 #deck-tag span:empty{display:none}
 
 #dmg-vignette,#flow-vignette{position:absolute;inset:0;opacity:0;transition:opacity .35s;pointer-events:none}
@@ -1940,13 +2011,13 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .draft-wrap,.pause-wrap,.death-wrap{position:relative;z-index:2;text-align:center;width:min(920px,92vw);
   padding:22px 24px 24px;border:2px solid var(--stroke);background:var(--panel);
   clip-path:var(--cut);box-shadow:var(--stamp-lg);
-  animation:stampIn .45s cubic-bezier(.22,1,.36,1) both}
+  animation:panelIn .16s cubic-bezier(.22,1,.36,1) both}
 .pause-wrap,.death-wrap{width:min(448px,90vw)}
 .draft-cards{display:flex;gap:16px;justify-content:center;margin-top:28px;flex-wrap:wrap}
-.dc{width:252px;padding:22px 20px;border:2px solid var(--stroke);background:var(--panel);
+.dc{width:252px;min-height:32px;padding:22px 20px;border:2px solid var(--stroke);background:var(--panel);
   cursor:pointer;transition:.16s cubic-bezier(.22,1,.36,1);text-align:left;
   clip-path:var(--cut);box-shadow:var(--stamp-lg)}
-.dc:hover{transform:translate(-4px,-4px);background:var(--panel-2);
+.dc:hover{transform:translate(-4px,-4px);background:var(--panel-hi);
   box-shadow:9px 9px 0 var(--stroke),0 0 34px -10px var(--accent)}
 .dc .ic{font-size:28px;margin-bottom:12px;filter:drop-shadow(0 0 14px currentColor)}
 .dc b{display:block;font-size:15px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;margin-bottom:8px}
@@ -1973,7 +2044,7 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .muster-wrap{position:relative;z-index:2;width:min(1060px,94vw);max-height:92vh;display:flex;
   flex-direction:column;text-align:left;padding:20px 24px 22px;
   border:2px solid var(--stroke);background:var(--panel);clip-path:var(--cut);box-shadow:var(--stamp-lg);
-  animation:stampIn .45s cubic-bezier(.22,1,.36,1) both}
+  animation:panelIn .16s cubic-bezier(.22,1,.36,1) both}
 .muster-held{font:var(--mono);font-size:10px;font-weight:800;letter-spacing:.3em;text-transform:uppercase;
   color:var(--stroke);background:var(--accent-warm);align-self:flex-start;padding:3px 12px 4px;
   clip-path:var(--cut-sm);margin-bottom:12px}
@@ -1985,7 +2056,7 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .muster-units{display:flex;flex-wrap:wrap;gap:12px;overflow-y:auto;padding-right:4px}
 /* A unit card is a .dc that costs something: same field, same ink, same stamp,
    same cut, so the muster reads as the same product as the boon draft. */
-.mu{position:relative;width:186px;padding:15px 15px 13px;border:2px solid var(--stroke);
+.mu{position:relative;width:186px;min-height:32px;padding:15px 15px 13px;border:2px solid var(--stroke);
   background:var(--panel);cursor:pointer;transition:.16s cubic-bezier(.22,1,.36,1);
   clip-path:var(--cut);box-shadow:var(--stamp)}
 .mu:hover{transform:translate(-3px,-3px);background:var(--panel-2);
@@ -2107,7 +2178,7 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
   font:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
 .deploy-stages li::before{content:counter(stage);flex:none;width:20px;height:20px;
   display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;
-  color:var(--stroke);background:var(--panel-hi);clip-path:var(--cut-sm)}
+  color:var(--stroke);background:var(--strip);clip-path:var(--cut-sm)}
 .deploy-stages li:first-child{color:var(--ink)}
 .deploy-stages li:first-child::before{background:var(--accent-warm)}
 .deploy-brief{max-width:56ch}
@@ -2230,13 +2301,13 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .bindlist .grp{font:var(--mono);font-size:9px;letter-spacing:.26em;text-transform:uppercase;
   color:var(--dimmer);margin:12px 0 4px}
 .bindlist .grp:first-child{margin-top:0}
-.bindrow{display:flex;align-items:center;justify-content:space-between;gap:10px;
-  padding:5px 8px;border-radius:6px;transition:background .12s}
-.bindrow:hover{background:rgba(255,255,255,.04)}
+.bindrow{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:32px;
+  padding:var(--s1) var(--s2);transition:background .12s}
+.bindrow:hover{background:var(--panel-2)}
 .bindrow span{font-size:12px;color:var(--dim)}
 .bindrow .keys{display:flex;gap:4px}
 .bindrow b{font:var(--mono);font-size:10px;font-weight:800;letter-spacing:.06em;color:var(--ink);
-  cursor:pointer;padding:3px 9px 4px;min-width:36px;text-align:center;border:2px solid var(--stroke);
+  cursor:pointer;padding:5px 9px 6px;min-width:36px;min-height:32px;text-align:center;border:2px solid var(--stroke);
   border-bottom-width:4px;background:var(--panel-hi);transition:.12s;clip-path:var(--cut-sm)}
 .bindrow b:hover{background:var(--accent);color:var(--stroke)}
 .bindrow b.listening{background:var(--accent-warm);color:var(--stroke);animation:pulseLow .7s ease-in-out infinite}
@@ -2396,7 +2467,7 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
    sibling — without this the plate covers the lattice entirely. */
 .med-wrap{position:relative;z-index:2;
   display:flex;flex-direction:column;width:min(1180px,96vw);height:min(880px,94vh);
-  padding:18px 20px 14px;gap:10px;animation:riseIn .6s cubic-bezier(.22,1,.36,1) both}
+  padding:18px 20px 14px;gap:10px;animation:panelIn .16s cubic-bezier(.22,1,.36,1) both}
 .med-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;
   padding-bottom:10px;border-bottom:2px solid var(--panel-hi)}
 .med-head h2{font-size:21px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;
@@ -2447,7 +2518,7 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
    replaces the line the chart used to draw, and which cannot cross another one.
    `--depth` is written by SkillTree and clamped there at 4, so a deep branch
    cannot indent a rung off its own plate. */
-.hol-rung{position:relative;display:flex;align-items:center;gap:7px;cursor:pointer;
+.hol-rung{position:relative;display:flex;align-items:center;gap:7px;min-height:32px;cursor:pointer;
   margin-left:calc(var(--depth,0) * 13px);padding:5px 7px 6px;
   border:2px solid var(--stroke);background:var(--panel-2);clip-path:var(--cut-sm);
   transition:background .12s,color .12s}
@@ -2482,7 +2553,6 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .hol-rung.spent{border-style:dotted}
 .hol-rung.sel{outline:2px solid var(--accent);outline-offset:2px}
 .hol-rung:focus{outline:none}
-.hol-rung:focus-visible{outline:2px solid var(--accent-warm);outline-offset:2px}
 .med-side{width:284px;flex:none;display:flex;flex-direction:column;gap:10px}
 .med-detail{flex:1;min-height:0;overflow-y:auto;padding:13px 14px;border:2px solid var(--stroke);
   background:var(--panel);clip-path:var(--cut);box-shadow:var(--stamp)}
@@ -2533,7 +2603,7 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
   display:flex;align-items:center;gap:10px;padding:8px 15px 9px 11px;
   font:var(--mono);font-weight:700;letter-spacing:.06em;color:var(--ink);
   background:var(--panel);border:2px solid var(--stroke);clip-path:var(--cut-sm);
-  box-shadow:var(--stamp);pointer-events:none;animation:fadeIn .3s ease both}
+  box-shadow:var(--stamp);pointer-events:none;animation:fadeIn .16s ease both}
 .commune-ring{position:relative;width:20px;height:20px;border:2px solid var(--stroke);
   background:var(--void);overflow:hidden}
 .commune-ring i{position:absolute;left:0;bottom:0;width:100%;height:0%;
@@ -2561,7 +2631,7 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
    Sized to the footer's own type rather than to a panel button, because the
    row it now sits in is 26 px tall and every pixel it adds comes off the panel
    above it: at these numbers the button is 21 px and the footer grows by 5. */
-.commune-entry{display:inline-block;width:auto;flex:none;white-space:nowrap;
+.commune-entry{display:inline-block;width:auto;flex:none;white-space:nowrap;min-height:32px;
   padding:4px 13px 5px;margin:0;font-size:9.5px;line-height:1.2;letter-spacing:.16em;
   color:var(--ink);border-color:var(--stroke);background:var(--panel-2);
   clip-path:var(--cut-sm);box-shadow:2px 2px 0 var(--stroke)}
@@ -3175,7 +3245,7 @@ body:has(#touch.on) .powers .pw{touch-action:none}
 
 /* The settings blob: a plain text field, monospace and selectable, because its
    whole job is to be copied out and pasted in. See index.html. */
-.portable{width:100%;box-sizing:border-box;resize:vertical;margin-top:8px;
+.portable{width:100%;min-height:32px;box-sizing:border-box;resize:vertical;margin-top:8px;
   padding:8px 10px;border:2px solid var(--stroke);background:rgba(8,10,20,.62);
   color:var(--ink);font:var(--mono);font-size:10px;line-height:1.45;
   user-select:text;-webkit-user-select:text}
@@ -3192,14 +3262,13 @@ body:has(#touch.on) .powers .pw{touch-action:none}
 .kit-name{flex:0 0 96px;font:var(--mono);font-size:10px;font-weight:800;
   letter-spacing:.06em;text-transform:uppercase;color:var(--dim);padding-top:5px}
 .kit-chips{display:flex;flex-wrap:wrap;gap:6px;flex:1;min-width:0}
-.kit-chip{display:inline-block;padding:5px 9px 6px;border:2px solid var(--stroke);
+.kit-chip{display:inline-block;min-height:32px;padding:7px 9px 6px;border:2px solid var(--stroke);
   background:var(--panel-2);color:var(--dim);font:var(--mono);font-size:10px;
   font-weight:800;letter-spacing:.04em;font-style:normal;cursor:pointer;
   transition:.12s;white-space:nowrap}
 .kit-chip:hover{background:var(--panel-hi);color:var(--ink);transform:translate(-1px,-1px)}
 .kit-chip.sel{background:var(--accent);color:var(--stroke);border-color:var(--stroke);
   transform:translate(-2px,-2px);box-shadow:var(--stamp)}
-.kit-chip:focus-visible{outline:3px solid var(--accent-warm);outline-offset:3px}
 /* ── THE LICENCE ──────────────────────────────────────────────────────────
    The rank ladder as five rows, every rung shown and the ones he holds lit.
    A rung he has not reached is dimmed rather than hidden: the two lines under
@@ -3294,9 +3363,9 @@ body:has(#touch.on) .powers .pw{touch-action:none}
  *  THE FIRING SOLUTION — V16 §A3, and it is the only pane with a LIVE control
  * ══════════════════════════════════════════════════════════════════════════
  *
- * The station's panes (`.pane`) are deliberately unstyled markup on a
- * `.screen`; this is three rules and not a sixth panel skin, because a dial
- * the player cannot see the mark on is not a minigame. `i[data-bar]` is the
+ * The station's panes (`.pane`) take the card skin below (V19 §9); this
+ * block is the dial and only the dial, because a dial the player cannot see
+ * the mark on is not a minigame. `i[data-bar]` is the
  * drifting mark, positioned by `benchTick` as a percentage along the track,
  * and `.on` is the window `Bench.solve` scores inside — so the colour and the
  * arithmetic cannot disagree about what "close" means.
@@ -3308,3 +3377,56 @@ body:has(#touch.on) .powers .pw{touch-action:none}
   margin-left:-1px;background:#ffb03a;transition:left .1s linear}
 .pane .row.dial .track i.on{background:#8fe8ff;box-shadow:0 0 6px #8fe8ff}
 .pane .row.dial input[type=range]{flex:1;min-width:140px}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  THE STATION'S PANES — V19 §9, the same card as the pause card
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * Thirteen boards, counters and kiosks in main.js write `<div class="pane">`
+ * onto a `.screen` and, until now, nothing dressed it: an unstyled <h2>,
+ * bare <button>s in the browser's own grey, rows of text on an 18% scrim
+ * over the concourse. It was the one part of the product drawn by the
+ * browser. Now a pane is the pause card — same panel fill, same 2 px ink,
+ * same stamp, same cut, same 160 ms entrance — and every button on it is a
+ * `.secondary` in shape: 32 px tall, inked, a chunky hover. The markup is
+ * untouched; the classes it already carries (`.sub`, `.rows`, `.row`,
+ * `.acts`, `.warn`) are what these rules key on.
+ */
+.pane{position:relative;z-index:2;width:min(760px,92vw);max-height:90vh;overflow-y:auto;overflow-x:hidden;
+  padding:var(--s3) 20px 20px;border:2px solid var(--stroke);background:var(--panel);
+  clip-path:var(--cut);box-shadow:var(--stamp-lg);color:var(--ink);
+  scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--panel-hi) var(--void);
+  animation:panelIn .16s cubic-bezier(.22,1,.36,1) both}
+.pane::-webkit-scrollbar{width:8px;background:var(--void)}
+.pane::-webkit-scrollbar-thumb{background:var(--panel-hi);border:2px solid var(--stroke)}
+.pane h2{font-size:20px;margin-bottom:var(--s2)}
+.pane h3,.pane h4{display:flex;align-items:center;gap:9px;margin:var(--s3) 0 var(--s2);font:var(--mono);font-size:10px;
+  font-weight:800;letter-spacing:.24em;text-transform:uppercase;color:var(--ink)}
+.pane h3::after,.pane h4::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
+.pane p,.pane .sub{color:var(--dim);font-size:12px;line-height:1.6;margin:0 0 var(--s2)}
+.pane .sub b,.pane .row b{color:var(--ink)}
+.pane .sub i,.pane .row i{font-style:normal;color:var(--accent-warm)}
+.pane .warn{color:var(--stroke);background:var(--danger);padding:var(--s1) var(--s2);
+  border:2px solid var(--stroke);clip-path:var(--cut-sm);font-weight:800}
+.pane .rows{display:flex;flex-direction:column;gap:var(--s1);margin:var(--s2) 0 var(--s3)}
+.pane .row{display:flex;align-items:center;gap:var(--s2);min-height:32px;padding:var(--s1) var(--s2);
+  border:2px solid var(--stroke);background:var(--panel-2);clip-path:var(--cut-sm);font-size:12px;color:var(--dim)}
+.pane .row>b{flex:0 0 auto;min-width:96px;font-size:12px;letter-spacing:.03em;text-transform:uppercase}
+.pane .row>span{flex:1;min-width:0}
+.pane .row.sub{background:transparent;border-color:transparent;padding-left:0}
+.pane .acts{display:flex;flex-wrap:wrap;gap:var(--s2);margin:var(--s2) 0 var(--s3)}
+.pane .acts label{display:flex;align-items:center;gap:var(--s2);color:var(--dim);font-size:12px}
+.pane button{min-height:32px;padding:6px var(--s3) 7px;font:var(--ui);font-weight:800;font-size:11px;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--ink);background:var(--panel-hi);
+  border:2px solid var(--stroke);clip-path:var(--cut-sm);box-shadow:var(--stamp);cursor:pointer;
+  transition:transform .12s cubic-bezier(.22,1,.36,1),box-shadow .12s,background .14s}
+.pane button:hover:not(:disabled){background:var(--accent);color:var(--stroke);transform:translate(-2px,-2px);
+  box-shadow:var(--stamp-lg)}
+.pane button:active:not(:disabled){transform:translate(2px,2px);box-shadow:none}
+.pane button:disabled{opacity:.45;cursor:not-allowed;box-shadow:none}
+.pane button.buy,.pane button.take,.pane button.collect{background:var(--accent);color:var(--stroke)}
+.pane button.buy:hover:not(:disabled),.pane button.take:hover:not(:disabled),
+.pane button.collect:hover:not(:disabled){background:var(--strip)}
+.pane input[type=number],.pane input[type=text]{min-height:32px;width:88px;padding:var(--s1) var(--s2);
+  font:var(--mono);font-size:12px;font-weight:800;color:var(--strip);background:var(--void);
+  border:2px solid var(--stroke);clip-path:var(--cut-sm);outline:none}

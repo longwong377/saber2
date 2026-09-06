@@ -55,7 +55,7 @@ built in lanes, marked as they land.
 6. Co-op guests get the station but nothing on it is a two-player thing. **CLOSED** — `CoopGames.js`: sabacc against your guest, a side bet on a race, a two-carrier crate job; `coopgames.mjs`.
 7. Saving is a bag of folds; no readable "what changed". → the journal in the cabin (`Journal.js`, a `journal` fold in `StationSave`). **BUILT**
 8. The battlefields have had none of the station's "living" standard. **DROPPED** — the player questioned it; the lane was stopped.
-9. The menus and settings read as a different product.
+9. The menus and settings read as a different product. → the station's own palette (`DECK_PALETTE[40]` as `:root` tokens), one focus ring, 32 px targets, switches and value pills, the panes dressed as the pause card, motion ≤ 160 ms and off under reduced-motion, the station's name and day under the title; `tools/checks/frontend.mjs` measures every text/surface pair at 4.5:1. **BUILT**
 10. Difficulty is a slider; the station ignores it. → `StationDifficulty.js`: one ladder, five readers (prices, the cell, the patrol's patience, the thief's odds, the tanks' rate). **BUILT**
 
 **Ten additions:**
@@ -67,7 +67,7 @@ built in lanes, marked as they land.
 6. The frame-time overlay and the auto-tune (hole 2). **BUILT**
 7. The walk-the-world gate (hole 1). **BUILT**
 8. The battlefields get patrols, wildlife, weather, a camp with people in it. **DROPPED** at the player's word; say "do the battlefields" to revive it.
-9. The station's cel look on the menus, settings and deck cards.
+9. The station's cel look on the menus, settings and deck cards. **BUILT** (hole 9)
 10. Difficulty that changes the station: prices, the brig, the guards' patience, the pickpocket's odds. **BUILT** (`StationDifficulty.js`; hole 10)
 
 ## 0. V18 — THE PLAYER'S THIRTY, AND TWO NEW SCREENS

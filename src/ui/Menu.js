@@ -34,6 +34,12 @@ import { load as loadKennel, notSaving as kennelNotSaving, dressCompanion,
          clear as kennelClear } from '../game/Kennel.js';
 import { applyInjury } from '../game/Injury.js';
 import { LEVELS, LEVEL_ORDER, theatresFor } from '../game/Levels.js';
+/* THE THEATRE CARD'S SWATCH is the ground's own colour, read off the same
+ * table the ground is built from (V19 §9) — a second list of seven hex
+ * values in the front end would be the hand-maintained twin HANDOFF §2.3
+ * keeps removing. Terrain.js loads under node (tools/checks/menu.mjs builds
+ * this Menu there), so the import costs the checks nothing. */
+import { TERRAIN_PRESETS } from '../world/Terrain.js';
 import { WITHDRAW_HOLD, LAST_CALL } from '../game/Extraction.js';
 /* The three numbers the fire-mission row prints. Derived rather than typed,
  * exactly as the extraction row above derives its hold and its ramp: tune the
@@ -382,6 +388,13 @@ export const HAIR_COLORS = [
   { name: 'Ash',    hex: 0x8b8578 }, { name: 'Silver',     hex: 0xc9c6bd },
   { name: 'White',  hex: 0xe6e2d8 }, { name: 'Shaven',     hex: 0x3a2e26 },
 ];
+
+/** The colour a theatre card wears: its ground's sand, or the level's own soil. */
+export function levelSwatch(key) {
+  const L = LEVELS[key];
+  const n = TERRAIN_PRESETS[L?.terrain]?.sandColor ?? L?.groundColor ?? 0x50443c;
+  return '#' + (n >>> 0).toString(16).padStart(6, '0').slice(-6);
+}
 
 export const DEFAULT_SETTINGS = {
   level: 'scoria',
@@ -3969,6 +3982,7 @@ export class Menu {
     this._buildRules();
     this._buildSaber();
     this._buildOptions();
+    this._bindResets();
     this._buildButtons();
     // Belt and braces: _buildOptions reaches this through _buildBindings, but
     // that bails out early when #bind-list is absent (a stripped DOM), and the
@@ -4038,6 +4052,7 @@ export class Menu {
     const boot = this.el.boot;
     this.el.menu.classList.toggle('cut', !!boot && !boot.classList.contains('hidden'));
     this.el.menu.classList.remove('hidden');
+    this.paintStation();
     /**
      * THE ONE-SHOT NOTICE IS ONE SHOT.
      *
@@ -4107,6 +4122,76 @@ export class Menu {
   }
 
   setGpuLine(text) { this.el.gpu.textContent = text; this._syncDiag(); }
+
+  /**
+   * THE STATION'S NAME AND THE DAY UNDER THE TITLE (V19 §9).
+   *
+   * Read through `hooks.station` — `() => ({ name, day })`, which main.js
+   * fills from `StationSave.stationName()` and its own `stationDay()` — so
+   * this file never imports the station and the two cannot disagree about
+   * which day it is. Painted on every `showMenu`, because the day advances
+   * while the player is out on a run and the menu they come back to has to
+   * say so. A Menu with no hook (the check suites) paints nothing and the
+   * line hides itself (`.station-line b:empty`).
+   */
+  paintStation() {
+    const st = this.hooks.station?.();
+    const name = document.getElementById('menu-station-name');
+    const day = document.getElementById('menu-station-day');
+    if (!name || !day) return;
+    name.textContent = st?.name ? String(st.name) : '';
+    day.textContent = Number.isFinite(st?.day) ? `Day ${st.day}` : '';
+  }
+
+  /**
+   * ONE 'RESET' PER SETTINGS TAB (V19 §9).
+   *
+   * Each `button.reset-tab` in index.html sits in a column of the Options
+   * panel and resets THAT COLUMN: every slider and switch in it that
+   * `_slider`/`_check` bound (found through `_bound`, so a control added
+   * to the column later is covered without a list), and every picker list
+   * in it (the four `RESET_PICKS` hosts, which are built by name). Values
+   * come from DEFAULT_SETTINGS and go through `_set`, so the twin on the
+   * pause card and the side effect (volume into the mixer, FOV into the
+   * camera) follow exactly as a hand on the slider would. The key table's
+   * own reset (#btn-bind-reset) is older and stays what it is.
+   */
+  _bindResets() {
+    const RESET_PICKS = [
+      ['opt-scheme', 'scheme', 'onSchemeChange'], ['opt-quality', 'quality', 'onQualityChange'],
+      ['opt-deflect', 'deflectAim', 'onDeflectAim'], ['opt-holocron', 'holocron', null],
+      ['opt-speech', 'speechMode', null], ['opt-troopnames', 'troopNames', null],
+    ];
+    for (const btn of document.querySelectorAll('button.reset-tab')) {
+      if (btn._wired) continue;
+      btn._wired = true;
+      btn.addEventListener('click', () => {
+        audio.ui('click');
+        const col = btn.closest('.col') || btn.parentElement;
+        if (!col) return;
+        const keys = new Set();
+        const inputs = new Set(col.querySelectorAll('input'));
+        for (const [key, entry] of this._bound) {
+          if (entry.inputs.some((i) => inputs.has(i))) keys.add(key);
+        }
+        const picks = RESET_PICKS.filter(([host]) => col.querySelector('#' + host));
+        for (const [, key] of picks) keys.add(key);
+        for (const key of keys) {
+          if (!(key in DEFAULT_SETTINGS)) continue;
+          const v = structuredClone(DEFAULT_SETTINGS[key]);
+          if (this._bound.has(key)) this._set(key, v);
+          else this.s[key] = v;
+        }
+        saveSettings(this.s);
+        if (picks.length) {
+          /* Every picker is rebuilt by name off `this.s`, so the lit row is
+           * the default row, and the hooks a hand on the row would fire, fire. */
+          this._buildOptions();
+          for (const [, key, hook] of picks) if (hook) this.hooks[hook]?.(this.s[key]);
+        }
+      });
+    }
+  }
 
   /**
    * THE TITLE SCREEN STOPS OPENING WITH A BUG REPORT.
@@ -4878,7 +4963,7 @@ export class Menu {
     for (const key of LEVEL_ORDER) {
       const L = LEVELS[key];
       const card = document.createElement('div');
-      card.className = 'card' + (this.s.level === key ? ' sel' : '');
+      card.className = 'card theatre' + (this.s.level === key ? ' sel' : '');
       /* THE CARD KNOWS WHICH GROUND IT IS, so `_syncTheatre` can bar the ones a
        * mode cannot start on without holding a parallel index into
        * `LEVEL_ORDER` — a second list beside the one it was built from is the
@@ -4887,7 +4972,7 @@ export class Menu {
       card.innerHTML = `
         <div class="art" style="background-image:url(${LEVEL_SHOT(key)}),url(${this._levelArt(key)});background-size:cover"></div>
         <div class="tagpill">${this._poolTypes(L)} unit types</div>
-        <div class="meta"><b>${L.name}</b><span class="why hidden"></span></div>`;
+        <div class="meta"><i class="swatch" style="background:${levelSwatch(key)}" title="the ground"></i><b>${L.name}</b><span class="why hidden"></span></div>`;
       this._activate(card, () => {
         // Ignored in the modes that choose their own place — see _syncTheatre.
         // The guard is here as well as on pointer-events because a card the
