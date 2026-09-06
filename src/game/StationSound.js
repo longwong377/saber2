@@ -98,6 +98,8 @@ function buildGraph(S) {
     const murmur = gain(0.11, b.gain);
     const n = noise(0.91); const bp = filt('bandpass', 320, 0.6, murmur); n.connect(bp);
     lfo(murmur.gain, 0.13, 0.04);
+    /* V19 add 5: the band ducks this — see `duckMurmur`. */
+    S.murmur = murmur; S.murmurBase = 0.11;
     const bass = tone(b, 'sine', 55, 0.0);
     bass.gain.value = 0.045;
     lfo(bass.gain, 1.05, 0.045, 'square');
@@ -345,6 +347,21 @@ export function dressStationSound(world, st) {
   if (pa.at < 0) pa.at = paSlot(st);
   buildGraph(S);
   return S;
+}
+
+/**
+ * THE MURMUR UNDER THE BAND (V19 add 5). `Music.js` pulls the cantina's crowd
+ * to `level` of itself while the band plays and back to 1 when it stops; the
+ * level is kept on `S.levels.murmur` so a check can read it without a clock.
+ */
+export function duckMurmur(world, level = 1) {
+  const S = world?._stationSound;
+  if (!S) return false;
+  const l = Math.max(0, Math.min(1, Number(level) || 0));
+  S.levels.murmur = l;
+  if (!S.murmur || !S.ctx) return false;
+  try { S.murmur.gain.setTargetAtTime(S.murmurBase * l, S.ctx.currentTime, 0.6); } catch { return false; }
+  return true;
 }
 
 /** What the bed's gain is currently commanded to, per key — the observable. */

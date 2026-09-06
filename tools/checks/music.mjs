@@ -26,6 +26,15 @@ import { createServer } from 'node:http';
 import { engine } from './audio.mjs';
 import { MUSIC_TRACKS, isSilent } from '../../src/engine/Audio.js';
 import { handler, parseRange } from '../serve.mjs';
+import { clocked } from './_shared.mjs';
+import * as Music from '../../src/game/Music.js';
+import * as Sound from '../../src/game/StationSound.js';
+import * as Credits from '../../src/game/Credits.js';
+import { clearStation, buskerState, setBuskerState } from '../../src/game/StationSave.js';
+import { PLACE } from '../../src/game/StationPlan.js';
+import { audio } from '../../src/engine/Audio.js';
+import { OfflineCtx } from './_offline-audio.mjs';
+
 
 /**
  * THE ROW THAT STREAMS, found rather than typed.
@@ -101,6 +110,76 @@ function withAudioElement(fn) {
   globalThis.Audio = FakeAudio;
   try { return fn(); } finally { globalThis.Audio = prev; }
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  MUSIC AS PLACE (V19 addition 5 / hole 3) — the second half of this file.
+ *
+ *  The tune engine is a pure function and is checked as one: the same seed is
+ *  the same note list, different seeds differ, the form is A A B A measured on
+ *  the melody's own shape per bar, and every note sits in the mode's scale.
+ *  The places are checked on a real deck 40 with the engine on an offline
+ *  WebAudio: three musicians on the dais at 22:00 and the band's gain node
+ *  falling off with distance, the murmur bed ducking under them; the busker
+ *  taking a credit through the real `stationKey` and the fold counting it; the
+ *  Drum's theme under a screen and nowhere else; and no random source.
+ *  `clocked`, so the world-booting checks run one at a time.
+ * ══════════════════════════════════════════════════════════════════════════ */
+const KEY = 'saber.company.v1';
+
+function diskFetch() {
+  if (globalThis.fetch && globalThis.__stationFetch) return;
+  const root = new URL('../../', import.meta.url);
+  globalThis.__stationFetch = true;
+  globalThis.fetch = async (url) => {
+    const buf = await readFile(new URL(String(url), root));
+    return { ok: true, arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) };
+  };
+}
+
+async function withCleanStoreAsync(fn) {
+  const had = localStorage.getItem(KEY);
+  const hadStation = localStorage.getItem('saber.station.v1');
+  localStorage.removeItem(KEY);
+  clearStation();
+  try { return await fn(); }
+  finally {
+    if (had == null) localStorage.removeItem(KEY); else localStorage.setItem(KEY, had);
+    clearStation();
+    if (hadStation != null) localStorage.setItem('saber.station.v1', hadStation);
+  }
+}
+
+async function station(deck = 40) {
+  const { bootWorld, idleInput } = await import('./_coop.mjs');
+  const { prepareStation, finishStationBuild } = await import('../../src/game/Station.js');
+  diskFetch();
+  await prepareStation();
+  const { world } = await bootWorld({
+    level: 'station',
+    settings: { mode: 'station', level: 'station', allies: 0 },
+    onWorld: (w) => { w._stationFloor = deck; },
+  });
+  finishStationBuild(world);
+  return { world, idle: idleInput() };
+}
+
+/** The engine on an offline context. Every own property goes back after. */
+function bootAudio() {
+  const prev = globalThis.AudioContext;
+  let ctx = null;
+  globalThis.AudioContext = function () { ctx = new OfflineCtx(48000); return ctx; };
+  const was = { ...audio };
+  audio.ctx = null; audio.ready = false; audio._lastWake = -1e9;
+  try { audio.init(); } finally { globalThis.AudioContext = prev; }
+  return { ctx, was };
+}
+function restoreAudio(was) {
+  for (const k of Object.keys(audio)) delete audio[k];
+  Object.assign(audio, was);
+}
+
+const shapes = (t) => [...Array(Music.BARS)].map((_, b) => Music.barShape(t, b));
 
 export async function run({ check, assert }) {
 
@@ -412,5 +491,258 @@ export async function run({ check, assert }) {
       server.closeAllConnections?.();
       await new Promise(r => server.close(r));
     }
+  });
+
+  /* ── music as place ─────────────────────────────────────────────────── */
+  const place = await clocked(check);
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  place('music: the same seed is the same tune, different seeds differ, the form is A A B A, every note in the mode', () => {
+    const a = Music.tuneFor('the long night'), b = Music.tuneFor('the long night'), c = Music.tuneFor('the short day');
+    assert(JSON.stringify(a.notes) === JSON.stringify(b.notes) && a.name === b.name && a.bpm === b.bpm, 'the same seed gave two tunes');
+    assert(JSON.stringify(a.notes) !== JSON.stringify(c.notes), 'two seeds gave one tune');
+    const names = new Set();
+    let aaba = 0, bDiffers = 0, styles = new Set();
+    const N = 240;
+    for (let i = 0; i < N; i++) {
+      const t = Music.tuneFor(`seed:${i}`);
+      names.add(t.name); styles.add(t.style);
+      assert(t.bars === 8 && t.length === 32, `tune ${i} is ${t.bars} bars`);
+      assert(Music.inMode(t), `tune ${i} (${t.style}) has a note off its mode`);
+      const S = Music.STYLE_BY.get(t.style);
+      const voices = new Set(t.notes.map((n) => n.voice));
+      assert(voices.size >= 2 && voices.size <= 4 && voices.size === Math.min(4, Math.max(2, S.voices)), `tune ${i} has ${voices.size} voices for a ${S.voices}-voice style`);
+      assert(t.drums.length > 0, `tune ${i} has no drums`);
+      const sh = shapes(t);
+      const A = [0, 1, 3, 4, 5, 7].every((k) => sh[k] === sh[0]);
+      const B = sh[2] === sh[6];
+      if (A && B) aaba++;
+      if (sh[2] !== sh[0]) bDiffers++;
+      /* THE BASS is a line: at least one note a beat, in the style's register. */
+      const bass = t.notes.filter((n) => n.voice === 1);
+      assert(bass.length >= (t.style === 'minbari' ? 16 : 32), `tune ${i} has ${bass.length} bass notes`);
+      assert(bass.every((n) => n.midi >= S.lows[0] && n.midi <= S.lows[1] + 12), `tune ${i}'s bass leaves its register`);
+    }
+    assert(aaba === N, `${aaba}/${N} tunes are A A B A`);
+    assert(bDiffers >= N * 0.9, `B repeats A in ${N - bDiffers}/${N} tunes`);
+    assert(styles.size === Music.PLAYED.length, `${styles.size} styles drawn of ${Music.PLAYED.length}`);
+    assert(names.size >= 60, `${names.size} distinct names over ${N} tunes`);
+    /* THE SIX MODES read as six: every style names a people and no two share a scale. */
+    const scales = new Set(Music.STYLES.map((s) => s.scale.join(',')));
+    assert(scales.size === Music.STYLES.length, 'two styles share a scale');
+    for (const id of ['cantina', 'drazi', 'minbari', 'centauri', 'narn', 'human', 'drum']) assert(Music.STYLE_BY.has(id), `no ${id} style`);
+    return `${N} tunes: all A A B A, ${bDiffers} with a B that differs, ${names.size} names, ${styles.size} styles; "${a.name}" (${a.style}, ${a.bpm} bpm, ${a.notes.length} notes, ${a.drums.length} hits)`;
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  place('music: in the cantina at 22:00 three musicians stand on the dais, the band is loud at 3 m and under a fifth of that at 15 m, the murmur ducks',
+    () => withCleanStoreAsync(async () => {
+      const { ctx, was } = bootAudio();
+      let world = null;
+      try {
+        const st0 = await station(40);
+        world = st0.world;
+        const idle = st0.idle;
+        const st = world._station;
+        const M = world._music;
+        assert(M && M.dais, 'the music was not dressed on deck 40, or the dais was not found');
+        const cantina = PLACE.get(14);
+        const D = M.dais;
+        /* IN THE ROOM, 3 m in front of the dais. */
+        const p = world.player.position;
+        const fx = Math.sin(D.yaw), fz = Math.cos(D.yaw);
+        p.x = D.x + fx * 3; p.z = D.z + fz * 3;
+        st.hour = 22;
+        world.update(1 / 60, idle);
+        ctx.currentTime += 0.5;
+        world.update(1 / 60, idle);
+        const B = M.band;
+        assert(B && B.bodies.length === 3, `${B?.bodies.length ?? 0} musicians at 22:00`);
+        for (const b of B.bodies) {
+          const body = b.body;
+          assert(world.enemies.includes(body) && body.stationResident && body.noAmbientHarm && body.stationMusician, `${body.stationName} is not a resident musician`);
+          const d = Math.hypot(body.position.x - D.x, body.position.z - D.z);
+          assert(d < 2.0, `${body.stationName} is ${d.toFixed(2)} m from the dais's centre`);
+          const well = world.floorAt(body.position.x, body.position.z);
+          assert(well < D.y - 0.3, `under ${body.stationName} the well floor is ${well.toFixed(2)}, the dais top ${D.y.toFixed(2)} — not a sunken room`);
+          assert(Math.abs(body.position.y - D.y) < 0.4, `${body.stationName} stands at y ${body.position.y.toFixed(2)}, the dais top is ${D.y.toFixed(2)}`);
+          assert(b.prop && b.prop.parent, `${body.stationName} has no instrument in the scene`);
+        }
+        const props = new Set(B.bodies.map((b) => b.prop.name));
+        assert(props.size === 3, `the instruments are ${[...props].join(',')}`);
+        assert(B.tune && B.player, `no tune (${B.tune?.name}) or no player at 22:00`);
+        const scheduled = B.player.scheduled;
+        assert(scheduled > 0, 'no note was scheduled');
+        const near = Music.musicLevels(world).band;
+        const gNear = B.player.out.gain.last('tgt');
+        assert(near > 0.5 && gNear === Math.max(0.0001, near), `at 3 m the band is ${near.toFixed(3)}, the node was told ${gNear}`);
+        /* THE MURMUR under them. */
+        const S = world._stationSound;
+        assert(Sound.bedLevels(world).murmur === Music.MURMUR_DUCK, `the murmur is ${Sound.bedLevels(world).murmur} while the band plays`);
+        assert(Math.abs(S.murmur.gain.last('tgt') - S.murmurBase * Music.MURMUR_DUCK) < 1e-6, `the murmur node was told ${S.murmur.gain.last('tgt')}`);
+        /* 15 m in front — still in the room, at the bar. */
+        p.x = D.x + fx * 15; p.z = D.z + fz * 15;
+        world.update(1 / 60, idle);
+        const far = Music.musicLevels(world).band;
+        assert(far > 0 && far < near * 0.2, `at 15 m the band is ${far.toFixed(3)} against ${near.toFixed(3)} at 3 m`);
+        /* THE SWAY: the facing moves with the beat. */
+        const f0 = B.bodies[0].body.facing;
+        ctx.currentTime += 60 / B.tune.bpm * 0.5;
+        world.update(1 / 60, idle);
+        const f1 = B.bodies[0].body.facing;
+        assert(Math.abs(f1 - f0) > 0.02, `the horn player's facing moved ${(f1 - f0).toFixed(3)} over half a beat`);
+        /* THE SET LIST over the evening: a tune a slot, a break every fourth, named. */
+        const names = new Set();
+        let breaks = 0, tunes = 0;
+        for (let h = 20; h < 22; h += 3 / 60) {
+          st.hour = h;
+          world.update(1 / 60, idle);
+          const t = M.band.tune;
+          if (t) { tunes++; names.add(t.name); } else breaks++;
+        }
+        assert(tunes >= 28 && breaks >= 9, `${tunes} tunes and ${breaks} breaks over two hours`);
+        assert(names.size >= 20, `${names.size} distinct tunes over the evening`);
+        /* AND AT 03:00 THEY ARE GONE, and the murmur is back. */
+        st.hour = 3;
+        world.update(1 / 60, idle);
+        assert(!M.band, 'the band is still on the dais at 03:00');
+        assert(!world.enemies.some((e) => e.stationMusician), 'a musician body is still in the world at 03:00');
+        assert(Sound.bedLevels(world).murmur === 1, `the murmur is ${Sound.bedLevels(world).murmur} after the band left`);
+        return `3 musicians on the dais at (${D.x.toFixed(1)}, ${D.y.toFixed(2)}, ${D.z.toFixed(1)}) in ${cantina.name}; band ${near.toFixed(3)} at 3 m, ${far.toFixed(3)} at 15 m; murmur ${Music.MURMUR_DUCK}× under it; ${tunes} tunes, ${breaks} breaks, ${names.size} names 20:00–22:00; ${scheduled} events scheduled in the first half-second`;
+      } finally {
+        world?.dispose?.();
+        restoreAudio(was);
+      }
+    }));
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  place('music: the busker on the ring takes a credit through the real key, the fold counts it, he plays a named request and greets a patron',
+    () => withCleanStoreAsync(async () => {
+      const { ctx, was } = bootAudio();
+      let world = null;
+      const hadCredits = localStorage.getItem('saber.credits.v1');
+      Credits.clearCredits();
+      try {
+        const st0 = await station(40);
+        world = st0.world;
+        const idle = st0.idle;
+        const st = world._station;
+        const M = world._music;
+        const { stationKey } = await import('../../src/game/Station.js');
+        assert(M && M.spot, 'no busker spot on deck 40');
+        st.hour = 12;
+        world.update(1 / 60, idle);
+        const B = M.busker;
+        assert(B && world.enemies.includes(B.body), 'no busker at noon');
+        assert(B.body.stationResident && B.body.noAmbientHarm && B.body.stationBusker, 'the busker is not a resident');
+        assert(B.lute.parent && B.hat.parent, 'the lute or the hat is not in the scene');
+        const floor = world.floorAt(M.spot.x, M.spot.z);
+        assert(Math.abs(B.body.position.y - floor) < 0.5, `the busker stands at ${B.body.position.y.toFixed(2)} over a floor at ${floor.toFixed(2)}`);
+        assert(B.player && B.player.tune.voices === 1 && B.player.tune.notes.every((n) => n.voice === 0) && !B.player.tune.drums.length, 'the busker is not playing a solo voice');
+        /* THE KEY, from a metre in front of him, with nothing in the purse. */
+        const p = world.player.position;
+        p.x = B.body.position.x + Math.sin(M.spot.yaw) * 1.0; p.z = B.body.position.z + Math.cos(M.spot.yaw) * 1.0;
+        const banners = [];
+        world.notify = (a, b) => banners.push(`${a} — ${b}`);
+        assert(Credits.purse() === 0, `the purse starts at ${Credits.purse()}`);
+        assert(stationKey(world) === true, 'the key was not taken by the busker with an empty purse');
+        assert((buskerState().tips | 0) === 0, 'a tip was counted with no credits');
+        assert(banners.some((b) => /hat is out/.test(b)), `he said: ${banners.join(' | ')}`);
+        /* WITH CREDITS: three tips, three requests, and a patron. */
+        Credits.pay(10);
+        const played = [];
+        for (let i = 0; i < 3; i++) {
+          banners.length = 0;
+          assert(stationKey(world) === true, `press ${i + 1} was not taken`);
+          assert(Credits.purse() === 10 - (i + 1), `after tip ${i + 1} the purse is ${Credits.purse()}`);
+          assert((buskerState().tips | 0) === i + 1, `after tip ${i + 1} the fold says ${buskerState().tips}`);
+          assert(B.request === i + 1 && B.tune, `no request after tip ${i + 1}`);
+          played.push(B.tune.name);
+          assert(banners.some((b) => b.includes(`"${B.tune.name}"`)), `he did not name the request: ${banners.join(' | ')}`);
+          ctx.currentTime += 0.2;
+          world.update(1 / 60, idle);
+          assert(B.player && B.player.tune === B.tune, 'the request is not the tune playing');
+        }
+        assert(new Set(played).size === 3, `the three requests were ${played.join(', ')}`);
+        assert(B.hat.userData.coins.children.length === 3, `${B.hat.userData.coins.children.length} coins in the hat after three tips`);
+        assert(banners.some((b) => /patron/.test(b)), `the third tip did not make a patron: ${banners.join(' | ')}`);
+        /* THE GREETING on a fresh visit: the fold says patron, he says so on sight. */
+        st.hour = 19;
+        world.update(1 / 60, idle);
+        assert(!M.busker, 'the busker is still there at 19:00');
+        banners.length = 0;
+        st.hour = 11;
+        world.update(1 / 60, idle);
+        assert(M.busker && M.busker.hat.userData.coins.children.length === 3, 'the coins did not come back with the fold');
+        assert(banners.some((b) => /my patron/.test(b)), `no greeting for a patron: ${banners.join(' | ')}`);
+        const lvl = Music.musicLevels(world).busker;
+        assert(lvl > 0.4, `a metre from the busker he is at ${lvl.toFixed(3)}`);
+        p.x = M.spot.x + Math.sin(M.spot.yaw) * 20; p.z = M.spot.z + Math.cos(M.spot.yaw) * 20;
+        world.update(1 / 60, idle);
+        const farL = Music.musicLevels(world).busker;
+        assert(farL < lvl * 0.1, `at 20 m the busker is ${farL.toFixed(3)} against ${lvl.toFixed(3)} at 1 m`);
+        return `busker at (${M.spot.x.toFixed(1)}, ${M.spot.z.toFixed(1)}) by kiosk ${M.spot.kiosk}; 3 tips → fold ${buskerState().tips}, purse ${Credits.purse()}, requests ${played.join(' / ')}; ${lvl.toFixed(3)} at 1 m, ${farL.toFixed(4)} at 20 m`;
+      } finally {
+        world?.dispose?.();
+        restoreAudio(was);
+        Credits.clearCredits();
+        if (hadCredits != null) localStorage.setItem('saber.credits.v1', hadCredits);
+        setBuskerState({});
+      }
+    }));
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  place('music: the Drum programme has a theme under it within 6 m of a screen, low, and nothing past it',
+    () => withCleanStoreAsync(async () => {
+      const { was } = bootAudio();
+      let world = null;
+      try {
+        const st0 = await station(40);
+        world = st0.world;
+        const idle = st0.idle;
+        const st = world._station;
+        const M = world._music;
+        const { programmeAt } = await import('../../src/game/Holonet.js');
+        const tv = (st.tvs || []).find((t) => t.mesh);
+        assert(tv, 'no screen on deck 40');
+        st.hour = 1.25;
+        st.tvOn = programmeAt(st.day | 0, 1.25);
+        assert(st.tvOn.kind === 'drum', `at 01:15 the channel shows ${st.tvOn.kind}`);
+        const p = world.player.position;
+        p.x = tv.mesh.position.x + 2; p.z = tv.mesh.position.z;
+        world.update(1 / 60, idle);
+        const near = Music.musicLevels(world).drum;
+        assert(M.drum && M.drum.tune.style === 'drum', 'no Drum theme by the screen');
+        assert(near > 0 && near <= Music.DRUM_GAIN, `2 m from the screen the theme is ${near.toFixed(3)}`);
+        assert(M.drum.player.out.gain.last('tgt') === near, 'the node was not told the level');
+        p.x = tv.mesh.position.x + 10;
+        world.update(1 / 60, idle);
+        assert(!M.drum && Music.musicLevels(world).drum === 0, `10 m from the screen the theme is ${Music.musicLevels(world).drum}`);
+        /* And a programme that is not the Drum has no theme even at the screen. */
+        p.x = tv.mesh.position.x + 2;
+        st.tvOn = { kind: 'news' };
+        world.update(1 / 60, idle);
+        assert(!M.drum, 'the theme plays under the news');
+        return `Drum theme "${Music.drumTune(st.day | 0).name}" at ${near.toFixed(3)} 2 m from screen ${tv.id}, 0 at 10 m, 0 under the news`;
+      } finally {
+        world?.dispose?.();
+        restoreAudio(was);
+      }
+    }));
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  place('music: no Math.random, and the hooks are in Station.js', async () => {
+    const src = await readFile(new URL('../../src/game/Music.js', import.meta.url), 'utf8');
+    assert(!/Math\.random/.test(src), 'Music.js uses Math.random');
+    const st = await readFile(new URL('../../src/game/Station.js', import.meta.url), 'utf8');
+    for (const h of ['dressMusic(world, st)', 'stepMusic(world, st, dt)', 'undressMusic(world)', 'musicKey(world)']) assert(st.includes(h), `Station.js lacks ${h}`);
+    /* The engine is on the Music slider's bus, so volume and mute hold. */
+    assert(/audio\.musicBus/.test(src), 'the players are not on musicBus');
+    return 'no Math.random; four hooks; players on musicBus';
   });
 }
