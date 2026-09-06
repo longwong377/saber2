@@ -591,8 +591,20 @@ export async function run({ check, assert, near }) {
      */
     const { readFile } = await import('node:fs/promises');
     const st = await readFile(new URL('../../src/game/Station.js', import.meta.url), 'utf8');
-    const iCounter = st.indexOf('const shop = counterHere(world, place);');
-    const iKiosk = st.indexOf('if (place.kiosk && world.onKiosk)');
+    /**
+     * FOUND BY WHAT THEY DO, NOT BY HOW THEY ARE PUNCTUATED.
+     *
+     * These were two `indexOf` calls on whole statements — `'const shop =
+     * counterHere(world, place);'` and `'if (place.kiosk && world.onKiosk)'`
+     * — and both went red the day the counter branch grew a null guard and
+     * became `place ? counterHere(world, place) : null`. The branch order was
+     * never touched and the property this clause exists for was never in
+     * danger; the check was pinning the formatting. `preview.mjs` had the
+     * identical defect on a slider that gained a second statement, and the
+     * lesson is the same one: assert the call, not the line it sits on.
+     */
+    const iCounter = st.search(/counterHere\s*\(\s*world\s*,\s*place\s*\)/);
+    const iKiosk = st.search(/place\.kiosk\s*&&\s*world\.onKiosk\b/);
     assert(iCounter > 0, 'the counter branch no longer asks which counter you are standing at');
     assert(iKiosk > 0, 'the kiosk branch is gone');
     assert(iCounter < iKiosk,
