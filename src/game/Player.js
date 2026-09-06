@@ -4399,6 +4399,22 @@ export class Player {
     const input = ctx.input;
     if (!this.isLocal) return;
     /**
+     * V20 lane 6: THE INTERACT KEY'S HELD STATE, PUBLISHED AT THE TOP.
+     *
+     * `stationKey` only ever sees the EDGE, and two of the station's ten verbs
+     * are gestures rather than presses: three seconds held on #39's seized
+     * extractor, and six seconds of mashing across #18's table.
+     *
+     * AT THE TOP, ABOVE THE SEAT BRANCH, and that is the whole reason it is
+     * not down beside the `stationKey` call. The seat branch fifty lines below
+     * RETURNS — a seated player's interact key means "get up" and nothing else
+     * is read — so an arm-wrestler, who is by definition sitting on a stool,
+     * published no presses at all: measured, one shove counted out of a
+     * hundred and eighty. `Verbs.stepVerbs` is the only reader; one property
+     * write a frame, and only on the station.
+     */
+    if (this.world?._station) this.world._verbHold = input.act('focus');
+    /**
      * A MAN AT THE CONTROLS OF A TANK HAS BOTH HANDS ON THEM.
      *
      * `update` runs this BEFORE it hands the frame to `Crew`, because the crew
