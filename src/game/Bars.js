@@ -145,7 +145,7 @@
  */
 
 import { PLACE } from './StationPlan.js';
-import { resident } from './StationCast.js';
+import { resident, BORZ_BY_PLACE } from './StationCast.js';
 import { kindOfArmy } from './Attributes.js';
 import { rankFor, ARMY_IDS } from './Command.js';
 import { MORALE } from './Morale.js';
@@ -379,9 +379,12 @@ export const GARRISON_SHARE = 0.4;
  *   THE WINDOW. Nought outside liberty, whatever else is true. This is the
  *     clause that makes the bar empty of soldiers at 06:00 while still
  *     holding the seven people who work nights.
- *   THE ROOM. Never more than `heads`, which is `StationLife.headcount`'s
- *     answer for that place at that hour. §12.3: `heads` is who is THERE, and
- *     a bar cannot hold more soldiers than it holds people.
+ *   THE ROOM. Never more than the seats `heads` leaves once the named cast has
+ *     taken its own — `heads` is `StationLife.headcount`'s answer for that
+ *     place at that hour, §12.3's "who is THERE", and a bar cannot hold more
+ *     soldiers than it holds people. The cast's share comes off the top
+ *     because `occupant` gives it the low slots before it asks about leave at
+ *     all; see `castHeld`, which is the whole of the panel-and-room repair.
  *   THE PLAYER'S OWN COME FIRST. See `soldierIn` — the seats are filled from
  *     your roll while it lasts and by the station's garrison after that, so a
  *     company of four does not empty the cantina and a company of forty does
@@ -394,7 +397,38 @@ function leaveHeads(bar, hour, heads, opts = {}) {
   const k = libertyAt(hour);
   if (k <= 0) return 0;
   const n = (heads | 0) * GARRISON_SHARE * k;
-  return Math.max(0, Math.min(heads | 0, Math.round(n)));
+  return Math.max(0, Math.min((heads | 0) - castHeld(b.id), Math.round(n)));
+}
+
+/**
+ * ══ HOW MANY OF THIS ROOM'S LOW SLOTS ARE SPOKEN FOR ══════════════════════
+ *
+ * THE DEFECT, AND IT IS A PANEL AND A ROOM COUNTING SEPARATELY.
+ *
+ * `StationLife.occupant` hands the Borz cast the FIRST slots of the place it
+ * lives in and returns before `barman` is asked. #14 Cantina "The Long Night"
+ * seats two of them — the Drazi barkeep and his acolyte — in slots 0 and 1,
+ * which are exactly the first two leave seats. So the room built two soldiers
+ * fewer than `crowdOf` counted, and the two it dropped were the FIRST TWO MEN
+ * OFF THE ROLL: measured at 22:00 on a company of thirty, the panel named
+ * CT-1007, CT-1014, CT-1084, CT-1105 and CT-1175 and the room held only the
+ * last three. At 01:00 the panel named one man and the room held nobody.
+ *
+ * THE FIX IS THAT BOTH SIDES ASK THE SAME QUESTION. The leave seats are the
+ * `n` slots that follow the named cast, not the first `n` slots of the room —
+ * so `barman` shifts the seat index by what the cast holds and `leaveHeads`
+ * caps against the seats that are actually free. `crowdOf` then counts the
+ * same men `occupant` builds, by name and by number, because there is one
+ * answer to "which seat is a leave seat" and it lives here.
+ *
+ * IT READS THE CAST'S OWN TABLE rather than a number typed here: `StationCast`
+ * builds `BORZ_BY_PLACE` out of the roster and `occupant` reads that same Map
+ * to decide the very branch this is compensating for. A Borz added to a bar
+ * tomorrow moves both sides at once.
+ */
+function castHeld(placeId) {
+  const cast = BORZ_BY_PLACE.get(placeId);
+  return cast ? cast.length : 0;
 }
 
 /**
@@ -498,8 +532,14 @@ export function barman(place, i, opts = {}) {
    * to how full a room is. A caller with no clock gets no soldiers, which is
    * the honest default for a question it did not ask. */
   if (!Number.isFinite(opts.heads) || !Number.isFinite(opts.hour)) return null;
-  if (i >= leaveHeads(b, opts.hour, opts.heads, opts)) return null;
-  return soldierIn(b, i, opts);
+  /* THE LEAVE SEATS FOLLOW THE NAMED CAST — see `castHeld`. `occupant` never
+   * asks about a slot the cast holds, because it has already returned the
+   * Wookiee or the barkeep standing in it; this subtraction is what makes the
+   * i-th leave seat the i-th man on the roll rather than the (i+2)-th. */
+  const seat = i - castHeld(b.id);
+  if (seat < 0) return null;
+  if (seat >= leaveHeads(b, opts.hour, opts.heads, opts)) return null;
+  return soldierIn(b, seat, opts);
 }
 
 /** Every bar row, with its gazetteer place attached. For a screen and a check. */

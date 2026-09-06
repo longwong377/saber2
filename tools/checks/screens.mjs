@@ -284,18 +284,17 @@ export async function run({ check, assert }) {
     assert(!b.input.enabled, 'a board is up and the blade is still taking input');
     assert(b.s.overlay?.state === 'tote', 'a board is not remembered — a pause over it cannot put it back');
     /* AND A PAUSE OVER A BOARD STILL STOPS THE WORLD, and resuming onto the
-     * board starts it again. Rule 2 over the new half of the rule, driven on
-     * 'kiosk' because it is the one board already in `LIVE` and `pause()` is
-     * gated on that list — Escape over a board whose state is not in `LIVE`
-     * answers 'nothing' today, which is a gap this repair does not open and
-     * does not close: every one of those panes has a button of its own, and
-     * `closeTote`/`closePit`/`closeKiosk` are it. */
+     * board starts it again — rule 2 over the new half of the rule. It is
+     * `pause()` and not Escape, because Escape over a board CLOSES it now (see
+     * the clause below): what is held here is that a board interrupted by a
+     * pause raised any other way — the menu button, a throw inside `guarded` —
+     * is put back rather than skipped. */
     const k = bench();
     k.s.io.calm = () => true;
     enter(k, 'playing');
     k.s.take('kiosk', () => {});
     assert(!k.world.paused, 'the counter stopped the world — the room behind it is a photograph');
-    assert(k.s.escape() === 'paused' && k.world.paused, 'Escape over a board did not pause the world');
+    assert(k.s.pause() && k.world.paused, 'a pause over a board did not stop the world');
     k.s.resume();
     assert(k.s.state === 'kiosk' && !k.world.paused,
       `resuming onto the board left state '${k.s.state}' paused=${k.world.paused}`);
@@ -316,6 +315,111 @@ export async function run({ check, assert }) {
     assert(!CALM({ _station: {}, partyTeam: 0, enemies: [{ team: 0 }, { team: 2 }] }),
       'CALM vouched for a station with something hostile standing in it');
     return `${out.join(', ')}; a board runs the world, keeps input off, and is still escapable — and only where CALM says so`;
+  });
+
+  check('screens: Escape closes every pane the game registers, and so does its own button', async () => {
+    /**
+     * ══ RULE 1 DID NOT HOLD OVER TWELVE OF THE FOURTEEN SCREENS ════════════
+     *
+     * `pause()` is gated on `LIVE`, and of the panes `main.js` registers
+     * through `card()` only the counter and the Holocron are in that list. Over
+     * the other twelve — the tote, the pit, the casino, the bar, the medbay
+     * desk, the liberty board, the larder, the holodeck, the bench, the work
+     * board, the habitat page and the counter's pane — `Screens.escape()`
+     * returned the string 'nothing' and left the card exactly where it was.
+     * Rule 1 at the top of Screens.js says Escape is never a dead key; it was
+     * a dead key over most of the screens in the game.
+     *
+     * AND THE BUTTON WAS NOT THE ANSWER EITHER, which is the half that makes
+     * this a freeze and not an inconvenience. Every one of those panes closes
+     * itself with `screens.clear()`, and `clear()` hid the card and forgot the
+     * overlay WITHOUT MOVING THE STATE: the game sat in state 'bar' with
+     * nothing on screen, `hands()` answered null so `world.update` was never
+     * called again, and `input.enabled` stayed false. A room that has stopped,
+     * a player who cannot move, and Escape answering 'nothing' — the exact
+     * shape of the bug this whole file exists for, reached by pressing the
+     * button that was supposed to be the way out.
+     *
+     * THE PANE LIST IS SCRAPED FROM main.js rather than typed here, for the
+     * reason `OVERLAY_STATES` is read rather than restated in the clause above:
+     * the pane somebody adds tomorrow is the next one that can strand a player,
+     * and it has to be covered on the day it is added.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const panes = [...new Set([...main.matchAll(/screens\.card\(\s*'([a-z]+)'/g)].map((m) => m[1]))];
+    assert(panes.length >= 10,
+      `only ${panes.length} panes go up through screens.card() — this clause is reading the wrong file`);
+
+    /** A bench standing in the one world a board is allowed to be read in. */
+    const onStation = () => {
+      const b = bench();
+      /* The shipped predicate, on a world it vouches for: a station with
+       * nothing hostile in it. Nothing here is a copy of the rule. */
+      b.world._station = {}; b.world.partyTeam = 0; b.world.enemies = [];
+      b.s.io.calm = CALM;
+      enter(b, 'playing');
+      return b;
+    };
+
+    const closed = [], lids = [];
+    for (const name of panes) {
+      const b = onStation();
+      let up = false;
+      b.s.card(name, () => { up = false; });
+      b.s.take(name, () => { up = true; });
+      assert(up, `'${name}' never went up`);
+      const did = b.s.escape();
+      assert(did !== 'nothing', `Escape over the '${name}' pane did nothing at all`);
+      if (LID_STATES.includes(name)) {
+        /* A LID IS PAUSED OVER, NOT DISMISSED — the draft's boon is the reason,
+         * and the Holocron is raised mid-run on a battlefield like one. */
+        assert(did === 'paused' && b.s.state === 'paused' && b.menu.up.has('pause'),
+          `Escape over the '${name}' lid reported '${did}' and left state '${b.s.state}'`);
+        lids.push(name);
+        continue;
+      }
+      /* A BOARD IS CLOSED, and closing it gives the room back: the card is
+       * down through the hider the pane registered, the world is running, the
+       * blade is live and the frame loop is stepping again. */
+      assert(did === 'closed', `Escape over the '${name}' board reported '${did}'`);
+      assert(!up, `the '${name}' card is still on screen after Escape`);
+      assert(b.s.state === 'playing' && !b.s.overlay,
+        `closing '${name}' left state '${b.s.state}' with ${b.s.overlay ? 'an overlay' : 'no overlay'}`);
+      assert(!b.world.paused, `closing '${name}' left the world stopped`);
+      assert(b.input.enabled, `closing '${name}' left the blade taking no input`);
+      assert(b.s.hands('LIVE') === 'LIVE',
+        `the frame loop is still refusing to step the world after '${name}' was closed`);
+      closed.push(name);
+    }
+
+    /* ── AND THE PANE'S OWN BUTTON GOES THROUGH THE SAME DOOR ────────────
+     * Every one of them calls `screens.clear()`, which is what left the room
+     * frozen with nothing on screen. */
+    for (const name of closed) {
+      const b = onStation();
+      let up = false;
+      b.s.card(name, () => { up = false; });
+      b.s.take(name, () => { up = true; });
+      b.s.clear();
+      assert(!up && b.s.state === 'playing' && !b.world.paused && b.input.enabled
+        && b.s.hands('LIVE') === 'LIVE',
+        `the '${name}' pane's own button left state '${b.s.state}', paused=${b.world.paused}, `
+        + `input=${b.input.enabled}, and the frame loop stepping ${b.s.hands('LIVE') === 'LIVE' ? 'the world' : 'nothing'}`);
+    }
+
+    /* AND `set()` IS STILL A TRANSITION AND NOT A CLOSE: the state it is moving
+     * to is on the next line, and a hand-back on the way to the menu would
+     * enable input and ask for the pointer behind it. */
+    const m = onStation();
+    m.s.card('tote', () => {});
+    m.s.take('tote', () => {});
+    m.s.set('menu');
+    assert(m.s.state === 'menu' && m.s.hands('LIVE') === null,
+      `set('menu') over a board left state '${m.s.state}' stepping the world`);
+
+    return `${panes.length} panes: ${closed.length} boards closed by Escape and by their own button `
+      + `(${closed.join(', ')}), ${lids.length} paused over (${lids.join(', ')})`;
   });
 
   check('screens: the room keeps reacting while its own board is open', async () => {

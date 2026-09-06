@@ -821,6 +821,131 @@ export async function run({ check, assert, THREE }) {
 
   /* ══════════════════════════════════════════════════════════════════════ */
 
+  check('food: the bar panel counts the men the room actually builds', async () => {
+    /**
+     * ══ A PANEL AND A ROOM COUNTING SEPARATELY ═════════════════════════════
+     *
+     * *"you will actually see your real troops relaxing there."*
+     *
+     * THE DEFECT. `main.js`'s `showBar` prints `Bars.crowdOf`, and the bodies
+     * in the room are built by `StationLife.occupant`. Those were two answers
+     * to one question: `occupant` hands the Borz cast the FIRST slots of the
+     * place it lives in and returns BEFORE `Bars.barman` is asked, and #14
+     * Cantina "The Long Night" seats two of them — the Drazi barkeep and his
+     * acolyte — in slots 0 and 1, which are exactly the first two leave seats.
+     * `crowdOf` went nowhere near `occupant` and counted them anyway.
+     *
+     * MEASURED on a company of thirty, before the repair:
+     *
+     *     #14  21:00  granted 8 of yours, 26 heads — the pane said 8, the room built 6
+     *     #14  22:00  granted 8, 23 heads       — the pane said 8, the room built 6
+     *     #14  01:00  the pane named one man    — the room held nobody
+     *     #18 / #54 / #59                       — pane and room agreed exactly
+     *
+     * And it was not only a count: the two men the room dropped were the FIRST
+     * TWO OFF THE ROLL, so the panel named CT-1007 and CT-1014 at a table
+     * nobody was sitting at.
+     *
+     * WHAT IS ASSERTED. Not a number — that the two sides ASK THE SAME
+     * QUESTION. Both are walked here, seat by seat, by name, at every hour of
+     * the liberty window over eight days, with a company and without one; a
+     * repair that fixed the arithmetic and left the two lists naming different
+     * men would be red. `Bars.castHeld` is the one answer, read out of
+     * `StationCast.BORZ_BY_PLACE` — the same Map `occupant` reads to decide the
+     * branch it is compensating for — so a Borz seated in a bar tomorrow moves
+     * both sides at once.
+     */
+    const B = await import('../../src/game/Bars.js');
+    const L = await import('../../src/game/StationLife.js');
+    const { PLACE } = await import('../../src/game/StationPlan.js');
+    const { BORZ_BY_PLACE } = await import('../../src/game/StationCast.js');
+
+    const company = {
+      army: 'republic', ward: { tanks: [] },
+      men: Array.from({ length: 30 }, (_, i) => ({
+        designation: `CT-${1000 + i * 7}`, nickname: i % 3 ? null : 'Ladder', kind: 'flesh',
+        xp: 1, morale: 0.6,
+      })),
+    };
+
+    /* THE ROOM: every seat in it, through the one function that turns a slot
+     * into a body. A man it does not hand back is a man nobody will stand
+     * next to, whatever a panel says. */
+    const roomOf = (id, hour, day, co) => {
+      const p = PLACE.get(id);
+      const heads = L.headcount(p, hour);
+      const out = [];
+      for (let i = 0; i < heads; i++) {
+        const r = L.occupant(p, i, { hour, day, heads, company: co });
+        if (r && r.bar === id) out.push(r);
+      }
+      return { heads, out };
+    };
+    /** Who a list of records is, by name — the comparison that catches a count
+     *  that is right for the wrong men. */
+    const who = (list) => list.map((r) => r?.leave?.designation ?? r?.name).join(',');
+
+    let readings = 0, seats = 0, cast = 0, mismatch = null;
+    for (const co of [company, null]) {
+      for (let day = 0; day < 8; day++) {
+        for (const b of B.BARS) {
+          for (let hour = 0; hour < 24; hour++) {
+            const room = roomOf(b.id, hour, day, co);
+            const pane = B.crowdOf(b.id, hour, room.heads, { company: co, day });
+            readings++; seats += room.out.length;
+            if (who(pane.leave) !== who(room.out) && !mismatch) {
+              mismatch = `#${b.id} day ${day} at ${hour}:00 — the pane names ${pane.leave.length} `
+                + `[${who(pane.leave)}] and the room builds ${room.out.length} [${who(room.out)}]`;
+            }
+            /* AND `own` IS THE SAME NUMBER TOO: it is what the panel prints as
+             * "N of yours in here". */
+            const named = room.out.filter((r) => r.leave).length;
+            if (pane.own !== named && !mismatch) {
+              mismatch = `#${b.id} day ${day} at ${hour}:00 — the pane says ${pane.own} of yours `
+                + `and the room builds ${named}`;
+            }
+          }
+        }
+      }
+    }
+    assert(!mismatch, mismatch || '');
+    assert(seats > 400, `only ${seats} soldier-seats over ${readings} readings — the bars are shut`);
+
+    /* AND THE ROOM THE DEFECT WAS IN IS STILL THE ROOM WITH A CAST IN IT, so
+     * this clause cannot go green by the cast being deleted. */
+    for (const b of B.BARS) cast += (BORZ_BY_PLACE.get(b.id) || []).length;
+    assert(cast > 0,
+      'no bar in the gazetteer seats a named Borz any more — the overlap this clause is about '
+      + 'cannot happen, and the clause is no longer measuring anything');
+    const p14 = PLACE.get(14);
+    const held = (BORZ_BY_PLACE.get(14) || []).length;
+    assert(held > 0 && !L.occupant(p14, 0, { hour: 22, day: 0, heads: L.headcount(p14, 22), company }).bar,
+      "#14's first slot is a leave seat — the named cast no longer owns the low slots there");
+
+    /**
+     * ── AND THE PANEL READS THE ROLL THE ROOM IS SEATING ─────────────────
+     *
+     * The same defect from the other side: `showBar` walked `ARMY_IDS` and
+     * added up a `crowdOf` per army, and the room seats ONE company —
+     * `spawnResident` hands `occupant` whatever `StationBoards.companyOf`
+     * answers, which is the biggest roll. A player with two manifests read a
+     * panel that counted the same seats twice and named men with nobody in the
+     * room to be.
+     */
+    const main = strip(await src('main.js'));
+    const fn = /function showBar\([\s\S]*?\n}/.exec(main);
+    assert(fn, 'main.js has no showBar — the bar panel is gone');
+    assert(/companyOf\(/.test(fn[0]),
+      'the bar panel no longer asks companyOf — it is reading a roll the room may not be seating');
+    assert(!/ARMY_IDS/.test(fn[0]),
+      'the bar panel is adding a crowd per army again — the room seats one roll and this counts several');
+
+    return `${readings} readings over 8 days and 24 hours of ${B.BARS.length} bars, ${seats} soldier-seats, `
+      + `pane and room agree seat for seat and by name; ${cast} named cast in the bars, ${held} of them at #14`;
+  });
+
+  /* ══════════════════════════════════════════════════════════════════════ */
+
   check('food: the bars fill with soldiers at their own hour, through the pool that seats them', async () => {
     /**
      * *"one or two bars … a casino/nightclub with troops on leave."*

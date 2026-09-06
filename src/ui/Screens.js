@@ -268,9 +268,13 @@ export class Screens {
 
   /* ── plain transitions ─────────────────────────────────────────────── */
 
-  /** boot → menu → playing, and the abandon path back. Clears any overlay. */
+  /** boot → menu → playing, and the abandon path back. Clears any overlay.
+   *
+   * `handBack: false` because this is a TRANSITION and not a close: the state
+   * it is moving to is on the next line, and a `clear()` that handed the screen
+   * back would enable input and ask for the pointer on the way to the menu. */
   set(name) {
-    this.clear();
+    this.clear({ handBack: false });
     this.state = name;
   }
 
@@ -288,7 +292,8 @@ export class Screens {
    * here. It is not — `card(name, hide)` is the seam for that, and it is the
    * one the muster screen goes up through.
    */
-  clear() {
+  clear(opts = null) {
+    const was = this.overlay;
     const m = this.io.menu;
     /* …AND THE LOAD SCREEN, which is not an overlay and is still this class's
      * to take down — `main.js`'s `world.onGround` handler calls `clear()` the
@@ -298,6 +303,55 @@ export class Screens {
     m.hideDeploy?.();
     for (const hide of this.cards.values()) hide();
     this.overlay = null;
+    /**
+     * ══ AND TAKING A BOARD DOWN HANDS THE SCREEN BACK ══════════════════════
+     *
+     * THE DEFECT, AND IT IS THE FREEZE THIS FILE EXISTS FOR WEARING THE OTHER
+     * FACE. Every pane on the station closes itself with `screens.clear()` —
+     * the Leave button on the bar, the tote, the counter, the bench, fourteen
+     * of them. `clear()` hid the card and forgot the overlay AND LEFT THE
+     * STATE WHERE IT WAS, so the game sat in state 'bar' with nothing on
+     * screen: `hands()` answers null with no overlay, so `world.update` was
+     * never called again — the room stopped dead — and `input.enabled` stayed
+     * false, so nothing the player pressed moved anything. Escape then asked
+     * `pause()`, which is gated on `LIVE`, and 'bar' is not in it: 'nothing'.
+     * A frozen room, a dead key, and the pane's own button is what did it.
+     *
+     * So a `clear()` that took a BOARD down puts the player back on their feet
+     * in the room, which is the only thing "close this pane" can mean. Named
+     * lids are left alone: `set()` and the teardown paths are transitions to a
+     * state on the next line, and `closeMeditation` and `closeKiosk` have their
+     * own doors that end in `resume()`.
+     */
+    if (opts?.handBack !== false && was && this.state === was.state
+      && !LID_STATES.includes(was.state)) this._handBack();
+  }
+
+  /**
+   * ══ ONE KEY CLOSES WHAT IS OPEN ═══════════════════════════════════════════
+   *
+   * Take the board down and give the room back — the door `escape()` uses over
+   * a board and `clear()` uses when a pane's own button takes it down. It is
+   * `resume()`'s playing branch without the pause in front of it: the card is
+   * hidden through the hider the pane registered with `card()` (so its timers
+   * are cancelled and its model is nulled), the overlay is forgotten, the world
+   * runs, input is live and the pointer is asked for.
+   */
+  close() {
+    if (!this.overlay) return false;
+    this._hide(this.overlay.state);
+    this.overlay = null;
+    this._handBack();
+    return true;
+  }
+
+  /** The screen, back in the player's hands. `resume()`'s playing branch. */
+  _handBack() {
+    this.state = 'playing';
+    const w = this.io.world();
+    if (w) w.paused = false;
+    this.io.input.enabled = true;
+    this.io.input.requestLock?.();
   }
 
   /**
@@ -633,7 +687,31 @@ export class Screens {
       this.overlay.show();
       return 'death card';
     }
-    return this.pause() ? 'paused' : 'nothing';
+    /**
+     * ══ A BOARD IS CLOSED; A LID IS PAUSED OVER ═══════════════════════════
+     *
+     * THE DEFECT. `pause()` is gated on `LIVE`, and of the fourteen panes
+     * `main.js` registers through `card()` only two — the kiosk and the
+     * Holocron — are in that list. Over the other twelve (the tote, the pit,
+     * the casino, the bar, the food counter, the medbay desk, the liberty
+     * board, the larder, the holodeck, the bench, the work board and the
+     * habitat page) Escape answered 'nothing': rule 1 at the top of this file
+     * did not hold over most of the screens in the game.
+     *
+     * AND THE ANSWER IS NOT TO PUT THEM ALL IN `LIVE`. A lid is something that
+     * took the game away and the pause card is the way out of it — rule 2, the
+     * boon the wave paid for, is why Escape over a draft pauses rather than
+     * dismisses. A board is a thing in the room you walked up to and opened,
+     * with the room still running behind it; what Escape means over one is
+     * "shut it", and pausing to shut a bar menu would be the key doing two
+     * things at once. So the same `lid` rule that decides whether the world
+     * stops decides what the key does, and there is one list, not two.
+     */
+    if (this.overlay && !LID_STATES.includes(this.state)) return this.close() ? 'closed' : 'nothing';
+    if (this.pause()) return 'paused';
+    /* A LID `pause()` REFUSED — no world, or a state it does not know. The card
+     * is still the way out, so it comes down rather than the key going dead. */
+    return this.close() ? 'closed' : 'nothing';
   }
 
   /** The card for a state, hidden. */
