@@ -64,6 +64,7 @@ import { Prop, mergeGeos, slabGeo, cylGeo } from '../world/Props.js';
 import { homeState, setHomeState } from './StationSave.js';
 import { signPanel } from './StationKit.js';
 import { floorOf } from './StationPlan.js';
+import { atBed, beginSleep } from './Sleep.js';
 import * as Food from './Food.js';
 /**
  * ── AND THE ONE SMALL COMPANION — V15 §1.3's last clause ──────────────────
@@ -2808,6 +2809,8 @@ export function homeKey(world, opts = {}) {
     return true;
   }
   if (!inHome(world) && !opts.at) return false;
+  /* THE BUNK — V18 cool 11. Ahead of the mirror: you stand at it too. */
+  if (atBed(world)) return beginSleep(world);
 
   /* THE MIRROR FIRST, because you have to stand at it and standing at it is
    * unambiguous. `onKiosk` is `main.js`'s door onto the menu's panels and it
