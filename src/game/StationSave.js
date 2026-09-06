@@ -180,6 +180,20 @@ function blank() {
      * `station` and nothing here goes near `recordRun`.
      */
     flight: null,
+    /**
+     * V18 cool 14: WHICH FUNERALS HAVE BEEN HELD. `Vigil.js` compares the
+     * company's own casualty list against this on every 20:00 vigil; a dead
+     * man not on it is buried at the next one, then written here with the
+     * bunk that was stripped for him — so the funeral runs once, on any deck
+     * visit, however many times the world is rebuilt.
+     */
+    funerals: [],
+    /**
+     * V18 cool 5: TODAY'S PICKPOCKET, `{ day, taken, caught, gone }`. One
+     * strike a day is the rule and a lift ride rebuilds `StationLife`, so the
+     * day is kept where the day itself is kept. Null until he has struck.
+     */
+    pick: null,
   };
 }
 
@@ -195,6 +209,7 @@ function read() {
   _cache = { ...blank(), ...(v && typeof v === 'object' ? v : {}) };
   if (typeof _cache.name !== 'string' || !_cache.name.trim()) _cache.name = DEFAULT_NAME;
   if (!Array.isArray(_cache.seen)) _cache.seen = [];
+  if (!Array.isArray(_cache.funerals)) _cache.funerals = [];
   return _cache;
 }
 
@@ -374,6 +389,22 @@ export function flightState() { return read().flight; }
 export function regularsState() { const r = read().regulars; return r && typeof r === 'object' ? r : {}; }
 export function setRegularsState(v) { const s = read(); s.regulars = v && typeof v === 'object' ? v : {}; return write(s).regulars; }
 export function setFlightState(v) { const s = read(); s.flight = v; return write(s).flight; }
+
+/** The funerals held: `[{ designation, bunk, day }]` — see `Vigil.js`. */
+export function funeralsDone() { return read().funerals; }
+export function markFuneral(designation, bunk, day = 0) {
+  const s = read();
+  if (typeof designation !== 'string' || !designation) return s.funerals;
+  if (!s.funerals.some((f) => f?.designation === designation)) {
+    s.funerals.push({ designation, bunk: bunk | 0, day: day | 0 });
+    write(s);
+  }
+  return s.funerals;
+}
+
+/** Today's pickpocket record, or null — see `Pickpocket.js` for its shape. */
+export function pickpocketState() { const p = read().pick; return p && typeof p === 'object' ? p : null; }
+export function setPickpocketState(v) { const s = read(); s.pick = v; return write(s).pick; }
 
 /** Start again. Only a check calls this. */
 export function clearStation() { store.drop(); _cache = null; return read(); }

@@ -82,6 +82,7 @@ import { VENUES, programmeAt } from './Tote.js';
 import { PITS, venueOpen } from './Pits.js';
 import { resident } from './StationCast.js';
 import { companyOf } from './StationBoards.js';
+import { bountyFor } from './Pickpocket.js';
 
 /** The canvas a notice is drawn on. A slab is 0.5 m x 0.36 m — 1.39:1. */
 export const NOTICE_PX = 320;
@@ -174,6 +175,9 @@ const DOORS = PLACES.filter((p) => p.deck === 44 && p.id !== 27 && !p.stop
  */
 export function sourcesFor(day = 0) {
   const s = { day: day | 0, address: '', lost: [], owed: [], work: [], card: [], shelf: [], found: [], roll: null };
+  /* V18 cool 5: TODAY'S PICKPOCKET AND HIS PRICE. `Pickpocket.bountyFor` is
+   * the row the ring reads too, so the man named here is the man who runs. */
+  try { s.bounty = bountyFor(day); } catch { s.bounty = null; }
   /* THE ADDRESS OF THE DOOR YOU ACTUALLY LIVE BEHIND. `loadHome().place` is
    * what Lane F reassigns; `homeAddress` derives the string from the gazetteer
    * row, so this is the same call `Home.dressHome` makes for the door plaque
@@ -302,6 +306,17 @@ export const WRITERS = [
     id: 'lost', pin: 80, take: 2,
     write: (s) => s.lost.map((l) => ['LOST', l.name, l.where || 'LEFT BEHIND', 'ANY WORD?']),
     say: (r) => `${r[1]} is still up on the wall — last seen ${String(r[2]).toLowerCase()}`,
+  },
+  {
+    /* THE BOUNTY BOARD (V18 cool 5). One row, above the jobs: who today's
+     * pickpocket is and what #25 pays for him — paid by `Pickpocket.
+     * catchPickpocket` when you take him on the ring. */
+    id: 'bounty', pin: 70, take: 1,
+    write: (s) => (s.bounty
+      ? [['BOUNTY', s.bounty.name, `${s.bounty.pay} CR`, s.bounty.caught ? 'TAKEN' : s.bounty.gone ? 'AT LARGE' : 'PICKPOCKET']] : []),
+    say: (r) => (r[3] === 'TAKEN'
+      ? `${r[1]}'s bounty is paid — ${String(r[2]).toLowerCase()}, yours`
+      : `${r[1]} is the pickpocket on the ring — ${String(r[2]).toLowerCase()} to whoever takes him`),
   },
   {
     id: 'wanted', pin: 60, take: 4,

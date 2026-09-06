@@ -54,6 +54,7 @@ import { dressDeckLift, stepDeckLift, undressDeckLift, liftKey, liftFloors } fro
 import { dressStationLife, primeStationLife, stepStationLife, undressStationLife, dressTram,
   STOPS, headcount, servedHere } from './StationLife.js';
 import { dressObelisk, dressBoards, stepBoards, standingReading, companyOf } from './StationBoards.js';
+import { catchPickpocket } from './Pickpocket.js';
 /* What a man on the roll is CALLED — one rule, `Company.js`'s own, so the job
  * board names him exactly as the company tab does. See `questContext`. */
 import { nameOf } from './Company.js';
@@ -2610,6 +2611,9 @@ function noticeFor(day, seed) {
  */
 export function talkTo(world, body) {
   if (!body?.stationName) return false;
+  /* The pickpocket caught first (V18 cool 5), then the regulars' ledger and
+   * the follower's dismissal (cool 10, 13). */
+  if (catchPickpocket(world, body)) return true;
   if (talkHook(world, body)) return true;
   const day = stationDay();
   const who = whoOfBody(body);
