@@ -104,6 +104,8 @@ import { sample as orbitSample, sightLine, CIRCUIT_LENGTH } from './Outside.js';
 import { CircuitPilot, PlayerPilot, TOP_SPEED } from './Pilot.js';
 import { dressCobraBay, drawCobraBay, undressCobraBay } from './CobraBay.js';
 import { GANTRY_Y, stepCook, dressFeeds, stepFeeds, CookSet } from './StationKit.js';
+import { disposeLiveFeeds } from './RaceFeed.js';
+import { dressTV, stepTV } from './Holonet.js';
 import * as Food from './Food.js';
 import { shelfFor } from './Counter.js';
 import { flightState, setFlightState } from './StationSave.js';
@@ -1457,6 +1459,7 @@ export function dressStation(world) {
    * `stepFeeds` below cuts it to the moments the sim is emitting. No-op on
    * every deck the three rooms are not on. */
   dressFeeds(world, st);
+  dressTV(world, st);
   /* ── AND THE PEOPLE BEHIND THE COUNTERS (V16 Lane B) ───────────────────
    *
    * AFTER `dressStationLife`, so the pool has already claimed its budget and
@@ -1609,6 +1612,7 @@ export function orderJump(world, to) {
 
 /** Everything the station made, put down. `StationDirector.dispose` calls it. */
 export function undressStation(world) {
+  disposeLiveFeeds(world?._station);
   const st = world._station;
   if (!st) return;
   /* Anything still queued is not going to be built now — see `pending`. A job
@@ -4843,6 +4847,8 @@ export function stepStation(world, dt) {
   stepCook(world, dt);
   stepAmbientCook(world, st, dt);
   setDeckBed(world, st);
+  /* THE HOLONET, on every screen a room declared — see `Holonet.js`. */
+  stepTV(world, st, dt);
   /* THE SORTIE, on the same terms and for the same reason (§7). A no-op until
    * somebody launches, which is one property read a frame. */
   if (world._sortie || world._flying) stepSortie(world, st, dt);

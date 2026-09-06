@@ -70,6 +70,7 @@ const DRUM_SEGMENTS = GAMES_DRUM.SEGMENTS.length;
  */
 import { venueAtPlace, watch as toteWatch, resultOf } from './Tote.js';
 import { screenOf, SCREEN_ROWS, SCREEN_COLS } from './Spectacle.js';
+import { stepLiveFeeds } from './RaceFeed.js';
 /* #44's row of tanks, from the file that decides who stands in them — see
  * `tankrow`. The count and the geometry travel together. */
 import { TANKS, tankLocal } from './Medbay.js';
@@ -80,6 +81,19 @@ const TAU = Math.PI * 2;
 /*  THE PARTS                                                                 */
 /* ══════════════════════════════════════════════════════════════════════════ */
 
+
+/**
+ * A HOLONET SCREEN on a wall (V18): a bezel in the kit, and a row on
+ * `ctx.tvs` that `Holonet.dressTV` puts the picture on. `x, y, z` is the
+ * screen's centre in the room's frame; `ry` turns it to face the room (0
+ * faces −Z, π faces +Z).
+ */
+function tvScreen(kit, M, ctx, x, y, z, ry, w = 2.4, h = 1.35) {
+  const c = Math.cos(ry), sn = Math.sin(ry);
+  /* the bezel sits 6 cm behind the picture, into the wall */
+  kit.slab(M.dark, w + 0.24, h + 0.24, 0.1, x - sn * 0.06, y, z - c * 0.06, { collide: false, bevel: 0.02, ry });
+  (ctx.tvs || (ctx.tvs = [])).push({ at: { x, y, z: z + c * 0.0, ry }, w, h });
+}
 /** A floor plate. Every place has one; what differs is what stands on it. */
 function floor(kit, M, w, d, y = 0, mat = null) {
   kit.slab(mat || M.deep, w, 0.4, d, 0, y - 0.2, 0, { collide: true, bevel: 0 });
@@ -1304,6 +1318,9 @@ export const SHAPES = {
     /* Steps down, the full width, so the drop reads as an invitation. */
     for (let i = 0; i < 8; i++) kit.slab(M.dark, w - 3, 0.28, 0.6, 0, -i * 0.275, -d / 2 + 4 + i * 0.6, { collide: true, bevel: 0 });
     walls(kit, M, w, d, h, { doorW: w - 4 });
+    /* Over the bar, both faces of the back-bar column would be better; one
+     * on the back wall does for the booths. */
+    tvScreen(kit, M, ctx, -w / 4, 2.6, d / 2 - 0.12, Math.PI, 2.6, 1.45);
     ceiling(kit, M, w, d, h, { ribs: 5, strips: false });
     /* The bar: a ring in the round with a back-bar column inside it. */
     const br = 3.6;
@@ -1328,10 +1345,11 @@ export const SHAPES = {
 
   /** #15 The Fresh Air: a TERRACE. No fourth wall — the room ends in a rail
    * over the atrium. White cloth on tables, planters, the kitchen pass. */
-  terrace(kit, M, p) {
+  terrace(kit, M, p, ctx) {
     const { w, d, h } = p;
     floor(kit, M, w, d);
     walls(kit, M, w, d, h, { open: ['front'] });
+    tvScreen(kit, M, ctx, -w / 2 + 0.12, 2.4, 0, Math.PI / 2, 2.4, 1.35);
     ceiling(kit, M, w, d, h, { ribs: 4 });
     /* The rail over the void, and the planters along it. */
     kit.slab(M.wing, w, 0.1, 0.14, 0, 1.02, -d / 2, { collide: true, bevel: 0 });
@@ -1397,12 +1415,13 @@ export const SHAPES = {
    * Local −Z is the void side (the door and the balcony beyond it) and +Z is
    * the back — `terrace` one room over on the same band sets that convention.
    */
-  balconysalon(kit, M, p) {
+  balconysalon(kit, M, p, ctx) {
     const { w, d, h } = p;
     /* CARPET. The floor slab itself, in the matte material — you can see it
      * from the portal before you see anything on it. */
     floor(kit, M, w, d, 0, M.mark);
     walls(kit, M, w, d, h, { open: ['front'] });
+    tvScreen(kit, M, ctx, w / 2 - 0.12, 2.3, 0, -Math.PI / 2, 2.4, 1.35);
     /* NO LIT SOFFIT RUN. See the note: the lamps below are the whole light. */
     ceiling(kit, M, w, d, h, { ribs: 5, strips: false });
 
@@ -1521,10 +1540,11 @@ export const SHAPES = {
 
   /** #17 Food court: LOW COUNTERS in a row. The lowest ceiling on the deck,
    * one long line of vendor fronts, stools facing them, steam and neon. */
-  lowcounters(kit, M, p) {
+  lowcounters(kit, M, p, ctx) {
     const { w, d, h } = p;
     floor(kit, M, w, d);
     walls(kit, M, w, d, h, { doorW: w - 3 });
+    tvScreen(kit, M, ctx, w / 2 - 0.12, h - 1.2, -d / 4, -Math.PI / 2, 2.2, 1.25);
     ceiling(kit, M, w, d, h, { ribs: 8, strips: false });
     for (let i = 0; i < 3; i++) {
       const x = (i - 1) * (w / 3);
@@ -2000,6 +2020,8 @@ export const SHAPES = {
     kit.dressKeep = [{ x: -1.6, z: 0.6, w: w - 3.2, d: 0.3 }];
     floor(kit, M, w, d, 0, M.dark);
     walls(kit, M, w, d, h, { open: ['back'], glaze: true, doorW: 2.2 });
+    /* The cabin's own screen, over the desk, on the −X wall. */
+    tvScreen(kit, M, ctx, -w / 2 + 0.12, 1.9, -1.4, Math.PI / 2, 2.0, 1.15);
     ceiling(kit, M, w, d, h, { ribs: 3 });
     /* The partition, with a way through at one end. */
     kit.slab(M.hull, w - 3.2, h, 0.3, -1.6, h / 2, 0.6, { collide: true, bevel: 0 });
@@ -2305,10 +2327,11 @@ export const SHAPES = {
 
   /** #38 Transient hostel: a CAPSULE WALL. Both long walls are a honeycomb
    * of bunk capsules three high; a desk at the door; a passage between. */
-  capsulewall(kit, M, p) {
+  capsulewall(kit, M, p, ctx) {
     const { w, d, h } = p;
     floor(kit, M, w, d);
     walls(kit, M, w, d, h, { doorW: 2.4 });
+    tvScreen(kit, M, ctx, 0, 2.4, d / 2 - 0.12, Math.PI, 2.2, 1.25);
     ceiling(kit, M, w, d, h, { ribs: 6 });
     for (const s of [-1, 1]) {
       for (let i = 0; i < 5; i++) {
@@ -2629,10 +2652,12 @@ export const SHAPES = {
 
   /** #43 Medbay: a TRIAGE HALL. Six curtained bays down one side, the surgery
    * behind glass at the end, and a crash-cart lane clear down the middle. */
-  triagehall(kit, M, p) {
+  triagehall(kit, M, p, ctx) {
     const { w, d, h } = p;
     floor(kit, M, w, d, 0, M.wing);
     walls(kit, M, w, d, h, { doorW: 4.4 });
+    /* The waiting bays watch the holonet — every hospital does. */
+    tvScreen(kit, M, ctx, -w / 2 + 0.12, 2.3, -d / 4, Math.PI / 2, 2.0, 1.15);
     ceiling(kit, M, w, d, h, { ribs: 7 });
     for (let i = 0; i < 6; i++) {
       const x = -w / 2 + (w / 6) * (i + 0.5);
@@ -3278,6 +3303,9 @@ export function buildPlace(world, group, place, M, st) {
       ...ctx.feed, id: place.id, venue: venueAtPlace(place.id).id, group,
       x: place.x, y, z: place.z, yaw: place.yaw, panel: null, key: null, cut: null, gate: 0, draws: 0,
     });
+  }
+  if (ctx.tvs) for (const tv of ctx.tvs) {
+    (st.tvs || (st.tvs = [])).push({ ...tv, id: `${place.id}-${(st.tvs || []).length}`, place: place.id, group, x: place.x, y, z: place.z, yaw: place.yaw, mesh: null });
   }
   if (ctx.trees.length) (st.trees ||= []).push({ place, spec: ctx.trees[0] });
   return { draws: out.meshes.length, triangles: out.triangles, boxes: out.boxes?.length || 0 };
@@ -4809,6 +4837,9 @@ export function dressFeeds(world, st) {
 export function stepFeeds(world, st, dt) {
   const list = st?.feeds;
   if (!list || !list.length || !(dt > 0)) return 0;
+  /* THE CAMERA, every frame — see `RaceFeed.js`. The painter below is the
+   * feed's own tick and what the camera reads its rows from. */
+  stepLiveFeeds(world, st, dt);
   st.feedIn = (st.feedIn || 0) - dt;
   if (st.feedIn > 0) return 0;
   st.feedIn = FEED_EVERY;
@@ -4826,6 +4857,7 @@ export function stepFeeds(world, st, dt) {
     f.phase = shot.phase;
     f.rows = shot.rows;
     f.shot = shot;
+    f.reading = reading;
     if (shot.key === f.key) continue;
     f.key = shot.key;
     f.draws++;

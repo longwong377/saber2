@@ -39,6 +39,67 @@ Playable two ways:
 
 ---
 
+## 0. V18 — THE PLAYER'S THIRTY, AND TWO NEW SCREENS
+
+The player, mid-session: *"in addition to the pod racing there should be
+galactic television of some kind with 24/7 tv (also procedural, never the
+same). Maybe in the apartment and other places in the station"*; and *"I want
+to see feeds of the actual pod racing live feed not just the representations
+… the feed can be not perfect since it's broadcasting all the way from
+Tatooine"*; and, to a list I gave him of twenty things that would be cool and
+ten holes: *"I agree with all 30 things; add it the list and get them done to
+perfection."* So this is the V18 list, verbatim from that exchange, with the
+state of each as it stands:
+
+**The two screens (built this session):**
+- `src/game/RaceFeed.js` — the LIVE FEED: a private scene per race (a course
+  off the race's seed: sand, canyon walls, spires, gate pylons, a start arch),
+  a pod per entrant in its own colour, the sim's runner rows driven onto the
+  course, a director cutting between a chase, a trackside camera at the gate
+  a moment happened at and a high wide at the start, rendered to a texture at
+  24 fps while a race runs and the player is within 45 m, shown through a
+  long-haul shader (scanlines, chroma bleed, tears, static). Headless it is
+  never built; the 2-D painter is the feed there.
+- `src/game/Holonet.js` — GALACTIC TELEVISION: a channel scheduled off the
+  day, programmes off the station's own facts (the theatre outside, the last
+  race, today's shelves, two residents' lines, the hour), cutting every nine
+  seconds, painted at 6 fps within 30 m, on screens in the cabin, the
+  cantina, the food court, the hostel, the Fresh Air and the Ascendant.
+
+**Twenty things that would be cool** — none built yet unless marked:
+1. A holonet anchor with a face you recognise, gossiping about what you did.
+2. A market day: the concourse doubles its stalls, the tram runs full.
+3. A blackout: a reactor surge drops a deck's lights for thirty seconds and the guards come out with lamps.
+4. A shuttle at the docking throat that takes you to the flight deck the long way, outside.
+5. A pickpocket to chase across the concourse, and a bounty board that pays for him.
+6. Rain in the arboretum on a schedule, with residents going to stand in it.
+7. Your company's names on the memorial wall read aloud at the chapel vigil.
+8. A morning: shutters going up, the ranges lit one by one, the first tram.
+9. Drazi-quarter fights that spill onto the ring and get broken up.
+10. Regulars: people you talk to three times remember you and greet you first.
+11. Sleeping in the cabin plays the night as a time-lapse through the window.
+12. A window seat in the dome: sitting swaps to a cinematic camera of the battle.
+13. A resident who follows you asking about your saber, and can be told to go away.
+14. A funeral you can attend, with the man's bunk stripped after.
+15. A late-night channel: the Drum spin live on every screen with the hour.
+16. Weather on the planet below, visible from the dome, changing the news.
+17. A tram interior you can sit in, with residents across from you.
+18. Companions greeting each other; two massiffs meeting on the concourse.
+19. The Mandalorian tests your saber against a remote in the Forge.
+20. Curved ring rooms that follow the drum, with windows onto the promenade glass.
+
+**Ten holes:**
+1. Nobody has measured a frame on a real GPU.
+2. Rooms are rectangles inboard of a curved ring.
+3. No windows between rooms (rule 5 is a wall with a door).
+4. Residents do not sit, eat, drink or hold anything.
+5. The medbay has no visible healing beyond occupied tanks.
+6. Co-op on the station is apartments only; population and clock unproven with a guest.
+7. Sound is levels, not beds; the PA has three lines.
+8. Human, Brakiri, Llort and Other share one face; the Vree wears the Kel Dor mask.
+9. Every screen but the feeds was static text — the holonet is the answer, and it is new.
+10. The reading room prints form odds for every runner.
+
 ## 0. V17b — THE REVIEW OF EVERYTHING POST-SHARK, AND THE ONE THING IT FOUND
 
 Branch `claude/saber-game-review-f23c9s`, 6 Sep, cut off the default at
