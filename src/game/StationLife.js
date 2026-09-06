@@ -2393,7 +2393,9 @@ function spawnResident(world, st, place, i) {
   if (place.id === 36) r = resident(`p36s${i}`, { species: METHANE[i % 2] });
   const type = archetypeOf(r);
   slotIn(place, i, _v);
-  _v.y = floorOf(place) + 0.1;
+  /* On the FLOOR THAT IS THERE: a sunken room's well is below the deck, and
+   * a body spawned at the deck's height stood on air over it (V18). */
+  _v.y = (world.floorAt ? world.floorAt(_v.x, _v.z) : floorOf(place)) + 0.1;
   let body = null;
   try {
     body = world.spawnEnemy(type, _v.clone(), {

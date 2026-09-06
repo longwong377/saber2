@@ -1504,6 +1504,85 @@ export async function run({ check, assert, THREE }) {
     assert(bad.length === 0, `${bad.length} rooms block their own doorway:\n      ${bad.join('\n      ')}`);
   });
 
+  check('station: a sunken well is open — nothing solid over it, and a floor under it', async () => {
+    /**
+     * ══ THE BASEMENTS — V18 ═══════════════════════════════════════════════
+     *
+     * Every sinking builder laid a whole floor slab across its room and
+     * built the well UNDER it, and `buildDeckPlate` roofed the well a second
+     * time. The cantina's booths, chairs and dais, the arena's tiers and the
+     * Drazi pit were sealed basements; `floorAt` said −2.2 in the cantina
+     * while every body in it stood at 0 on the slab, which is how the seated
+     * suite came to right chairs "on the floor" a deck above the floor.
+     *
+     * So, on each drum deck, every well of `StationKit.SUNK` is sampled on
+     * a metre grid: the highest solid under a point inside the well must be
+     * at the well's depth (a step, a tier or a fixture standing in it is
+     * allowed, the floor at deck height is not), a point on the apron must
+     * find the deck, and no point may find nothing at all. Read off the
+     * physics' static boxes with their rotation, which is what a capsule
+     * lands on.
+     */
+    const { placesOn } = await import('../../src/game/StationPlan.js');
+    const { sunkOf } = await import('../../src/game/StationKit.js');
+    const v = new THREE.Vector3();
+    const report = [];
+    for (const deck of [40, 44, 48]) {
+      const { world, idle } = await station(deck);
+      try {
+        const { run: step } = await import('./_coop.mjs');
+        step(world, 1, idle);
+        const boxes = world.physics.staticBoxes;
+        const Y0 = world._station.deckY;
+        const topAt = (x, z) => {
+          let best = -Infinity;
+          for (const b of boxes) {
+            if (b.disabled) continue;
+            v.set(x - b.center.x, 0, z - b.center.z);
+            if (b.invQuat) v.applyQuaternion(b.invQuat);
+            if (Math.abs(v.x) > b.halfExtents.x || Math.abs(v.z) > b.halfExtents.z) continue;
+            const top = b.center.y + b.halfExtents.y;
+            if (top <= Y0 + 1.0 && top > best) best = top;
+          }
+          return best - Y0;
+        };
+        for (const p of placesOn(deck)) {
+          const S = sunkOf(p);
+          if (!S || !p.w || !p.d) continue;
+          const c = Math.cos(p.yaw), sn = Math.sin(p.yaw);
+          let roofed = 0, missing = 0, apronBad = 0, n = 0, wellN = 0;
+          for (let lz = -p.d / 2 + 0.5; lz <= p.d / 2 - 0.5; lz += 1.0) {
+            for (let lx = -p.w / 2 + 0.5; lx <= p.w / 2 - 0.5; lx += 1.0) {
+              const x = p.x + lx * c + lz * sn, z = p.z - lx * sn + lz * c;
+              const t = topAt(x, z);
+              /* three bands: the well (0.6 m in from its edge), the apron
+               * (0.6 m out from it), and the kerb between, which is nobody's */
+              const rho = Math.hypot(lx, lz);
+              const inWell = S.round ? rho < S.w / 2 - 0.6 : (Math.abs(lx) < S.w / 2 - 0.6 && Math.abs(lz) < S.d / 2 - 0.6);
+              const onApron = S.round ? rho > S.w / 2 + 0.6 : (Math.abs(lx) > S.w / 2 + 0.6 || Math.abs(lz) > S.d / 2 + 0.6);
+              n++;
+              if (t === -Infinity) { missing++; continue; }
+              if (inWell) { wellN++; if (t > -0.35) roofed++; }
+              else if (onApron && t < -0.35) apronBad++;
+            }
+          }
+          /* Fixtures stand in wells — the cantina's back-bar column, its top
+           * step, the compactor's face, the Drazi ramp — so a few roofed
+           * samples are a fixture; a well that is a third roofed is a slab. */
+          assert(missing === 0, `#${p.id} ${p.name} on deck ${deck}: ${missing} of ${n} samples find nothing solid at all — a hole to the void`);
+          assert(roofed < wellN * 0.2, `#${p.id} ${p.name} on deck ${deck}: ${roofed} of ${wellN} well samples find a floor at deck height — the well is roofed`);
+          assert(apronBad === 0, `#${p.id} ${p.name} on deck ${deck}: ${apronBad} apron samples find no floor at deck height`);
+          /* And `floorAt` agrees at the well's centre. */
+          const fa = world.floorAt(p.x, p.z) - Y0;
+          assert(Math.abs(fa + S.depth) < 0.05, `#${p.id}: floorAt says ${fa.toFixed(2)} at the well's centre, the well is ${S.depth} deep`);
+          report.push(`#${p.id} ${S.depth} m (${roofed} fixtures of ${wellN})`);
+        }
+      } finally { world.dispose?.(); }
+    }
+    assert(report.length >= 5, `only ${report.length} wells sampled`);
+    return report.join(', ');
+  });
+
   check('station: no room stands where the arrivals lift lobby is', async () => {
     /**
      * `buildLobbies` puts a 16 m recess wall and two jambs at every shaft on
@@ -3319,7 +3398,9 @@ export async function run({ check, assert, THREE }) {
         }
         const loose = [];
         for (let i = 0; i < grid.length; i++) {
-          for (let j = 0; j < grid[i].length; j++) if (seen.has(key(i, j)) && grid[i][j].drop >= 0.6) loose.push(grid[i][j]);
+          /* A drop with a FLOOR under it is a pit — #61's service cut is 2.5 m
+           * deep with steps (V18) — and the void is 12.5 m and 25 m. */
+          for (let j = 0; j < grid[i].length; j++) if (seen.has(key(i, j)) && grid[i][j].drop >= 3.0) loose.push(grid[i][j]);
         }
         let worst = 0, at = null;
         for (const v of loose) {

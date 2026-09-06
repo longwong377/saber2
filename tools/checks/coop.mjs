@@ -3455,6 +3455,38 @@ export async function run({ check, assert }) {
       + 'companion fence; World writes netMode in exactly one place';
   });
 
+  check('co-op: on the Living deck, host and guest stand on the same plate with the same people', async () => {
+    /**
+     * V18 hole 6: *"co-op on the station is apartments only; population and
+     * clock unproven with a guest."* The check above proves the clock and the
+     * count on deck 40; this is the same proof on deck 44, and one more thing
+     * neither could see: the HEIGHT. The station's ground sheet was at 0 on
+     * every deck, so on 44 (plate at 12.5) host and guest both stood twelve
+     * metres under the deck (V18) — the count agreed, the clock agreed, and
+     * both were walking under the floor. `floorAt` is the deck's answer.
+     */
+    const { DECK_Y } = await import('../../src/game/StationPlan.js');
+    const s = await coopStation(2, 44);
+    try {
+      const H = s.host.world, C = s.clients[0].world;
+      const alive = (w) => (w.enemies || []).filter((e) => e && !e.dead);
+      assert(H._station?.deck === 44 && C._station?.deck === 44, 'one of the two machines is not on deck 44');
+      s.pump(6);
+      assert(Math.abs(H._station.hour - C._station.hour) < 0.002, 'the two clocks disagree on deck 44');
+      const nh = alive(H).length, nc = alive(C).length;
+      assert(nh > 15 && nh === nc, `the host's deck 44 holds ${nh} people and the guest's ${nc}`);
+      const y = DECK_Y[44];
+      for (const [who, w] of [['host', H], ['guest', C]]) {
+        const py = w.player.position.y;
+        assert(Math.abs(py - y) < 0.6, `the ${who} stands at y ${py.toFixed(2)} on a deck whose plate is at ${y}`);
+        const off = alive(w).filter((e) => !e.netDriven && Math.abs(e.position.y - w.floorAt(e.position.x, e.position.z)) > 0.6);
+        assert(off.length === 0, `${off.length} of the ${who}'s residents stand off the floor (first at y ${off[0]?.position.y.toFixed(2)})`);
+        assert(Math.abs(w.terrain.height(0, 60) - y) < 0.2, `the ${who}'s ground sheet reads ${w.terrain.height(0, 60).toFixed(2)} under a plate at ${y}`);
+      }
+      return `deck 44: ${nh} people on both, both players at ${y}, the ground sheet at ${H.terrain.height(0, 60).toFixed(2)}`;
+    } finally { s.close(); }
+  });
+
   check('co-op: a guest\'s station runs, and holds each resident once', async () => {
     /**
      * ══ WHAT A JOINING PLAYER GOT, MEASURED ═══════════════════════════════

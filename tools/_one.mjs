@@ -49,13 +49,19 @@ if ((await import('three')) !== THREE) {
 }
 
 const name = process.argv[2];
+/* An optional substring: `node … tools/_one.mjs coop "Living deck"` runs only
+ * the checks whose label contains it — the other twenty-six are skipped, and
+ * a skip is reported as such rather than counted. */
+const only = process.argv[3] || null;
 const mod = await import(`./checks/${name.replace(/\.mjs$/, '')}.mjs`);
 let pass = 0, fail = 0;
 const pending = [];
 const lines = [];
 const ok = (label, d) => { pass++; lines.push(`✓ ${label} — ${d ?? ''}`); };
 const bad = (label, e) => { fail++; lines.push(`✗ ${label}\n    ${e && e.message ? e.message : String(e)}`); };
+let skipped = 0;
 const check = (label, fn) => {
+  if (only && !label.includes(only)) { skipped++; return; }
   try {
     const d = fn();
     // The promise goes on the list, not back to a caller that drops it.
@@ -71,6 +77,7 @@ const lerpN = (a, b, t) => a + (b - a) * t;
 await mod.run({ check, assert, near, V, Q, THREE, lerpN });
 await Promise.all(pending);
 for (const l of lines) console.log(l);
+if (skipped) console.log(`(${skipped} checks skipped by the filter "${only}")`);
 /* A suite that ran nothing is a FAILURE, not a pass. This is the shape of the
  * defect above: a file with a typo in its name, or one whose checks all live
  * behind an import that threw, used to print "0 passed, 0 failed" and exit 0. */

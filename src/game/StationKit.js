@@ -95,9 +95,90 @@ function tvScreen(kit, M, ctx, x, y, z, ry, w = 2.4, h = 1.35) {
   (ctx.tvs || (ctx.tvs = [])).push({ at: { x, y, z: z + c * 0.0, ry }, w, h });
 }
 /** A floor plate. Every place has one; what differs is what stands on it. */
-function floor(kit, M, w, d, y = 0, mat = null) {
-  kit.slab(mat || M.deep, w, 0.4, d, 0, y - 0.2, 0, { collide: true, bevel: 0 });
+function floor(kit, M, w, d, y = 0, mat = null, opts = {}) {
+  const hole = opts.hole || null;
+  if (!hole) {
+    kit.slab(mat || M.deep, w, 0.4, d, 0, y - 0.2, 0, { collide: true, bevel: 0 });
+  } else {
+    /**
+     * ══ A FLOOR WITH A WELL IN IT IS A FRAME, NOT A SLAB — V18 ════════════
+     *
+     * Every sinking builder laid this slab, whole, across the room and then
+     * built its well UNDER it: the cantina's booths, chairs and dais, the
+     * arena's tiers, the Drazi pit, the CIC's plot pit and the compactor's
+     * throat were all in a sealed basement below a flat floor, and the deck
+     * plate `Station.buildDeckPlate` lays across the whole drum roofed them
+     * a second time. `floorAt` said −2.2 in the cantina while every body in
+     * it stood on the slab at 0. So a floor asked for a hole is four slabs
+     * round it, the kerb of the well takes the edge, and the plate is cut
+     * over the same rectangle (`sunkOf`, the one table both read).
+     */
+    const hx = hole.x || 0, hz = hole.z || 0, hw = hole.w, hd = hole.d;
+    const F = { collide: true, bevel: 0 };
+    const m = mat || M.deep;
+    const zN = hz - hd / 2, zS = hz + hd / 2, xW = hx - hw / 2, xE = hx + hw / 2;
+    if (zN > -d / 2 + 0.05) kit.slab(m, w, 0.4, zN + d / 2, 0, y - 0.2, (-d / 2 + zN) / 2, F);
+    if (zS < d / 2 - 0.05) kit.slab(m, w, 0.4, d / 2 - zS, 0, y - 0.2, (zS + d / 2) / 2, F);
+    if (xW > -w / 2 + 0.05) kit.slab(m, xW + w / 2, 0.4, hd, (-w / 2 + xW) / 2, y - 0.2, hz, F);
+    if (xE < w / 2 - 0.05) kit.slab(m, w / 2 - xE, 0.4, hd, (xE + w / 2) / 2, y - 0.2, hz, F);
+    if (hole.round) {
+      /* A ROUND well: the frame is round its circumscribed square, and the
+       * four corners between the square and the circle are filled with a
+       * fan of chord boxes from the circle out to the square's edge — a
+       * centimetre under the frame's top, so where a box runs on under the
+       * frame nothing fights. */
+      const R = hw / 2;
+      const N = 10;
+      for (let k = 0; k < 4 * N; k++) {
+        const a = (k + 0.5) * (Math.PI / 2) / N;
+        /* 0.8 m past the square's edge, under the frame: a chord box's outer
+         * face is square to its ray, and the square's corner is not. */
+        const out = R / Math.max(Math.abs(Math.sin(a)), Math.abs(Math.cos(a))) + 0.8;
+        if (out - R < 0.05) continue;
+        const wd = 2 * out * Math.tan((Math.PI / 2) / N / 2) * 1.08;
+        const rm = (R + out) / 2;
+        kit.slab(m, wd, 0.38, out - R, hx + rm * Math.sin(a), y - 0.21, hz + rm * Math.cos(a), { ry: a, collide: true, bevel: 0 });
+      }
+    }
+    kit.dressKeep = [...(kit.dressKeep || []), { x: hx, z: hz, w: hw, d: hd }];
+  }
   dressFloor(kit, M, w, d, y);
+}
+
+/**
+ * ══ WHERE A ROOM'S FLOOR IS NOT — the one table for every sunken well ═════
+ *
+ * The rectangle a builder sinks, in the ROOM'S frame (centred, `w` across
+ * the door wall, `d` along the room), and how deep. Three things read it and
+ * they must agree: the builder (its `floor` gets the hole and its `sink` the
+ * same numbers), `Station.buildDeckPlate` (the plate is cut over it), and
+ * `Station.activeFloorAt` through `st.sunk` (the floor's height there). The
+ * round wells — the arena, the Drazi pit — record the square that
+ * circumscribes their circle, so nothing of the plate is left hanging over
+ * the tiers.
+ */
+export const SUNK = {
+  daispit: (p) => ({ w: p.w - 5.0, d: p.d - 5.0, depth: 1.2 }),
+  sunkenround: (p) => ({ w: p.w - 3, d: p.d - 6, depth: 2.2 }),
+  /* The arena: a round well at −2.1 with two tiers stepping up to the floor
+   * — `steps` is the floor's height by radius, innermost first, and the
+   * hole is the outer tier's edge. */
+  sunkenring: (p) => {
+    const r = Math.min(p.w, p.d) / 2, rw = r - 7;
+    return { w: (r - 3) * 2, d: (r - 3) * 2, depth: 2.1, round: true, steps: [[rw, 2.1], [rw + 2, 1.4], [r - 3, 0.7]] };
+  },
+  fightingpit: (p) => { const r = Math.min(p.w, p.d) / 2 - 3; return { w: r * 2, d: r * 2, depth: 2.6, round: true }; },
+  chainpit: (p) => ({ w: p.w - 4.4, d: p.d - 5.0, depth: 2.5 }),
+  compactor: (p) => ({ w: p.w - 6, d: p.d - 6, depth: 3.4 }),
+  deeppit: (p) => ({ w: p.w - 8, d: p.d - 8, depth: 8 }),
+};
+/** The builders' own read of the table — the shape's well, imported or not. */
+function wellOf(p) { const f = SUNK[p?.shape]; return f ? f(p) : null; }
+export function sunkOf(place) {
+  /* An imported room (`place.room`) stands its own floor; the kit shape is
+   * only its fallback, and the plate under it stays whole. */
+  const f = place && !place.room ? SUNK[place.shape] : null;
+  return f ? f(place) : null;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1187,12 +1268,12 @@ export const SHAPES = {
    * gallery you brief from. Small, dark and busy. */
   daispit(kit, M, p, ctx) {
     const { w, d, h } = p;
-    floor(kit, M, w, d);
+    floor(kit, M, w, d, 0, null, { hole: wellOf(p) });
     walls(kit, M, w, d, h, { open: ['back'], doorW: 3.2, mat: M.dark });
     ceiling(kit, M, w, d, h, { ribs: 6 });
     /* The pit, and the rail round it — the rail is the reason you can brief
      * from the floor and look down at the plot. */
-    sink(kit, M, w - 5.0, d - 5.0, 1.2, ctx);
+    sink(kit, M, wellOf(p).w, wellOf(p).d, wellOf(p).depth, ctx);
     for (const s of [-1, 1]) {
       kit.slab(M.wing, w - 5.0, 0.1, 0.12, 0, 1.05, s * ((d - 5.0) / 2 + 0.3), { collide: true, bevel: 0 });
       kit.slab(M.wing, 0.12, 0.1, d - 5.0, s * ((w - 5.0) / 2 + 0.3), 1.05, 0, { collide: true, bevel: 0 });
@@ -1373,10 +1454,12 @@ export const SHAPES = {
    * booths are cut into the wall, and the band's dais is at the back. */
   sunkenround(kit, M, p, ctx) {
     const { w, d, h } = p;
-    const depth = 2.2;
-    floor(kit, M, w, 4, 0);
-    kit.slab(M.deep, w, 0.4, 4, 0, -0.2, -d / 2 + 2, { collide: true, bevel: 0 });
-    sink(kit, M, w - 3, d - 6, depth, ctx);
+    const S = wellOf(p), depth = S.depth;
+    /* The floor is the frame round the well: the 3 m aprons front and back,
+     * the 1.5 m either side. Before V18 it was a whole slab and the well was
+     * a basement — see `floor`. */
+    floor(kit, M, w, d, 0, null, { hole: S });
+    sink(kit, M, S.w, S.d, depth, ctx);
     /* Steps down, the full width, so the drop reads as an invitation. */
     for (let i = 0; i < 8; i++) kit.slab(M.dark, w - 3, 0.28, 0.6, 0, -i * 0.275, -d / 2 + 4 + i * 0.6, { collide: true, bevel: 0 });
     walls(kit, M, w, d, h, { doorW: w - 4 });
@@ -1823,18 +1906,26 @@ export const SHAPES = {
   sunkenring(kit, M, p, ctx) {
     const { w, d, h } = p;
     const r = Math.min(w, d) / 2;
-    floor(kit, M, w, d);
+    floor(kit, M, w, d, 0, null, { hole: wellOf(p) });
     arcWall(kit, M.hull, r, h, 0.5, TAU - 0.5, 20);
-    /* The ring: a round well two metres down, with tiers stepping to it. */
-    for (let i = 0; i < 3; i++) {
-      const rr = r - 2.4 - i * 2.0, y = -0.7 * (i + 1);
-      ringOf(kit, M, M.dark, rr, 0.7, 28, y, { rad: 0.9, collide: true });
+    /* The ring: a round well two metres down, with two tiers stepping to
+     * it. Each tier is a continuous annulus of chord boxes standing on the
+     * well floor (V18 — they were rings of posts under a whole floor slab,
+     * and nobody had seen them). `SUNK.sunkenring` carries the same radii. */
+    const rw = r - 7;
+    for (let i = 0; i < 2; i++) {
+      const rA = rw + i * 2, rB = rA + 2, top = -1.4 + i * 0.7, hgt = top + 2.1;
+      for (let k = 0; k < 28; k++) {
+        const a = TAU * (k / 28);
+        kit.slab(i ? M.dark : M.deep, 2 * rB * Math.tan(Math.PI / 28) * 1.06, hgt, rB - rA,
+          (rA + rB) / 2 * Math.sin(a), top - hgt / 2, (rA + rB) / 2 * Math.cos(a), { ry: a, collide: true, bevel: 0 });
+      }
     }
     for (let i = 0; i < 16; i++) {
       const a = TAU * (i / 16);
       kit.slab(M.deep, 2 * (r - 7) * Math.tan(Math.PI / 16) * 1.06, 0.4, r - 7, (r - 7) / 2 * Math.sin(a), -2.3, (r - 7) / 2 * Math.cos(a), { ry: a, collide: true, bevel: 0 });
     }
-    ctx.sunk.push({ w: (r - 7) * 1.4, d: (r - 7) * 1.4, depth: 2.1 });
+    ctx.sunk.push(wellOf(p));
     /* The gantry the remotes hang from — a cross over the ring. */
     for (const ry of [0, Math.PI / 2]) {
       kit.slab(M.wing, r * 2 - 2, 0.3, 0.5, 0, h - 1.2, 0, { ry, collide: false, bevel: 0 });
@@ -2328,7 +2419,7 @@ export const SHAPES = {
    * stand on, colours strung overhead, and noise. Nothing else in the room. */
   fightingpit(kit, M, p, ctx) {
     const { w, d, h } = p;
-    floor(kit, M, w, d);
+    floor(kit, M, w, d, 0, null, { hole: wellOf(p) });
     walls(kit, M, w, d, h, { doorW: 4 });
     ceiling(kit, M, w, d, h, { ribs: 4, strips: false });
     const r = Math.min(w, d) / 2 - 3;
@@ -2336,9 +2427,11 @@ export const SHAPES = {
     for (let i = 0; i < 14; i++) {
       const a = TAU * (i / 14);
       kit.slab(M.deep, 2 * r * Math.tan(Math.PI / 14) * 1.06, 2.6, 0.5, r * Math.sin(a), -1.3, r * Math.cos(a), { ry: a, collide: true, bevel: 0 });
-      kit.slab(M.deep, 2 * (r / 2) * Math.tan(Math.PI / 14) * 1.06, 0.4, r, (r / 2) * Math.sin(a), -2.8, (r / 2) * Math.cos(a), { ry: a, collide: true, bevel: 0 });
+      /* sized at the OUTER radius, as `Station.annulus` sizes its chords —
+       * at r/2 the wedges left a gap between them over the outer half (V18) */
+      kit.slab(M.deep, 2 * r * Math.tan(Math.PI / 14) * 1.06, 0.4, r, (r / 2) * Math.sin(a), -2.8, (r / 2) * Math.cos(a), { ry: a, collide: true, bevel: 0 });
     }
-    ctx.sunk.push({ w: r * 1.4, d: r * 1.4, depth: 2.6 });
+    ctx.sunk.push(wellOf(p));
     for (let i = 0; i < 9; i++) kit.slab(M.dark, 2.2, 0.3, 0.6, 0, -0.15 - i * 0.29, -r + 0.4 + i * 0.55, { collide: true, bevel: 0 });
     /* The colours: green and purple, strung across, which is the whole story
      * of the Drazi and the only decoration the room has. */
@@ -2480,14 +2573,22 @@ export const SHAPES = {
     const sh = ctx?.shaft || null;
     /* The grating you stand on, and it is `dark` rather than the deck's own
      * plate: this is the floor with its covering taken up. */
-    floor(kit, M, w, d, 0, M.dark);
+    floor(kit, M, w, d, 0, M.dark, { hole: wellOf(p) });
     walls(kit, M, w, d, h, { doorW: 3.0 });
     ceiling(kit, M, w, d, h, { ribs: 3, strips: false, omit: sh });
 
     /* THE CUT. Rectangular, across the room, 2.5 m down, with the lifted deck
      * plate leaning against the far wall where it was dragged. */
-    const cw = w - 4.4, cd = d - 5.0, depth = 2.5;
+    const { w: cw, d: cd, depth } = wellOf(p);
     sink(kit, M, cw, cd, depth, ctx);
+    /* The way down and up (V18 — the cut is a real drop now): four steps off
+     * the door side, and a knee rail along the two long kerbs so a walker
+     * meets a bar before the edge. */
+    for (let i = 0; i < 4; i++) kit.slab(M.dark, 2.0, 0.3, 0.62, 0, -0.15 - i * 0.62, -cd / 2 + 0.31 + i * 0.62, { collide: true, bevel: 0 });
+    for (const sx of [-1, 1]) {
+      kit.slab(M.wing, 0.1, 0.06, cd + 0.4, sx * (cw / 2 + 0.3), 1.0, 0, { collide: true, bevel: 0 });
+      for (let i = 0; i * 1.4 < cd; i++) kit.slab(M.dark, 0.06, 1.0, 0.06, sx * (cw / 2 + 0.3), 0.5, -cd / 2 + 0.2 + i * 1.4, { collide: false, bevel: 0 });
+    }
     kit.slab(M.wing, cw * 0.8, 0.24, depth + 0.9, 0, (depth + 0.9) / 2 - 0.4, d / 2 - 0.9,
       { rx: 0.28, collide: true, bevel: 0 });
 
@@ -2948,10 +3049,18 @@ export const SHAPES = {
    * above it, and a walk round three sides you throw things from. */
   compactor(kit, M, p, ctx) {
     const { w, d, h } = p;
-    floor(kit, M, w, d, 0, M.dark);
+    floor(kit, M, w, d, 0, M.dark, { hole: wellOf(p) });
     walls(kit, M, w, d, h, { doorW: 2.6 });
     ceiling(kit, M, w, d, h, { ribs: 4, strips: false });
-    sink(kit, M, w - 6, d - 6, 3.4, ctx);
+    sink(kit, M, wellOf(p).w, wellOf(p).d, wellOf(p).depth, ctx);
+    /* A rail round the throat on the three sides you walk (V18 — the throat
+     * is a real 3.4 m drop now); the chute wall takes the fourth. */
+    {
+      const W = wellOf(p);
+      for (const sz of [-1, 1]) kit.slab(M.wing, W.w + 0.6, 0.06, 0.1, 0, 1.0, sz * (W.d / 2 + 0.3), { collide: true, bevel: 0 });
+      kit.slab(M.wing, 0.1, 0.06, W.d + 0.6, W.w / 2 + 0.3, 1.0, 0, { collide: true, bevel: 0 });
+      for (let i = 0; i * 1.4 < W.w; i++) for (const sz of [-1, 1]) kit.slab(M.dark, 0.06, 1.0, 0.06, -W.w / 2 + 0.2 + i * 1.4, 0.5, sz * (W.d / 2 + 0.3), { collide: false, bevel: 0 });
+    }
     /* The compactor face: a slab that will move (StationLife steps it). */
     kit.slab(M.wing, 0.7, 3.2, d - 6.4, -(w - 6) / 2 + 0.4, -1.7, 0, { collide: true, bevel: 0 });
     kit.slab(M.status, 0.1, 0.2, d - 7, -(w - 6) / 2 + 0.75, -0.6, 0, { collide: false, bevel: 0 });
@@ -3123,9 +3232,9 @@ export const SHAPES = {
    * a fighter on a lift in it. You look down into the work. */
   deeppit(kit, M, p, ctx) {
     const { w, d, h } = p;
-    floor(kit, M, w, d);
+    floor(kit, M, w, d, 0, null, { hole: wellOf(p) });
     walls(kit, M, w, d, h, { doorW: 5 });
-    sink(kit, M, w - 8, d - 8, 8, ctx);
+    sink(kit, M, wellOf(p).w, wellOf(p).d, wellOf(p).depth, ctx);
     /**
      * ══ THREE LEVELS, AND ALL THREE OF THEM REACHABLE ═════════════════════
      *
@@ -3346,7 +3455,9 @@ export function buildPlace(world, group, place, M, st) {
   for (const s of ctx.sunk) {
     const c = Math.abs(Math.cos(place.yaw)), sn = Math.abs(Math.sin(place.yaw));
     const hx = (s.w * c + s.d * sn) / 2, hz = (s.w * sn + s.d * c) / 2;
-    st.sunk.push({ x0: place.x - hx, x1: place.x + hx, z0: place.z - hz, z1: place.z + hz, dy: -s.depth });
+    st.sunk.push({ x0: place.x - hx, x1: place.x + hx, z0: place.z - hz, z1: place.z + hz, dy: -s.depth,
+      /* the rectangle itself, for a yawed room — the bbox above over-covers */
+      cx: place.x, cz: place.z, yaw: place.yaw, w: s.w, d: s.d, round: !!s.round, steps: s.steps || null, id: place.id });
   }
   /* ── WHERE THE DESKS IN THIS ROOM ENDED UP ───────────────────────────
    *

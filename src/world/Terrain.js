@@ -4259,6 +4259,42 @@ export class Terrain {
     ter.needsUpdate = true;
   }
 
+  /**
+   * RESHAPE THE WHOLE SHEET to `fn(x, z)` — the station's use (V18): the
+   * drum's decks are at `DECK_Y[deck]` and its sunken rooms below that, while
+   * the preset laid this sheet at 0. Every body's ground query begins at this
+   * sheet (`supportHeight`), so a sheet 12.5 m under the deck plate was the
+   * floor every resident actually stood on. Writes the heights, the mesh's
+   * positions and normals in one pass; the caller re-hands the terrain to the
+   * physics so its heightfield is rebuilt. `deformSeq` is bumped so anything
+   * caching the old shape knows.
+   */
+  reshape(fn) {
+    const pos = this.geometry?.attributes?.position;
+    const nrm = this.geometry?.attributes?.normal;
+    for (let j = 0; j < this.res; j++) {
+      for (let i = 0; i < this.res; i++) {
+        const x = -this.half + i * this.step, z = -this.half + j * this.step;
+        this.heights[j * this.res + i] = fn(x, z);
+      }
+    }
+    if (pos) {
+      for (let j = 0; j < this.res; j++) {
+        for (let i = 0; i < this.res; i++) {
+          const k = j * this.res + i;
+          pos.setY(k, this.heights[k]);
+          this._vertexNormal(i, j, _tv);
+          nrm?.setXYZ(k, _tv.x, _tv.y, _tv.z);
+        }
+      }
+      pos.needsUpdate = true;
+      if (nrm) nrm.needsUpdate = true;
+      this.geometry.computeBoundingSphere?.();
+    }
+    this.deformSeq = (this.deformSeq | 0) + 1;
+    return this;
+  }
+
   /** Keep an entity above the ground; returns the ground height at the point. */
   clampToGround(v, offset = 0) {
     const h = this.height(v.x, v.z) + offset;

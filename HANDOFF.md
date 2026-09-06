@@ -90,6 +90,30 @@ box rotations (`staticBoxes[i].quaternion` reads identity) and misled twice.
 **The outer rooms' fronts now follow the ring** (`StationKit.arcFront`):
 chords of the ring's circle with glass beside the door on public rooms.
 
+**THE GROUND WAS TWELVE METRES UNDER THE DECK, AND THE WELLS WERE ROOFED —
+found after the doors, and worse.** Two defects, one cause: every ground
+query in the game starts from the level's terrain sheet (`supportHeight`
+takes it as the floor and accepts a box only within a step above it), and
+the station's sheet was the preset's flat plane at 0. Measured on deck 44
+(plate at 12.5): the player at y −0.05, every resident at −0.04, the chairs at
+12.50. **People walked under the deck they were drawn on**, on every deck but
+40, and every check that counted them walking counted that. On deck 40 the
+same sheet was the floor no body could go below — and every sinking builder
+(`sunkenround`, `sunkenring`, `fightingpit`, `chainpit`, `daispit`,
+`compactor`, `deeppit`) laid a whole floor slab over its own well and
+`buildDeckPlate` laid the plate over it again: the cantina's booths, chairs
+and dais, the arena's tiers (rings of posts, never seen) and the Drazi pit
+were sealed basements under a flat floor while `floorAt` said −2.2. Fixed:
+`Terrain.reshape` re-lays the sheet to `activeFloorAt` (wells included) at
+dress time and the physics rebuilds its heightfield; `Enemy` spawns on
+`floorAt` where a world has one; `floor()` takes a hole and lays a frame (and
+corner fans for round wells); `annulus` takes `holes` and lays thin
+sub-segments round them; one table (`StationKit.SUNK`/`sunkOf`) feeds the
+builders, the plate cut and `floorAt`; the arena got real tiers, the Drazi
+pit's floor wedges their full width, the Underlift cut steps and rails, the
+compactor a rail. `station.mjs` now samples every well (open, floored, apron
+at deck height) and `seated.mjs` sits the player.
+
 **Twenty things that would be cool** — marked as they land:
 1. A holonet anchor with a face you recognise, gossiping about what you did. **BUILT** (`Holonet.js`, the anchor is a resident; `holonet.mjs`).
 2. A market day: the concourse doubles its stalls, the tram runs full. **BUILT** (`StationEvents.js` `marketFill`, 10:00; Concourse 124→204).
@@ -98,12 +122,12 @@ chords of the ring's circle with glass beside the door on public rooms.
 5. A pickpocket to chase across the concourse, and a bounty board that pays for him.
 6. Rain in the arboretum on a schedule, with residents going to stand in it. **BUILT** (`StationEvents.js` `rain`, 19:00).
 7. Your company's names on the memorial wall read aloud at the chapel vigil.
-8. A morning: shutters going up, the ranges lit one by one, the first tram.
+8. A morning: shutters going up, the ranges lit one by one, the first tram. **BUILT** (`Morning.js`: shutters 23:00/06:00, strips sector by sector 06:00–07:00, the 06:00 tannoy).
 9. Drazi-quarter fights that spill onto the ring and get broken up. **BUILT** (`StationEvents.js` `drazifight`, 15:00).
-10. Regulars: people you talk to three times remember you and greet you first.
-11. Sleeping in the cabin plays the night as a time-lapse through the window.
-12. A window seat in the dome: sitting swaps to a cinematic camera of the battle.
-13. A resident who follows you asking about your saber, and can be told to go away.
+10. Regulars: people you talk to three times remember you and greet you first. **BUILT** (`Regulars.js`, `regulars` fold; `regulars.mjs`).
+11. Sleeping in the cabin plays the night as a time-lapse through the window. **BUILT** (`Sleep.js`: the bunk, 0.5 s a station-hour, the planet's terminator on the cabin screen).
+12. A window seat in the dome: sitting swaps to a cinematic camera of the battle. **BUILT** (`DomeSeat.js`, on the dome's or a promenade window seat).
+13. A resident who follows you asking about your saber, and can be told to go away. **BUILT** (`Follower.js`: one per deck visit, four questions naming the real colour, the key dismisses).
 14. A funeral you can attend, with the man's bunk stripped after.
 15. A late-night channel: the Drum spin live on every screen with the hour. **BUILT** (`Holonet.js` drum programme).
 16. Weather on the planet below, visible from the dome, changing the news. **HALF** — `StationEvents.weatherAt` is in the news and on the orbit chart; nothing in the dome yet.

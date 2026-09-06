@@ -306,7 +306,7 @@ export const RESTORE = { radius: 12, fraction: 0.5, time: 3, cooldown: 75 };
  */
 export /** Seconds for the player to sit down on a chair, and to get back up. */
 const SEAT_EASE = 0.8, SEAT_RISE = 0.6;
-const MEDITATION_EASE = 0.6;
+export const MEDITATION_EASE = 0.6;
 
 /**
  * THE SABER, OFF THE HAND — catching it, lighting it, and flying it.
@@ -5237,6 +5237,12 @@ export class Player {
      * them — see `StationSit`. The chair is the floor, so no gravity. */
     if (this.seat) {
       const S = this.seat;
+      /* Moved off the chair by something other than its legs — a teleport,
+       * a shove: up at once, and the ordinary path has the body. */
+      if (Math.hypot(this.position.x - S.feet.x, this.position.z - S.feet.z) > 2.0) { this._releaseSeat(); }
+    }
+    if (this.seat) {
+      const S = this.seat;
       this._sprinting = false;
       this.crouch = damp(this.crouch, 0, 12, dt);
       this.velocity.set(0, 0, 0);
@@ -7605,7 +7611,8 @@ export class Player {
       S.blend = Math.max(0, S.blend - dt / SEAT_RISE);
       if (S.blend <= 0) { this._releaseSeat(); return; }
     }
-    /* The chair went — thrown, cut, or knocked over. Up, at once. */
+    /* The chair went — thrown, cut, or knocked over — or the body was moved
+     * off it by something other than its legs. Up, at once. */
     if (S.prop?.dead || (S.prop?.body && S.prop.body.velocity.lengthSq() > 0.5)) { this._releaseSeat(); return; }
     if (!this.rig?.hipsBone) return;
     poseSeated(this.rig, smoothstep(0, 1, S.blend), {

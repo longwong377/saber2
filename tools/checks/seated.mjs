@@ -171,7 +171,10 @@ export async function run({ check, assert, THREE }) {
         assert(seatUpright(S.prop), `${b.stationName} is sitting on a chair that is over`);
         assert(S.prop.body.position.distanceTo(S.pos) < 0.02, `${b.stationName}'s chair moved ${S.prop.body.position.distanceTo(S.pos).toFixed(2)} m under him`);
         const knee = b.rig.tipPos('thighL');
-        assert(Math.abs(knee.y - h.y) < 0.12, `${b.stationName}'s thigh is not level: knee ${knee.y.toFixed(2)} hips ${h.y.toFixed(2)}`);
+        /* 0.16: a chair standing a few centimetres proud of the well floor
+         * (on a cup, a neighbour's leg) raises the seat and the shin cannot
+         * reach, so the knee drops a little — still a sitter, not a stander. */
+        assert(Math.abs(knee.y - h.y) < 0.16, `${b.stationName}'s thigh is not level: knee ${knee.y.toFixed(2)} hips ${h.y.toFixed(2)}`);
         assert(Math.abs(b.facing - S.yaw) < 0.05 || Math.abs(Math.abs(b.facing - S.yaw) - Math.PI * 2) < 0.05,
           `${b.stationName} faces ${b.facing.toFixed(2)} on a chair facing ${S.yaw.toFixed(2)}`);
         /* The cup: it is a bar. */
@@ -247,12 +250,37 @@ export async function run({ check, assert, THREE }) {
         q.body.velocity.set(0, 0, 0); q.body.angularVelocity.set(0, 0, 0);
         q.mesh.position.copy(q.body.position); q.mesh.quaternion.copy(q.body.quaternion);
       }
-      const chair = chairs.find((q) => !life.seats?.has(q)) || chairs[0];
-      /* Stand a metre from it, and press the key. */
+      let chair = chairs.find((q) => !life.seats?.has(q));
+      if (!chair) {
+        /* Every chair taken by the crowd: the sitters are told to rise, and
+         * the first chair that comes free is the one. */
+        for (const b of life.live.values()) if (b?.seat && chairs.includes(b.seat.prop)) b.standIn = 0;
+        step(world, 3, idle);
+        chair = chairs.find((q) => !life.seats?.has(q)) || chairs[0];
+        if (life.seats?.has(chair)) { const b = life.seats.get(chair); b.seatCool = 1e9; life.seats.delete(chair); if (b.seat?.prop === chair) b.seat = null; }
+      }
+      /* Stand a metre from it, facing it, and press the key. */
       const q = chair.body.position;
-      pl.position.set(q.x + 0.8, floorY, q.z + 0.5);
-      pl.body?.setTransform?.(new THREE.Vector3(pl.position.x, floorY + 0.9, pl.position.z), null);
+      const floorHere = world.floorAt(q.x, q.z);
+      pl.position.set(q.x + 0.8, floorHere, q.z + 0.5);
+      pl.body?.setTransform?.(new THREE.Vector3(pl.position.x, floorHere + 0.9, pl.position.z), null);
+      pl.facing = Math.atan2(q.x - pl.position.x, q.z - pl.position.z);
       step(world, 0.2, idle);
+      pl.facing = Math.atan2(q.x - pl.position.x, q.z - pl.position.z);
+      /* A person standing in the talk cone takes the press before a chair
+       * does (the talk branch is above the seat's in `stationKey`, by
+       * design), so anybody in it is stood four metres aside first. */
+      const { residentFacing } = await import('../../src/game/Station.js');
+      for (let k = 0; k < 6; k++) {
+        const who = residentFacing(world);
+        if (!who) break;
+        const ax = Math.cos(pl.facing) * 4, az = -Math.sin(pl.facing) * 4;
+        who.standCx = (who.standCx ?? who.position.x) + ax; who.standCz = (who.standCz ?? who.position.z) + az;
+        who.standTx = who.standCx; who.standTz = who.standCz;
+        who.position.x += ax; who.position.z += az;
+        who.body?.setTransform?.(who.position, null);
+      }
+      pl.facing = Math.atan2(q.x - pl.position.x, q.z - pl.position.z);
       assert(seatAtHand(world) === chair || SEAT_KINDS.has(seatAtHand(world)?.kind), `no seat at hand a metre from a chair (${seatAtHand(world)?.kind})`);
       const hit = new Set(['focus']);
       const press = { ...idle, act: (id) => hit.has(id), actHit: (id) => { const h = hit.has(id); hit.delete(id); return h; }, actDown: (id) => hit.has(id) };

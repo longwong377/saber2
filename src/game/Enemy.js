@@ -3180,7 +3180,11 @@ export class Enemy {
     this.attackDamage = A.damage * (world.dmgScale ?? 1);
 
     this.position = spawn.clone();
-    this.position.y = world.terrain ? world.terrain.height(spawn.x, spawn.z) : 0;
+    /* The floor that is THERE: a world with `floorAt` (the station) has decks
+     * and wells the terrain sheet only approximates; elsewhere the terrain is
+     * the ground, as it always was. */
+    this.position.y = world.floorAt ? world.floorAt(spawn.x, spawn.z)
+      : world.terrain ? world.terrain.height(spawn.x, spawn.z) : 0;
     this.velocity = new THREE.Vector3();
     this.facing = rng() * TAU;
     this.grounded = true;

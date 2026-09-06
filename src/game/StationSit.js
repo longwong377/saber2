@@ -32,7 +32,15 @@ export function seatAtHand(world) {
   if (!p || !world?.props?.length || pl.seat) return null;
   const life = world._stationLife;
   const near = seatsNear(world, p.x, p.y, p.z, SIT_REACH, life?.seats).filter(seatUpright);
-  return near.length ? near[0] : null;
+  /* The one you are LOOKING AT: within 70° of the facing, so a press on a
+   * tram platform boards the car unless you turned to the bench. */
+  const fx = Math.sin(pl.facing), fz = Math.cos(pl.facing);
+  for (const q of near) {
+    const dx = q.body.position.x - p.x, dz = q.body.position.z - p.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 0.35 || (dx * fx + dz * fz) / d > 0.34) return q;
+  }
+  return null;
 }
 
 /**
@@ -41,7 +49,7 @@ export function seatAtHand(world) {
 export function sitKey(world) {
   const pl = world?.player;
   if (!pl) return false;
-  if (pl.seat) { pl.standUp(); return true; }
+  if (pl.seat) { pl.standUp(); world.notify?.('UP', 'you get up'); return true; }
   const prop = seatAtHand(world);
   if (!prop) return false;
   const life = world._stationLife;

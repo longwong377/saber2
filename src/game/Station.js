@@ -49,7 +49,7 @@ import { Kit, propMaterials, makeCrate } from '../world/Props.js';
 import { deckMats, factionOf } from './DeckKit.js';
 import { loadRoom, materialKeyFor } from './StationMesh.js';
 import { PLACES, PLACE, DECK_Y, DRUM, CORRIDOR, SHAFTS, placesOn, floorOf, sectorAt, junctionsOn } from './StationPlan.js';
-import { buildPlace, SHAPES, buildWays, dressWayfinding, dressWallRun } from './StationKit.js';
+import { buildPlace, SHAPES, buildWays, dressWayfinding, dressWallRun, sunkOf } from './StationKit.js';
 import { dressDeckLift, stepDeckLift, undressDeckLift, liftKey, liftFloors } from './DeckLift.js';
 import { dressStationLife, primeStationLife, stepStationLife, undressStationLife, dressTram,
   STOPS, headcount, servedHere } from './StationLife.js';
@@ -379,11 +379,75 @@ function annulus(kit, mat, y, h, r0, r1, n, opts = {}) {
       rMid * Math.sin(a), y, rMid * Math.cos(a), { ry: a, collide, bevel: 0 });
   };
   const cut = opts.omit || null;
+  /**
+   * ══ THE WELLS — V18 ═══════════════════════════════════════════════════
+   *
+   * `opts.holes` is a list of room-frame rectangles (`{x, z, yaw, w, d}`,
+   * world centre, the room's yaw) the plate must NOT be laid under: the
+   * sunken wells of `StationKit.SUNK`. A 5° segment is 7 m wide at the ring
+   * and a well is not quantised to that, so a segment that touches a hole is
+   * laid as `FINE` thin sub-segments instead, and each of those is laid only
+   * where its own radial line is outside every hole — the line through a
+   * rectangle is one interval, solved exactly. What is left overlaps the
+   * well's kerb by a few centimetres and never hangs into it.
+   */
+  const holes = (opts.holes || []).map((h) => {
+    const c = Math.cos(h.yaw), sn = Math.sin(h.yaw);
+    const R = Math.hypot(h.x, h.z), reach = Math.hypot(h.w, h.d) / 2 + 0.3;
+    return { ...h, c, sn, aC: Math.atan2(h.x, h.z), aHalf: Math.asin(Math.min(1, reach / Math.max(1, R))), rIn: R - reach, rOut: R + reach };
+  });
+  const FINE = 12;
+  const wrap = (x) => Math.atan2(Math.sin(x), Math.cos(x));
+  /* The radial interval of the line at bearing `a` that lies inside `h`. */
+  const through = (h, a) => {
+    const sx = Math.sin(a), cz = Math.cos(a);
+    /* local x = (P - centre) rotated by -yaw, as `placeUnder` does it */
+    const A1 = sx * h.c - cz * h.sn, B1 = -h.x * h.c + h.z * h.sn;
+    const A2 = sx * h.sn + cz * h.c, B2 = -h.x * h.sn - h.z * h.c;
+    let lo = -Infinity, hi = Infinity;
+    for (const [A, B, half] of [[A1, B1, h.w / 2], [A2, B2, h.d / 2]]) {
+      if (Math.abs(A) < 1e-9) { if (Math.abs(B) > half) return null; continue; }
+      const t0 = (-half - B) / A, t1 = (half - B) / A;
+      lo = Math.max(lo, Math.min(t0, t1)); hi = Math.min(hi, Math.max(t0, t1));
+    }
+    return hi > lo ? [lo, hi] : null;
+  };
+  const layFine = (i) => {
+    for (let k = 0; k < FINE; k++) {
+      const a = from + span * ((i + (k + 0.5) / FINE) / seg);
+      const w = 2 * r1 * Math.tan(span / seg / FINE / 2) * 1.06;
+      const cuts = [];
+      for (const h of holes) {
+        if (Math.abs(wrap(a - h.aC)) > h.aHalf) continue;
+        const t = through(h, a);
+        if (t) cuts.push([Math.max(r0, t[0]), Math.min(r1, t[1])]);
+      }
+      cuts.sort((p, q) => p[0] - q[0]);
+      let rA = r0;
+      const piece = (ra, rb) => {
+        if (rb - ra < 0.25) return;
+        const rMid = (ra + rb) / 2;
+        kit.slab(mat, w, h, rb - ra, rMid * Math.sin(a), y, rMid * Math.cos(a), { ry: a, collide, bevel: 0 });
+      };
+      for (const [ca, cb] of cuts) { if (ca > rA) piece(rA, ca); rA = Math.max(rA, cb); }
+      piece(rA, r1);
+    }
+  };
+  const touches = (i) => {
+    const a0 = from + span * (i / seg), a1 = from + span * ((i + 1) / seg);
+    for (const h of holes) {
+      if (h.rOut < r0 || h.rIn > r1) continue;
+      const d0 = wrap(a0 - h.aC), d1 = wrap(a1 - h.aC);
+      if (Math.abs(d0) <= h.aHalf || Math.abs(d1) <= h.aHalf || (d0 < 0 && d1 > 0 && Math.abs(d1 - d0) < Math.PI)) return true;
+    }
+    return false;
+  };
   /* The hole as MADE: the bearings of the segments actually skipped, and the
    * radii the remainders actually left. */
   let c0 = Infinity, c1 = -Infinity, hr0 = cut ? cut.r0 : 0, hr1 = cut ? cut.r1 : 0;
   for (let i = 0; i < seg; i++) {
     const a = from + span * ((i + 0.5) / seg);
+    if (holes.length && touches(i)) { layFine(i); continue; }
     if (cut && a > cut.a0 && a < cut.a1) {
       if (a < c0) c0 = a;
       if (a > c1) c1 = a;
@@ -596,7 +660,14 @@ function buildDeckPlate(kit, M, deck) {
    */
   const stepped = deck === 44 || deck === 48;
   const plateR0 = stepped ? ATRIUM.galleryR : DRUM.atrium;
-  const hole = annulus(kit, M.deep, y - 0.3, 0.6, plateR0, DRUM.R, 72, { omit: cutPlate });
+  /* The sunken wells of this deck's rooms — the plate is not laid under
+   * them. See `annulus`'s `holes` and `StationKit.SUNK`. */
+  const holes = [];
+  for (const p of placesOn(deck)) {
+    const S = sunkOf(p);
+    if (S && p.w && p.d && !p.external) holes.push({ x: p.x, z: p.z, yaw: p.yaw, w: S.w, d: S.d });
+  }
+  const hole = annulus(kit, M.deep, y - 0.3, 0.6, plateR0, DRUM.R, 72, { omit: cutPlate, holes });
   if (stepped) buildAtrium(kit, M, deck, y);
   buildChandelier(kit, M, y);
   /* The soffit over it — the next deck's underside, so a player on 40 looking
@@ -1222,17 +1293,52 @@ function lightStation(world, deck, st) {
  * The player's own collision is not this: the deck plates are real static
  * boxes and Rapier holds him up. `floorAt` is for the things that walk.
  */
+/**
+ * The wells of a deck, off the plan — `StationKit.SUNK` through `sunkOf`, the
+ * same table the builders sink and the plate is cut over. Derived once per
+ * station (`st.wells`), so `floorAt` answers before a single room has been
+ * built: the rooms arrive over the build queue's frames and the ground has to
+ * be right on the first one.
+ */
+function wellsOn(deck) {
+  const out = [];
+  for (const p of placesOn(deck)) {
+    const S = sunkOf(p);
+    if (!S || !p.w || !p.d || p.external) continue;
+    const c = Math.abs(Math.cos(p.yaw)), sn = Math.abs(Math.sin(p.yaw));
+    const hx = (S.w * c + S.d * sn) / 2, hz = (S.w * sn + S.d * c) / 2;
+    out.push({ x0: p.x - hx, x1: p.x + hx, z0: p.z - hz, z1: p.z + hz, dy: -S.depth,
+      cx: p.x, cz: p.z, yaw: p.yaw, w: S.w, d: S.d, round: !!S.round, steps: S.steps || null, id: p.id });
+  }
+  return out;
+}
+
 function activeFloorAt(world, x, z) {
   const deck = world._station?.deck ?? 40;
   const y = DECK_Y[deck] ?? 0;
   /* A place may sink its own floor — the cantina is half a deck down (§3.2
-   * #14), the arena is a sunken ring. The plan's builders record it here so
+   * #14), the arena is a sunken ring. The plan says where (`wellsOn`), so
    * one lookup answers for the whole station. */
-  const sunk = world._station?.sunk;
+  const sunk = world._station?.wells || world._station?.sunk;
   if (sunk) {
     for (let i = 0; i < sunk.length; i++) {
       const s = sunk[i];
-      if (x >= s.x0 && x <= s.x1 && z >= s.z0 && z <= s.z1) return y + s.dy;
+      if (x < s.x0 || x > s.x1 || z < s.z0 || z > s.z1) continue;
+      /* Inside the bbox: now the rectangle itself, in the room's frame — a
+       * yawed room's bbox over-covers by up to a third (V18). */
+      if (s.cx !== undefined) {
+        const dx = x - s.cx, dz = z - s.cz;
+        const c = Math.cos(-s.yaw), sn = Math.sin(-s.yaw);
+        const lx = dx * c + dz * sn, lz = -dx * sn + dz * c;
+        if (s.round) {
+          const rho = Math.hypot(lx, lz);
+          if (rho > s.w / 2) continue;
+          /* a tiered well: the floor's height by radius, innermost first */
+          if (s.steps) { for (const [rr, dd] of s.steps) if (rho <= rr) return y - dd; }
+        }
+        else if (Math.abs(lx) > s.w / 2 || Math.abs(lz) > s.d / 2) continue;
+      }
+      return y + s.dy;
     }
   }
   return y;
@@ -1334,7 +1440,33 @@ export function dressStation(world) {
   };
   world._station = st;
   world._deckFaction = factionOf(world);
+  st.wells = wellsOn(deck);
   world.floorAt = (x, z) => activeFloorAt(world, x, z);
+  /**
+   * ══ THE GROUND IS THE DECK — V18 ══════════════════════════════════════
+   *
+   * The level's terrain sheet was laid at 0 by its preset, and every ground
+   * query in the game starts from that sheet: `supportHeight` takes the
+   * terrain as the floor and only accepts a box above it within a step.
+   * Measured on deck 44 (plate at 12.5): the player at y −0.05, every
+   * resident at −0.04, the chairs at 12.50 — the people walked twelve metres
+   * under the deck they were drawn on, and every check that counted them
+   * walking counted that. On deck 40 the same sheet ROOFED the wells: the
+   * cantina's floor is at −2.2 and nothing could stand below 0.
+   *
+   * So the sheet is reshaped to the deck's own floor — `activeFloorAt`,
+   * wells included — and handed back to the physics for a new heightfield.
+   * The lowest value over a cell's neighbourhood is taken, so the sheet
+   * never rises through a well's floor at its edge: under the apron it sits
+   * two metres low and the plate's collider is what a body stands on there.
+   */
+  if (world.terrain?.reshape) {
+    const T = world.terrain, e = T.step || 2;
+    T.reshape((x, z) => Math.min(
+      activeFloorAt(world, x, z), activeFloorAt(world, x + e, z), activeFloorAt(world, x - e, z),
+      activeFloorAt(world, x, z + e), activeFloorAt(world, x, z - e)) - 0.02);
+    if (world.physics) world.physics.terrain = T;
+  }
 
   /* ── THE SHELL. One kit for the whole drum: the plate, the balcony, the
    * skin, the ring, the spines and the lobbies come out as one merged mesh

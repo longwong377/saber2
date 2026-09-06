@@ -554,8 +554,9 @@ export const PLACES = [
     who: '12 Minbari', idle: 'ritual at set hours', verb: 'walk quietly',
     /* At -157, not -172: the arrivals lift lobby (the shaft at z=-74) stands
      * on the 180 bearing on this deck, and a hall centred on -172 had the
-     * lobby's wall through its east third. */
-    band: 'outer', at: -157, w: 24, d: 21, h: 7.6, peak: 4, heads: 12,
+     * lobby's wall through its east third. -160 clears the Drazi quarter's
+     * footprint too. */
+    band: 'outer', at: -160, w: 24, d: 21, h: 7.6, peak: 4, heads: 12,
   },
   {
     id: 35, deck: 44, name: 'Drazi quarter', shape: 'fightingpit',
@@ -647,7 +648,7 @@ export const PLACES = [
    *
    * V18: −2.3 turned out to be inside the Quarters junction's portal pier
    * (±4.1° of the spine), so #58 sits at −7 and the night market moved
-   * back to 338–346 to clear its door. #39 ends at 341.2, and a market
+   * back to 340–348 to clear its door. #39 ends at 341.2, and a market
    * stall is allowed to stand in front of a laundry's wall.
    */
   {
@@ -1162,11 +1163,11 @@ export const WAYS = [
   { deck: 44, at: 154, kind: 'shopfront', name: 'Tailor and cloth', span: 8 },
   { deck: 44, at: 161, kind: 'kiosk', name: 'Way-kiosk 161', span: 3 },
   { deck: 44, at: 169, kind: 'stair', name: 'The promenade step', span: 9 },
-  { deck: 44, at: 204, kind: 'service', name: 'Airlock hatch 204', span: 4 },
+  { deck: 44, at: 212, kind: 'service', name: 'Airlock hatch 212', span: 4 },
   { deck: 44, at: 236, kind: 'bench', name: 'Drazi benches', span: 6 },
   { deck: 44, at: 288, kind: 'gantry', name: 'The Vorlon gantry', span: 4 },
   { deck: 44, at: 318, kind: 'planter', name: 'Hostel planters', span: 6 },
-  { deck: 44, at: 342, kind: 'market', name: 'Night market', span: 8 },
+  { deck: 44, at: 344, kind: 'market', name: 'Night market', span: 8 },
 
   /* ── DECK 48, THE SERVICE WAY. Nothing here is for a visitor: hatches,
    *    conduit, a swap table, and one window nobody meant to be beautiful. ─ */
