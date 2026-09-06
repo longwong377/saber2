@@ -9,7 +9,14 @@
  * shoots two frames each: a head-and-torso close-up at eye height and a full
  * figure. Not a check — the pictures are for the Read tool.
  *
- *   node tools/_speciesshot.mjs /tmp/species [key,key,...]
+ *   node tools/_speciesshot.mjs /tmp/species [key,key,...] [seed,seed,...]
+ *
+ * The third argument is a list of resident seeds: each one is shot as a
+ * HUMAN built with `StationCast.lookFor(seed, 'human')` spread over the row —
+ * the same `person` sheet `Enemy._build` spreads — so three seeds are three
+ * residents and the pictures say whether the sheet reaches the face. A
+ * `key:seed` entry (`other:3033`) shoots that species with that resident's
+ * sheet instead.
  */
 import { createServer } from 'node:http';
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
@@ -20,6 +27,7 @@ import { chromium } from 'playwright-core';
 const ROOT = resolve(new URL('..', import.meta.url).pathname);
 const OUT = process.argv[2] || '/tmp/species';
 const ONLY = process.argv[3] ? process.argv[3].split(',') : null;
+const SEEDS = process.argv[4] ? process.argv[4].split(',') : [];
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml',
@@ -29,7 +37,7 @@ const say = (m) => process.stderr.write(`▸ ${m}\n`);
 say(`tree ${ROOT}`);
 const { hold } = await import('./_lock.mjs');
 say('waiting for the render lock');
-await hold('cast');
+await hold('faces');
 say('lock held');
 await mkdir(OUT, { recursive: true });
 const server = createServer(async (req, res) => {
@@ -61,7 +69,7 @@ say('waiting for the menu');
 await page.waitForSelector('#menu:not(.hidden)', { timeout: 480000 });
 say('menu up — building');
 
-const shots = await page.evaluate(async (only) => {
+const shots = await page.evaluate(async ({ only, seeds }) => {
   const THREE = await import('/vendor/three/three.module.js');
   const B = await import('/src/game/Bodies.js');
   const C = await import('/src/game/StationCast.js');
@@ -87,12 +95,17 @@ const shots = await page.evaluate(async (only) => {
   floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
   const camera = new THREE.PerspectiveCamera(30, W / H, 0.05, 40);
   const out = [];
-  const keys = (only || C.SPECIES_KEYS).filter((k) => C.SPECIES_BY.has(k));
-  for (const k of keys) {
-    const S = C.SPECIES_BY.get(k);
+  const keys = (only || C.SPECIES_KEYS).filter((k) => C.SPECIES_BY.has(k)).map((k) => ({ key: k, sp: k, person: null }));
+  for (const sd of seeds) {
+    const [sp, seed] = sd.includes(':') ? sd.split(':') : ['human', sd];
+    if (!C.SPECIES_BY.has(sp)) continue;
+    keys.push({ key: `${sp}-${seed}`, sp, person: C.lookFor(Number(seed), sp) });
+  }
+  for (const { key: k, sp, person } of keys) {
+    const S = C.SPECIES_BY.get(sp);
     let built, err = null;
     try {
-      built = B.buildPlayerBody({ species: S.row, robe: S.robe, top: S.wear, hood: false });
+      built = B.buildPlayerBody({ species: S.row, robe: S.robe, top: S.wear, hood: false, ...(person || {}) });
       M.standPreviewFigure(built.rig);
     } catch (e) { err = String(e && e.stack || e); }
     if (err) { out.push({ key: k, err }); continue; }
@@ -121,7 +134,7 @@ const shots = await page.evaluate(async (only) => {
     scene.remove(root);
   }
   return out;
-}, ONLY);
+}, { only: ONLY, seeds: SEEDS });
 
 for (const s of shots) {
   if (s.err) { console.log(`${s.key}: BUILD FAILED\n${s.err}`); continue; }

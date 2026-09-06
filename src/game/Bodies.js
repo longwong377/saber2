@@ -4102,6 +4102,177 @@ const SPECIES_HEADS = {
     k.face(rim, plateGeo(0.022 * s, 0.150 * s, 0.010 * s, 0.004 * s, 1), on(sd.x, sd.y, sd.z, 0.002 * s), sd);
     k.bake(headObj);
   },
+
+  /**
+   * BRAKIRI — a dark ridged forehead: three horizontal ridges of hardened
+   * skin across the brow, each a swept tube seated on the assembled skull so
+   * it follows whatever the face preset did to the vault. The heavy jaw is
+   * the row's own `face` (jaw 0.9, chin 0.45); this is only what the jaw
+   * cannot be. Under the hairline, on the skull and not on the hair — a
+   * ridge riding a fringe is a hairband.
+   */
+  brakiri(headObj, s, hg) {
+    const ridge = chitinMat(0x3a2c26, 0.72);
+    const k = new Kit();
+    const O = new THREE.Vector3(0, 0.100 * s, 0.010 * s);
+    const d = new THREE.Vector3();
+    for (let row = 0; row < 3; row++) {
+      const y = 0.106 + 0.011 * row;                       // brow ridge up to the hairline
+      const half = 0.72 - 0.10 * row;                      // the top ridge is the shortest
+      const nodes = [];
+      for (let i = 0; i <= 4; i++) {
+        const th = -half + (2 * half * i) / 4;
+        d.set(Math.sin(th), (y - 0.100) / 0.09, Math.cos(th)).normalize();
+        const p = onSurface(hg, d, -0.0035 * s, O);
+        const r = (0.0060 - 0.0018 * Math.abs(th) / half) * s;
+        nodes.push([p[0], p[1], p[2], r]);
+      }
+      k.add(ridge, tubeGeo(nodes, 6, { tip: 1.0 }));
+    }
+    k.bake(headObj);
+  },
+
+  /**
+   * LLORT — a broad flat face, and the one thing the face axes cannot make:
+   * a bulbous snout. The row's `face` sets the breadth (skull −0.9, cheek
+   * 0.9, eyes 1.0 — the widest-set eyes on the station); this seats one
+   * skin bulb over the nose tip, half buried, with two dark nostrils under
+   * it. Skin, so it is one draw with the ridge of the brow.
+   */
+  llort(headObj, s, hg, { skin }) {
+    const nostril = leatherMat(0x2a221c, 0.85, { repeat: 4.0 });
+    const k = new Kit();
+    const O = new THREE.Vector3(0, 0.062 * s, 0.020 * s);
+    const nd = new THREE.Vector3(0, -0.10, 1).normalize();
+    const np = onSurface(hg, nd, 0.011 * s, O);
+    k.add(skin, new THREE.SphereGeometry(1, 12, 9), np, null, [0.031 * s, 0.024 * s, 0.026 * s]);
+    // the two ridges of the brow, one over each wide-set eye
+    for (const sx of [-1, 1]) {
+      const bd = new THREE.Vector3(sx * 0.42, 0.28, 0.86).normalize();
+      const bp = onSurface(hg, bd, 0.006 * s, new THREE.Vector3(0, 0.086 * s, 0.010 * s));
+      k.add(skin, new THREE.SphereGeometry(1, 10, 7), bp, null, [0.026 * s, 0.011 * s, 0.014 * s]);
+      // nostrils: two dark discs on the underside of the bulb
+      const nn = new THREE.Vector3(sx * 0.40, -0.70, 0.60).normalize();
+      k.aim(nostril, new THREE.CylinderGeometry(0.0045 * s, 0.0045 * s, 0.004 * s, 8),
+        [np[0] + nn.x * 0.026 * s, np[1] + nn.y * 0.021 * s, np[2] + nn.z * 0.024 * s], nn);
+    }
+    k.bake(headObj);
+  },
+
+  /**
+   * OTHER — the tail of the crowd, and it is many species rather than one.
+   *
+   * Each resident draws ONE feature from four: a crest of bone plates down
+   * the crown, ear frills swept off the temples, a bone ridge along each
+   * cheek, or a scatter of dark markings across the brow and temples. The
+   * draw is off the resident's own face numbers, which are what the sheet
+   * carries into the builder — deterministic per person, so the same visitor
+   * has the same crest tomorrow — and the neutral face (every axis 0) draws
+   * the crest, so `buildJedi` with the row and nothing else is still one
+   * fixed body.
+   */
+  other(headObj, s, hg, { skin, F, over }) {
+    const bone = boneMat(0xd8c9ae, 0.42);
+    const mark = chitinMat(0x3d2e28, 0.70);
+    const k = new Kit();
+    const n = Math.abs(Math.round((F.skull * 7 + F.brow * 13 + F.cheek * 17 + F.jaw * 19 + F.nose * 23 + F.chin * 29) * 1000));
+    const pick = n % 4;
+    if (pick === 0) {
+      // a crest: five bone plates along the midline, tallest over the crown,
+      // seated on the hair when a cut covers it
+      const O = new THREE.Vector3(0, 0.100 * s, -0.010 * s);
+      for (let i = 0; i < 5; i++) {
+        const th = 0.95 - 0.45 * i;                          // from the brow back over the crown
+        const d = new THREE.Vector3(0, Math.cos(th), Math.sin(th)).normalize();
+        const p = onOuter([hg, over], d, 0.006 * s, O);
+        const h = (0.040 - 0.006 * Math.abs(i - 2)) * s;
+        k.aim(bone, plateGeo(0.010 * s, h, 0.024 * s, 0.003 * s, 1),
+          [p[0] + d.x * h * 0.42, p[1] + d.y * h * 0.42, p[2] + d.z * h * 0.42], d, null, new THREE.Vector3(0, 0, 1));
+      }
+    } else if (pick === 1) {
+      // ear frills: two swept skin fans off the temples, above the ear
+      const blade = (u) => 0.30 + 0.70 * Math.abs(Math.sin(u));
+      for (const sx of [-1, 1]) {
+        for (const [lift, back] of [[0.34, -0.30], [0.08, -0.62]]) {
+          const d = new THREE.Vector3(sx * 0.94, 0.26 + lift * 0.3, -0.20).normalize();
+          const p = onSurface(hg, d, 0.004 * s, new THREE.Vector3(0, 0.096 * s, -0.006 * s));
+          const ax = new THREE.Vector3(sx * 0.60, lift, back).normalize();
+          const L = 0.054 * s;
+          k.add(skin, tubeGeo([
+            [p[0], p[1], p[2], 0.014 * s],
+            [p[0] + ax.x * L * 0.5, p[1] + ax.y * L * 0.5, p[2] + ax.z * L * 0.5, 0.011 * s],
+            [p[0] + ax.x * L, p[1] + ax.y * L, p[2] + ax.z * L, 0.0025 * s],
+          ], 6, { section: blade, tip: 1.1 }));
+        }
+      }
+    } else if (pick === 2) {
+      // a cheek ridge: bone from under each eye back along the cheekbone
+      for (const sx of [-1, 1]) {
+        const nodes = [];
+        for (let i = 0; i <= 3; i++) {
+          const t = i / 3;
+          const d = new THREE.Vector3(sx * (0.40 + 0.55 * t), -0.04 - 0.10 * t, 0.90 - 0.75 * t).normalize();
+          const p = onSurface(hg, d, -0.003 * s, new THREE.Vector3(0, 0.078 * s, 0.012 * s));
+          nodes.push([p[0], p[1], p[2], (0.0072 - 0.0030 * t) * s]);
+        }
+        k.add(bone, tubeGeo(nodes, 6, { tip: 1.0 }));
+      }
+    } else {
+      // markings: a scatter of dark discs across the brow and the temples
+      const O = new THREE.Vector3(0, 0.096 * s, 0.006 * s);
+      const spots = [[0, 0.30, 1], [0.28, 0.42, 0.86], [-0.28, 0.42, 0.86], [0.56, 0.30, 0.74], [-0.56, 0.30, 0.74],
+        [0.82, 0.18, 0.40], [-0.82, 0.18, 0.40], [0.44, 0.60, 0.62], [-0.44, 0.60, 0.62], [0.92, 0.02, 0.10], [-0.92, 0.02, 0.10]];
+      spots.forEach(([x, y, z], i) => {
+        const d = new THREE.Vector3(x, y, z).normalize();
+        const p = onSurface(hg, d, 0.0012 * s, O);
+        const r = (0.0060 + 0.0025 * ((i * 7) % 3)) * s;
+        k.aim(mark, new THREE.CylinderGeometry(r, r * 0.9, 0.003 * s, 8), p, d);
+      });
+    }
+    k.bake(headObj);
+  },
+
+  /**
+   * VREE — a large grey oval head, huge black almond eyes, no nose, a tiny
+   * mouth. Not the Kel Dor mask it wore.
+   *
+   * The skull is built (every probe seats on it) and hidden inside an
+   * ellipsoid 30% wider than it, as the Gaim's is inside its dome; a
+   * second, smaller mass below carries the head down to a narrow chin, so
+   * the outline is an inverted egg rather than a ball. The eyes are two
+   * flattened black lenses each, a wide one and a lobe at the outer upper
+   * corner, which is what makes them almonds that sweep up rather than
+   * discs. Skin material for the head, so the hands match.
+   */
+  vree(headObj, s, hg, { skin }) {
+    const lens = glassMat(0x07080b, 0.10);
+    const slit = leatherMat(0x4a3d40, 0.80, { repeat: 4.0 });
+    const k = new Kit();
+    for (const c of headObj.children) if (c.isMesh && c.geometry === hg) c.visible = false;
+    const C = [0, 0.108 * s, -0.004 * s];
+    const R = [0.098 * s, 0.128 * s, 0.108 * s];
+    k.add(skin, new THREE.SphereGeometry(1, 18, 13), C, null, R);
+    // the lower face: a narrower mass tapering to the chin
+    k.add(skin, new THREE.SphereGeometry(1, 14, 10), [0, 0.046 * s, 0.014 * s], null, [0.066 * s, 0.070 * s, 0.076 * s]);
+    const on = (dx, dy, dz, out = 0) => {
+      const t = 1 / Math.sqrt((dx / R[0]) ** 2 + (dy / R[1]) ** 2 + (dz / R[2]) ** 2);
+      const l = Math.hypot(dx, dy, dz);
+      return [C[0] + dx * (t + out / l), C[1] + dy * (t + out / l), C[2] + dz * (t + out / l)];
+    };
+    for (const sx of [-1, 1]) {
+      // the main lens: wide, low, flat against the dome
+      const d = new THREE.Vector3(sx * 0.52, -0.16, 0.84).normalize();
+      k.face(lens, new THREE.SphereGeometry(1, 12, 8), on(d.x, d.y, d.z, -0.006 * s), d, [0.038 * s, 0.021 * s, 0.012 * s]);
+      // the outer lobe, higher and further round: the sweep of the almond
+      const e = new THREE.Vector3(sx * 0.80, 0.06, 0.58).normalize();
+      k.face(lens, new THREE.SphereGeometry(1, 10, 7), on(e.x, e.y, e.z, -0.006 * s), e, [0.026 * s, 0.015 * s, 0.011 * s]);
+    }
+    // the mouth: one small dark slit, low on the lower mass
+    const md = new THREE.Vector3(0, -0.30, 0.95).normalize();
+    k.face(slit, plateGeo(0.016 * s, 0.0035 * s, 0.004 * s, 0.0015 * s, 1),
+      [0, 0.024 * s, 0.014 * s + 0.074 * s], md);
+    k.bake(headObj);
+  },
 };
 
 function speciesHead(sp, headObj, s, hg, ctx) {

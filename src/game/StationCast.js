@@ -179,10 +179,14 @@ export const SPECIES = [
     note: 'EXTRAPOLATED: traders and financiers, night dwellers. Built as an unremarkable humanoid so the crowd\'s night shift reads by dress and behaviour rather than by shape.',
     authority: 5,
     row: {
-      id: 'st-brakiri', name: 'Brakiri', hair: true, brows: true, eyes: true,
+      /* `headOf: 'brakiri'` is the dark ridged forehead — three ridges of
+       * hardened skin across the brow, `Bodies.SPECIES_HEADS.brakiri`. The
+       * heavy jaw is the face row. Before this the row was a human with the
+       * palette moved. */
+      id: 'st-brakiri', headOf: 'brakiri', name: 'Brakiri', hair: true, brows: true, eyes: true,
       skin: 0x9a7f6a, eye: 0x1c1208, sclera: 0xdcd2c2,
       frame: { scale: 1.006, head: 1.006, armLen: 1.00, legLen: 1.02, stature: 1.006 },
-      face: { skull: 0.05, jaw: 0.20, brow: 0.30 },
+      face: { skull: -0.20, jaw: 0.90, brow: 0.50, chin: 0.45, cheek: 0.20 },
     },
     robe: { outer: 0x2b2f3d, inner: 0x555c72, trim: 0x8a6f3a },
     wear: 'service',
@@ -213,7 +217,11 @@ export const SPECIES = [
     note: 'EXTRAPOLATED and WEAK — the source gives only "traders; saucer craft". Built small and large-headed so the tail of the crowd has a small silhouette in it. Overturned by any frame showing a Vree beside a human.',
     authority: 5,
     row: {
-      id: 'st-vree', headOf: 'keldor', name: 'Vree', hair: false, brows: false, eyes: true, ears: false, mouth: false,
+      /* `headOf: 'vree'` is its own head — a large grey oval, huge black
+       * almond eyes, no nose, a tiny mouth (`Bodies.SPECIES_HEADS.vree`). It
+       * wore the Kel Dor breath mask before this. `eyes: false` because the
+       * lenses are the head builder's, not the skull's. */
+      id: 'st-vree', headOf: 'vree', name: 'Vree', hair: false, brows: false, eyes: false, ears: false, mouth: false,
       skin: 0xc9cfd4, eye: 0x14161c, sclera: 0x14161c,
       frame: { scale: 0.857, head: 1.045, armLen: 1.06, legLen: 0.92, stature: 0.857 },
       face: { skull: -0.36, jaw: -1.00, brow: -0.70, cheek: -0.40, nose: -1.00, chin: -0.70, eyes: 0.90 },
@@ -279,10 +287,14 @@ export const SPECIES = [
     note: 'EXTRAPOLATED: "a reputation as scavengers and thieves". Short, long-armed and habitually stooped, so a Llort reads differently in a corridor without a single new mesh.',
     authority: 5,
     row: {
-      id: 'st-llort', name: 'Llort', hair: true, brows: true, eyes: true,
+      /* A broad flat face with wide-set eyes (the face row: the lowest
+       * skull and the widest eyes on the station) and a bulbous snout
+       * (`Bodies.SPECIES_HEADS.llort`). Bald, so the breadth of the head is
+       * the outline rather than a haircut. */
+      id: 'st-llort', headOf: 'llort', name: 'Llort', hair: false, brows: true, eyes: true,
       skin: 0x8e8570, eye: 0x1a1408, sclera: 0xc8c0a8,
       frame: { scale: 0.937, head: 0.956, armLen: 1.08, legLen: 0.92, stature: 0.937 },
-      face: { skull: -0.33, jaw: 0.60, brow: 0.55, cheek: 0.25, nose: 0.30 },
+      face: { skull: -0.90, jaw: 0.50, brow: 0.40, cheek: 0.90, nose: 0.60, eyes: 1.00, chin: -0.30 },
     },
     robe: { outer: 0x4a4238, inner: 0x7c7060, trim: 0x28231c },
     wear: 'dungarees',
@@ -311,7 +323,10 @@ export const SPECIES = [
     note: 'The tail: rare League species, unidentified traders, one-off visitors. A DISTRIBUTION, not a species — its per-individual spread is deliberately ~2x every other row\'s.',
     authority: 5,
     row: {
-      id: 'st-other', name: 'Other', hair: true, brows: true, eyes: true,
+      /* `headOf: 'other'`: each resident draws ONE feature off their own
+       * face numbers — a crest, ear frills, a cheek ridge or dark markings
+       * — so the tail is many species and not one face in a fourth palette. */
+      id: 'st-other', headOf: 'other', name: 'Other', hair: true, brows: true, eyes: true,
       skin: 0xa98d72, eye: 0x2a1e12, sclera: 0xe0d6c6,
       frame: { scale: 0.994, head: 1.044, armLen: 1.00, legLen: 1.00, stature: 0.994 },
       face: { skull: -0.12 },
