@@ -4,7 +4,7 @@ Written for whoever picks this up next, human or otherwise. It is not a status
 report; it is the set of things that cost time to learn and would cost the same
 again. Read the traps section before touching a tool.
 
-Repo: `longwong377/saber2` · branch `claude/battlefront-borz-improvements-1g2xei`
+Repo: `longwong377/saber2` · branch `claude/shark-development-ozwq6w`
 
 > **THE DEFAULT BRANCH HAS MOVED.** PR #1 merged 303 commits into
 > `claude/lightsaber-combat-game-lxw391` (merge `a092074`), so the default *is*
@@ -21,6 +21,120 @@ Playable two ways:
   publishes nothing, which is worth knowing before you worry about a push).
 - `node tools/pack.mjs <out.html>` — the whole game as ONE self-contained file,
   no server. See §3.
+
+---
+
+## 0. V17 — TWO ROUNDS OF HOSTILE AUDIT, AND WHAT THEY TAUGHT
+
+Branch `claude/shark-development-ozwq6w`, 5–6 Sep, merged to the default at
+`38933de`. The player's standing order: *"run a series of hostile objective
+audits against everything post-V14 — what is ACTUALLY WORKING IN THE GAME,
+against all my verbatim — fix any issues they find and re-run the entire
+audit again."* Two rounds ran. The second found more than the first.
+
+### 0.1 THE ONE SENTENCE WORTH KEEPING
+
+**A green gate is not evidence, and this round proved it three times over.**
+The tree went to 2825/0 with the Drum keeping 93% of every credit staked,
+with your own downed men deleted 0.7 s after falling, and with every station
+resident walking at the player at 2.7 m/s. Every one of those was found by
+somebody DRIVING THE GAME and reading a number, never by a check.
+
+### 0.2 THE DEFECT SHAPE THIS ROUND KEPT FINDING
+
+Not "a check that is wrong" — **a check that is green BECAUSE of the bug.**
+Nine of them, and they are the most expensive thing in the tree because each
+one is a standing claim that a broken thing works:
+
+| check | what it did |
+|---|---|
+| `games.mjs` | built the well-formed Drum ticket the panel never sent — green over a 100% house edge |
+| `melee.mjs` (knockback) | asserted on `struck.body.velocity`, THE EXACT FIELD THE BUG WROTE |
+| `melee.mjs` (stamina) | used a hand-made player with no `SaberController`, so it read the honest 5 and not the real 10.95 |
+| `pits.mjs` (announcer) | asserted `pitCall === announce`, i.e. REQUIRED the pit to call a dog fight as a podrace |
+| `pits.mjs` (door) | drove `venueOpen` with `standing: 0.9`, a value the game cannot produce |
+| `companions.mjs` | priced `TEMPERS` against `TEMPER_AXES` — a table against a table — over three axes nothing read |
+| `station.mjs` (walkers) | teleported the player onto a walk stretch and force-primed the pool, and said so in its own comment |
+| `counter.mjs` | divided prices by `PER_RUN_CAP`, the most a run *can* pay and never did |
+| `consequence.mjs` | (mine) asserted the guards SPAWNED; §11 says they COME |
+
+The repair is always the same and always worth the time: **drive the path a
+player takes, and assert the property rather than the artefact.**
+
+### 0.3 THE OTHER SHAPE: A CHECK THAT PINS PUNCTUATION
+
+Twice in one day. `preview.mjs` matched `'opt-bladelen'[^\n]*_refreshPreview`
+— requiring a handler to stay on ONE LINE — and went red when the slider
+gained a second statement. `counter.mjs` matched two whole statements with
+`indexOf` and went red when a branch grew a null guard. Neither property was
+ever in danger. **Assert the call, not the line it sits on.**
+
+### 0.4 WHAT LANDED (all merged, 171/0 across the thirteen suites it touched)
+
+Economy: the Drum kept 93% → 10.9%; 180 of 801 races were bettable → all of
+them; an abandoned tote ticket now pays on return (the Drum's own shape);
+sabacc had no stake at all; dejarik deadlocked 26% of games and carried
+`winner: w ?? -1`, which made every unfinished game a DRAW and its own check
+unfailable. Earning: strong play paid 2.25× weak and credits-per-minute FELL
+as you improved — now 3.36× and rising.
+
+The station: standing still shut every shop and killed you on three decks
+(two stacked causes — a crowd billing itself kinetic-contact damage, and an
+alarm that asked "is anyone hurt" instead of "who did it"). Every resident
+targeted the player, because §11 needs `friendlyFire` on and `canHarm` is
+symmetric. The guards spawned 47 m away with a 12 s alarm — arrival was
+structurally impossible — and on any deck but 40 they spawned at deck 40's
+floor height. The Brig had two grep hits and no implementation. Sixteen rooms
+answered the key by printing their own verb (37 whenever the job board was
+empty). The tram carried nobody. Every resident had a name shown nowhere.
+§3.4's ten events wrote two fields nothing read.
+
+Combat and flight: your own downed men were retired 0.7 s after falling with
+19 s of bleed left, because a ragdoll's `position` is its CHEST and
+`relocate` cannot move a ragdolled body — §4.9's whole recover-your-wounded
+window had no seconds in it. Punches did not animate (the arm solver re-aimed
+both arms at the hilt every frame), moved nobody (`addShove(e.body)` — the
+collision proxy), and cost 10.95 stamina while playing a lightsaber whoosh.
+Any damage while seated in the Starfury threw — and the SAME LINE in
+`HUD._drivePrompt` would have thrown every frame of every browser sortie.
+
+### 0.5 STILL OPEN, in the order to take them
+
+1. **Nobody walks on a flight deck.** Deck 12: 38 bodies on walk slots, ZERO
+   with a planned route; deck 32 the same. `destsOn`/`planRoute` know the
+   ring, the balcony and the spines, and neither flight deck has any.
+2. **61 dead exports** remain in `reachable.mjs`'s RESIDUE (of a census of
+   64, which may only fall). Two were caught being ADDED this session —
+   `Pilot.js::projectOnto` and `StationLife.js::runningEvent`, both second
+   doors onto a field that already had one.
+3. **The packed build is 33.0 MB and the chat upload limit is 30 MB.** The
+   link still serves it; the file can no longer be handed over. §12.2's own
+   ceiling is 34 MB and NO CHECK HOLDS IT.
+4. **The full gate takes ~3 hours** (205 suites, hundreds of booted worlds).
+   Do not treat it as a routine step mid-session; run the suites your lane
+   touches and save the gate for the end.
+5. Escape over a board not in `Screens.LIVE` answers `'nothing'` — every such
+   pane has its own button, so nobody is stranded, but rule 1 does not hold.
+6. The seam's freeze MOVED rather than went: first frames after a warm
+   arrival are 253/121/118/176 ms while `st.pending` drains.
+
+### 0.6 TRAPS THIS ROUND ADDED TO §2
+
+- **A global `fetch` shim outlives the file that installed it.** The gate runs
+  every suite in ONE process; a file-only `diskFetch` copied into a new check
+  broke `serve`, `keyart` and `music`, which start real dev servers. CHAIN to
+  the previous implementation for anything that is not a `file:` URL.
+- **`_twosuite.mjs` starts every check in a file CONCURRENTLY.** Four extra
+  booted worlds alone flipped an unrelated check from green to red with no
+  source change. Keep new worlds out of a check where you can.
+- **`st.day` is not a field a caller owns** — `tickStationClock` assigns it
+  from the durable fold every frame. A check that wrote it was measuring a
+  different day than it thought. Wind the fold with `passStationHours`.
+- **Read the ERROR, not the failing clause's name.** A red reported as "the
+  flush killed it" was a null dereference three files away that died before
+  the flush ran; an agent read the title and blamed a companion lane.
+- **Thirteen agents on four cores is slower than four.** Load hit 45 and every
+  lane crawled. The box is the constraint, not the parallelism.
 
 ---
 
