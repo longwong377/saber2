@@ -128,7 +128,7 @@ export async function run({ check, assert }) {
       // The three lists whose length is a fact about the game, not about the DOM
       assert(kids(doc, 'level-list').length === LEVEL_ORDER.length,
         `${kids(doc, 'level-list').length} theatres against ${LEVEL_ORDER.length} in LEVEL_ORDER`);
-      assert(kids(doc, 'opt-quality').length === 4, 'the fidelity tiers are not four');
+      assert(kids(doc, 'opt-quality').length === 5, 'the fidelity tiers are not five (auto plus the four rows)');
       assert(doc.getElementById('bind-list').children.length > 30, 'the key table did not render');
       assert(doc.getElementById('codex-grid').children.length > 20, 'the Codex did not render');
       // and the sliders in the markup were reached, which is the thing a regex
@@ -788,7 +788,7 @@ export async function run({ check, assert }) {
       assert(labelEl, 'the Bloom label is a bare text node again, so nothing can rewrite it');
       const label = labelEl.textContent;
       assert(/performance/i.test(label), `the label says "${label}" and never says why`);
-      const card = [...doc.getElementById('opt-quality').children][0];
+      const card = [...doc.getElementById('opt-quality').children][1];
       assert(/no bloom/i.test(card.textContent), 'the Performance card does not say what it removed');
       return `low: disabled, unticked, "${label}"`;
     } finally { close(); }
@@ -801,10 +801,10 @@ export async function run({ check, assert }) {
       assert(!box.disabled && box.checked, 'the box is dead on a tier that allows bloom');
       // and moving to Performance and back keeps the player's own answer
       const cards = [...doc.getElementById('opt-quality').children];
-      cards[0].dispatchEvent({ type: 'click' });
+      cards[1].dispatchEvent({ type: 'click' });
       assert(box.disabled && settings.bloom === true,
         'picking Performance changed the stored preference instead of overruling it');
-      cards[3].dispatchEvent({ type: 'click' });
+      cards[4].dispatchEvent({ type: 'click' });
       assert(!box.disabled && box.checked, 'the preference did not come back with the tier');
       return 'high → live; low → overruled, setting untouched; ultra → live again';
     } finally { close(); }

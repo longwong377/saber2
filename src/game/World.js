@@ -782,7 +782,9 @@ export class World {
     // here, a default of 1 in DEFAULT_SETTINGS, no control anywhere in the menu
     // and therefore no way of ever being anything but 1, while this comment
     // described the UI a player would go looking for and not find.
-    q = QUALITY[this.settings.quality] || QUALITY.high;
+    // 'auto' is not a row of the table: the engine is on whichever tier the
+    // tuner picked, and that is the one this world should be built for.
+    q = QUALITY[this.settings.quality] || QUALITY[this.engine?.quality] || QUALITY.high;
     // Terrain detail is the tier's own VIEW DISTANCE, normalised to `high`:
     // the mesh exists to be looked across, so the tier that draws to 900 m has
     // to carry the vertices for it. 380/520/700/900 against high's 700 gives
@@ -806,7 +808,7 @@ export class World {
     // load as well without a second line here to keep in step. It is safe this
     // early: its other clause is guarded on `this.particles`, which the pools
     // stage builds later in this same list.
-    this.applyQuality(this.settings.quality);
+    this.applyQuality(QUALITY[this.settings.quality] ? this.settings.quality : this.engine?.quality);
     detail = q.viewDist / QUALITY.high.viewDist;
     particleScale = (this.settings.particleScale ?? 1) * q.particles;
       } },

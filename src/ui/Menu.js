@@ -2176,6 +2176,9 @@ export const CODEX = [
   { keys: ['freecam'],
     text: () => '<b>Free camera</b> — the view comes off your body and the game '
       + 'STOPS while it is off. Fly it with the movement keys; press again to put it back.' },
+  { keys: ['perf'],
+    text: () => '<b>Frame-time box</b> — frame ms, draw calls, the station\'s own step, the tier '
+      + 'in use and your GPU, top-left. It logs a copy line you can paste. Press again to hide.' },
   { keys: ['lessonNext', 'lessonBack', 'lessonRepeat'],
     // "In the Dojo" named a level that has been deleted; training is a MODE now
     // and runs in whichever theatre the player picked. See MODES.training.
@@ -10093,6 +10096,9 @@ export class Menu {
     const qhost = document.getElementById('opt-quality');
     qhost.innerHTML = '';
     for (const [key, name, blurb] of [
+      // Not a row of QUALITY: the tuner in src/game/Perf.js walks the four
+      // real rows off the measured frame, and the F3 box says which it is on.
+      ['auto', 'Auto', 'Measures the frame while you play and picks the tier for you. Starts at Fidelity; the F3 overlay shows which.'],
       ['low', 'Performance', 'Smallest shadows, shortest view. For laptops and integrated graphics.'],
       ['medium', 'Balanced', 'A good default on most machines.'],
       ['high', 'Fidelity', 'Full shadows and a deep view.'],
@@ -10103,7 +10109,8 @@ export class Menu {
       // the one column of QUALITY that the tier can switch off under a control
       // the player also owns, and the Performance card said nothing about it
       // while silently overruling the Bloom checkbox.
-      const budget = `${Math.round(q.particles * 100)}% particles · ${Math.round(q.grass * 100)}% grass `
+      const budget = !q ? 'steps down after two slow windows, up after twenty good seconds'
+        : `${Math.round(q.particles * 100)}% particles · ${Math.round(q.grass * 100)}% grass `
         + `· ${q.viewDist} m view · ${q.shadow}px shadows${q.bloom ? '' : ' · no bloom'}`;
       const d = document.createElement('div');
       d.className = 'diff' + (this.s.quality === key ? ' sel' : '');

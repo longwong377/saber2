@@ -606,6 +606,12 @@ export const ACTIONS = [
   // is a press and not a hold: you take the mouse off the game the moment it
   // is on, and everything you do afterwards is flown with the movement keys.
   { id: 'freecam',    group: 'Interface', label: 'Free camera',      keys: ['KeyP'], pad: 'PadLB+PadR3' },
+  /* F3 for the frame-time box (src/game/Perf.js). A function key on purpose:
+   * it is a diagnostic, never a reflex, and the F row is the one row the game
+   * has left alone — Input lets F5/F11/F12 through to the browser and eats the
+   * rest, so F3 reaches nothing else. RB+B on the pad, the last RB chord with
+   * nothing on it. */
+  { id: 'perf',       group: 'Interface', label: 'Frame-time overlay', keys: ['F3'], pad: 'PadRB+PadB' },
 
   // The dojo's lesson navigation. Last round moved stasis and rend into this
   // table so that B and N could be SEEN to collide — and then left main.js's

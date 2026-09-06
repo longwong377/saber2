@@ -127,6 +127,7 @@ import { defaultBoonMods } from './game/Player.js';
 import { takeKeepsake } from './game/Keepsakes.js';
 import { clamp } from './engine/MathUtil.js';
 import { Screens, CALM } from './ui/Screens.js';
+import { Perf } from './game/Perf.js';
 import { SkillTree } from './ui/SkillTree.js';
 import { Communion, shapeOf, currentName, dominantAxis, FACETS, LOCKED } from './game/LivingForce.js';
 
@@ -356,8 +357,18 @@ const escName = (s) => String(s == null ? '' : s).replace(/[<>&]/g, (c) => ({ '<
  * the dead checkbox went unnoticed.
  */
 function qualityBloom() {
-  return !!settings.bloom && (QUALITY[settings.quality] ?? QUALITY.high).bloom;
+  // Under 'auto' the tier is whatever the tuner put the engine on.
+  return !!settings.bloom && (QUALITY[settings.quality] ?? QUALITY[engine.quality] ?? QUALITY.high).bloom;
 }
+
+/* ── THE FRAME-TIME BOX AND THE AUTO-TUNE (V19 hole 2, src/game/Perf.js) ──
+ * `applyTier` is the same three calls the options screen makes for a tier, so
+ * a tier the tuner picks reaches exactly what a tier the player picks does. */
+function applyTier(q) { engine.setQuality(q); engine.setBloom(qualityBloom()); world?.applyQuality(q); }
+const perf = new Perf(engine, {
+  applyTier,
+  notify: (t, sub) => (world ? world.notify(t, sub, 'flavour') : hud.message(t, sub)),
+});
 
 engine.setResolutionScale(settings.resolutionScale);
 engine.setBloom(qualityBloom());
@@ -366,6 +377,8 @@ audio.setVolume(settings.volume);
 audio.setMusicVolume(settings.music);
 
 let world = null;
+// After `world` exists to be read: the seam above touches it.
+if (settings.quality === 'auto') perf.setAuto(true);
 let last = performance.now();
 let accum = 0;
 let fpsSmooth = 60;
@@ -439,7 +452,7 @@ const menu = new Menu(settings, {
   },
   // The renderer takes the tier immediately; the live world takes what it can
   // (see World.applyQuality — emission is live, buffers are next deploy).
-  onQualityChange: (q) => { engine.setQuality(q); engine.setBloom(qualityBloom()); world?.applyQuality(q); },
+  onQualityChange: (q) => { if (q === 'auto') perf.setAuto(true); else { perf.setAuto(false); applyTier(q); } },
   onResolution: (v) => engine.setResolutionScale(v),
   onBloom: () => engine.setBloom(qualityBloom()),
   onGrain: (v) => engine.setGrain(v),
@@ -7088,6 +7101,8 @@ function frame(now) {
   engine.render(dt);
   engine.profiler.end();
   hud.perf(engine.profiler, settings.showPerf);
+  if (input.actHit('perf')) perf.toggle();
+  perf.frame(now, { world, playing: screens.state === 'playing' && !!world && !world.paused });
   input.end();
 }
 
