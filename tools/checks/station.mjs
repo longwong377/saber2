@@ -1463,7 +1463,7 @@ export async function run({ check, assert, THREE }) {
      * the exact centre, which is 3.25 m in through a door on a 11 m room and
      * the thing you are there to look at.
      */
-    const { PLACES } = await import('../../src/game/StationPlan.js');
+    const { PLACES, DECK_Y: DYY } = await import('../../src/game/StationPlan.js');
     const { stationMats } = await import('../../src/game/Station.js');
     const { buildPlace } = await import('../../src/game/StationKit.js');
     const BY_DESIGN = new Set([24, 56]);
@@ -1472,6 +1472,9 @@ export async function run({ check, assert, THREE }) {
     let walked = 0;
     for (const p of PLACES) {
       if (p.room || p.ring || p.band === 'ring' || !p.w || !p.d || p.external) continue;
+      /* The flight and Cobra decks' rooms carry an explicit `door` in the
+       * plan and are entered where it says; the −Z convention is the drum's. */
+      if (p.band === 'deck32' || p.band === 'deck12') continue;
       const M = stationMats(p.deck);
       const boxes = [];
       const world = {
@@ -1483,9 +1486,12 @@ export async function run({ check, assert, THREE }) {
       buildPlace(world, new THREE.Group(), { ...p, x: 0, z: 0, yaw: 0 }, M, st);
       walked++;
       let hit = null;
+      /* at the deck's own height — a room on 44 is built at 12.5, and a walk
+       * at 0.5 m walked under every one of them (V18) */
+      const y0 = DYY[p.deck] ?? 0;
       for (let s = -1.5; s <= 3.5 && !hit; s += 0.25) {
         const z = -p.d / 2 + s;
-        for (const y of [0.5, 1.4]) {
+        for (const y of [y0 + 0.5, y0 + 1.4]) {
           for (const b of boxes) {
             v.set(-b.c.x, y - b.c.y, z - b.c.z);
             if (b.q) { q.copy(b.q).invert(); v.applyQuaternion(q); }

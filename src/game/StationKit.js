@@ -1195,6 +1195,21 @@ export function signPanel(lines, opts = {}) {
  * `p.w` × `p.d` × `p.h` its interior. So a builder never does arithmetic about
  * where in the drum it is, which is what makes fifty of them readable.
  */
+/**
+ * THE GANGWAY FROM THE RING TO A TRAM PLATFORM (V18). A platform stands at
+ * `DRUM.tramR` (97 m), outside the skin; its door is at 89 m and the ring's
+ * edge at 85.5 — and nothing laid the seven metres between. The gate that
+ * drops a body at every door found air under all four platforms. A 6 m
+ * deck from the platform's front out to the ring, with a kerb rail each side.
+ */
+function gangway(kit, M, d, len = 9, wide = 6) {
+  kit.slab(M.wing, wide, 0.4, len, 0, -0.2, -d / 2 - len / 2 + 0.2, { collide: true, bevel: 0 });
+  for (const s of [-1, 1]) {
+    kit.slab(M.dark, 0.12, 1.0, len, s * (wide / 2 - 0.1), 0.5, -d / 2 - len / 2 + 0.2, { collide: true, bevel: 0 });
+    kit.slab(M.strip, 0.06, 0.05, len - 0.4, s * (wide / 2 - 0.1), 1.02, -d / 2 - len / 2 + 0.2, { collide: false, bevel: 0 });
+  }
+}
+
 export const SHAPES = {
 
   /* ══════════════════════════════════════════════════════════════════════
@@ -2260,8 +2275,11 @@ export const SHAPES = {
     try { stripped = strippedBunks(); } catch { stripped = new Map(); }
     const bunks = { total: bays * 4, stripped: [] };
     for (let i = 0; i < bays; i++) {
-      const x = -w / 2 + (w / bays) * (i + 0.5);
       for (const s of [-1, 1]) {
+        /* The door side (−Z) takes four bays, spaced so none stands in the
+         * doorway; the far wall keeps five (V18, the doorway walk). */
+        if (s < 0 && i === bays - 1) continue;
+        const x = s < 0 ? -w / 2 + (w / (bays - 1)) * (i + 0.5) : -w / 2 + (w / bays) * (i + 0.5);
         /* The locker divider that MAKES the bay. */
         if (i) kit.slab(M.dark, 0.5, 2.1, 2.0, x - w / (bays * 2), 1.05, s * (d / 2 - 1.2), { collide: true, bevel: 0 });
         /* Two bunks, one over the other. */
@@ -2296,7 +2314,9 @@ export const SHAPES = {
   doorcorridor(kit, M, p) {
     const { w, d, h } = p;
     floor(kit, M, w, d, 0, M.dark);
-    for (const s of [-1, 1]) kit.slab(M.hull, w, h, 0.4, 0, h / 2, s * d / 2, { collide: true, bevel: 0 });
+    kit.slab(M.hull, w, h, 0.4, 0, h / 2, d / 2, { collide: true, bevel: 0 });
+    /* the door side is two halves with the doorway between (V18) */
+    for (const sx of [-1, 1]) kit.slab(M.hull, (w - 3.2) / 2, h, 0.4, sx * (1.6 + (w - 3.2) / 4), h / 2, -d / 2, { collide: true, bevel: 0 });
     ceiling(kit, M, w, d, h, { ribs: 8, strips: false });
     const n = 6;
     for (let i = 0; i < n; i++) {
@@ -2337,6 +2357,7 @@ export const SHAPES = {
     for (let i = 0; i < 5; i++) {
       const x = -w / 2 + (w / 5) * (i + 0.5);
       for (const s of [-1, 1]) {
+        if (s < 0 && i === 2) continue; /* not across the doorway (V18) */
         kit.slab(M.wing, 1.1, 2.1, 0.14, x, 1.05, s * (d / 2 - 0.3), { collide: true, bevel: 0 });
         kit.slab(M.wing, 1.1, 2.1, 0.14, x, gy + 1.35, s * (d / 2 - 0.3), { collide: true, bevel: 0 });
       }
@@ -2364,7 +2385,7 @@ export const SHAPES = {
       }
     }
     /* Braziers — the room's only light, and low. */
-    for (const [x, z] of [[-w / 4, 0], [w / 4, 0], [0, -d / 3], [0, d / 3]]) {
+    for (const [x, z] of [[-w / 4, 0], [w / 4, 0], [w / 6, -d / 3], [0, d / 3]]) { /* the near one off the door line (V18) */
       kit.post(M.dark, 0.5, 0.4, 0.8, x, 0.4, z, { radial: 8, collide: true });
       kit.post(M.status, 0.42, 0.2, 0.35, x, 0.95, z, { radial: 8 });
     }
@@ -2383,7 +2404,7 @@ export const SHAPES = {
     ceiling(kit, M, w, d, h, { ribs: 5 });
     /* A colonnade round the court, gilt. */
     for (let i = 0; i < 12; i++) {
-      const a = TAU * (i / 12);
+      const a = TAU * ((i + 0.5) / 12); /* half a step round, so no column stands on the door line (V18) */
       const rr = Math.min(w, d) / 2 - 2.2;
       kit.post(M.mark, 0.32, 0.28, h - 0.6, rr * Math.sin(a), (h - 0.6) / 2, rr * Math.cos(a), { radial: 8, collide: true });
     }
@@ -2398,7 +2419,8 @@ export const SHAPES = {
       kit.slab(M.mark, 1.0, 1.6, 0.08, -w / 2 + 2 + i * ((w - 4) / 5), 2.6, d / 2 - 0.3, { collide: false, bevel: 0 });
     }
     /* The card room, screened. */
-    kit.slab(M.mark, 6, h - 1.2, 0.16, 0, (h - 1.2) / 2, -d / 2 + 3.6, { collide: true, bevel: 0 });
+    /* the gilt screen, in two leaves either side of the door line (V18) */
+    for (const sx of [-1, 1]) kit.slab(M.mark, 2.4, h - 1.2, 0.16, sx * 3.0, (h - 1.2) / 2, -d / 2 + 3.6, { collide: true, bevel: 0 });
     loose(kit, 0, 0, -d / 2 + 2.0, (world, q) => tableBody(world, q, M, 2.0, 2.0, 0.78));
     for (let i = 0; i < 4; i++) loose(kit, Math.cos(i * 1.57) * 1.5, 0, -d / 2 + 2.0 + Math.sin(i * 1.57) * 1.5, (world, q) => chairBody(world, q, M));
   },
@@ -2412,6 +2434,14 @@ export const SHAPES = {
     const r = Math.min(w, d) / 2;
     for (let i = 0; i < 3; i++) {
       const a = TAU * (i / 3) + Math.PI / 3;
+      if (i === 1) {
+        /* The base of the triangle is the FRONT wall, across the door (the
+         * walk-the-world gate found it through a body's chest, V18): it is
+         * two halves with the doorway between. */
+        const L = r * 1.75, gap = 3.2, half = (L - gap) / 2;
+        for (const sx of [-1, 1]) kit.slab(M.hull, half, h, 0.4, sx * (gap / 2 + half / 2), h / 2, r * 0.86 * Math.cos(a), { ry: a, collide: true, bevel: 0 });
+        continue;
+      }
       kit.slab(M.hull, r * 1.75, h, 0.4, r * 0.86 * Math.sin(a), h / 2, r * 0.86 * Math.cos(a), { ry: a, collide: i !== 0, bevel: 0 });
     }
     /* The soffit is a triangle too, and it steps up to a crystal at the apex. */
@@ -2517,6 +2547,7 @@ export const SHAPES = {
       for (let i = 0; i < 5; i++) {
         for (let k = 0; k < 3; k++) {
           const x = -w / 2 + (w / 5) * (i + 0.5), y = 0.3 + k * 1.25;
+          if (s < 0 && i === 2) continue; /* the doorway (V18) */
           kit.slab(M.wing, w / 5 - 0.2, 1.1, 2.2, x, y + 0.55, s * (d / 2 - 1.2), { collide: true, bevel: 0 });
           kit.slab(M.dark, w / 5 - 0.6, 0.9, 0.2, x, y + 0.55, s * (d / 2 - 2.3), { collide: false, bevel: 0 });
           if ((i + k) % 2) kit.slab(M.strip, w / 5 - 0.9, 0.06, 0.08, x, y + 1.0, s * (d / 2 - 2.35), { collide: false, bevel: 0 });
@@ -2536,6 +2567,7 @@ export const SHAPES = {
     for (const s of [-1, 1]) {
       for (let i = 0; i < 6; i++) {
         const x = -w / 2 + (w / 6) * (i + 0.5);
+        if (s < 0 && (i === 2 || i === 3)) continue; /* the doorway (V18) */
         kit.slab(M.wing, w / 6 - 0.25, 1.5, 1.1, x, 0.75, s * (d / 2 - 0.9), { collide: true, bevel: 0 });
         kit.post(M.glass, 0.42, 0.42, 0.12, x, 0.95, s * (d / 2 - 1.5), { rx: Math.PI / 2, radial: 10 });
       }
@@ -2705,19 +2737,22 @@ export const SHAPES = {
      * the whole silhouette. Two high on the long wall, one high opposite, and
      * the ribs are drawn on rather than modelled — REFERENCE.md rule 6. */
     const CW = 6.0, CH = 2.6, CD = 2.44;
-    const box = (x, y, z, mat, ribs = true) => {
-      kit.slab(mat, CW, CH, CD, x, y + CH / 2, z, { collide: true, bevel: 0.04 });
-      if (!ribs) return;
+    const box = (x, y, z, mat, ribs = true, ry = 0) => {
+      kit.slab(mat, CW, CH, CD, x, y + CH / 2, z, { ry, collide: true, bevel: 0.04 });
+      if (!ribs || ry) return;
       for (let r = 0; r < 7; r++) {
         kit.slab(M.dark, 0.06, CH - 0.3, 0.03, x - CW / 2 + 0.6 + r * 0.8, y + CH / 2, z + CD / 2 + 0.02,
           { collide: false, bevel: 0 });
       }
     };
-    const zBack = -d / 2 + 1.8, zFront = d / 2 - 1.8;
+    /* The door is at −Z (V18): the two-high row and the open box stand on
+     * the FAR wall, and the single container lies along the right wall so
+     * the aisle from the door is clear — the gate found two stacks across it. */
+    const zBack = d / 2 - 1.8;
     box(-w / 2 + 4.0, 0, zBack, M.hull);
     box(-w / 2 + 4.0, CH, zBack, M.deep);
     box(w / 2 - 4.4, 0, zBack, M.deep);
-    box(0, 0, zFront, M.hull);
+    box(w / 2 - 1.5, 0, -d / 2 + 4.2, M.hull, true, Math.PI / 2);
 
     /* THE ONE THAT IS OPEN, and it faces the door. Its far wall is set back so
      * the mouth reads as depth rather than as a painted rectangle, and the
@@ -2757,6 +2792,7 @@ export const SHAPES = {
   glassplatform(kit, M, p) {
     const { w, d, h } = p;
     floor(kit, M, w, d, 0, M.wing);
+    gangway(kit, M, d);
     for (let i = 0; i < 9; i++) {
       const a = Math.PI * (i / 8);
       kit.slab(M.glass, 0.5, 0.4, d, (d / 2 + 1) * Math.cos(a) * 0 + Math.cos(a) * (w / 2 + 0.6), Math.sin(a) * (h - 0.6) + 0.3, 0, { rz: -a, collide: false, bevel: 0 });
@@ -2770,6 +2806,7 @@ export const SHAPES = {
    * with a bench island down the middle. */
   brassplatform(kit, M, p) {
     const { w, d, h } = p;
+    gangway(kit, M, d);
     floor(kit, M, w, d, 0, M.mark);
     for (const s of [-1, 1]) kit.slab(M.hull, 0.4, h, d, s * w / 2, h / 2, 0, { collide: true, bevel: 0 });
     for (let i = 0; i < 10; i++) {
@@ -2777,13 +2814,14 @@ export const SHAPES = {
       kit.slab(M.mark, w, 0.4, 0.5, 0, h - 0.2, z, { collide: false, bevel: 0 });
       if (i % 2) kit.slab(M.strip, w * 0.5, 0.07, 0.14, 0, h - 0.5, z, { collide: false, bevel: 0 });
     }
-    kit.slab(M.mark, 1.6, 0.5, d - 3, 0, 0.25, 0, { collide: true, bevel: 0 });
-    for (let i = 0; i < 4; i++) loose(kit, 0, 0.5, -d / 2 + 2.4 + i * ((d - 5) / 3), (world, q) => boxBody(world, q, M, 1.2, 0.4, 0.6, M.mark, 22, 'bench'));
+    kit.slab(M.mark, 1.6, 0.5, d - 3, 3, 0.25, 0, { collide: true, bevel: 0 }); /* off the door line (V18) */
+    for (let i = 0; i < 4; i++) loose(kit, 3, 0.5, -d / 2 + 2.4 + i * ((d - 5) / 3), (world, q) => boxBody(world, q, M, 1.2, 0.4, 0.6, M.mark, 22, 'bench'));
   },
 
   /** #40.3 Quarters — TIMBER: low and warm, slatted screens, hanging lamps. */
   timberplatform(kit, M, p) {
     const { w, d, h } = p;
+    gangway(kit, M, d);
     floor(kit, M, w, d, 0, M.deep);
     for (const s of [-1, 1]) {
       for (let i = 0; i < 14; i++) {
@@ -2801,6 +2839,7 @@ export const SHAPES = {
   /** #40.4 Command — STEEL: bare, guarded, a checkpoint arch and one bench. */
   steelplatform(kit, M, p) {
     const { w, d, h } = p;
+    gangway(kit, M, d);
     floor(kit, M, w, d, 0, M.dark);
     for (const s of [-1, 1]) kit.slab(M.wing, 0.5, h, d, s * w / 2, h / 2, 0, { collide: true, bevel: 0 });
     kit.slab(M.wing, w + 1, 0.6, d, 0, h + 0.3, 0, { collide: true, bevel: 0 });
@@ -2835,7 +2874,7 @@ export const SHAPES = {
     /* The window, and the dish turning outside it. */
     kit.slab(M.glass, 3.4, 2.2, 0.12, 0, 2.0, r - 0.2, { collide: true, bevel: 0 });
     kit.post(M.wing, 2.6, 0.6, 0.5, 0, 2.2, r + 2.6, { rx: -1.1, radial: 12 });
-    for (let i = 0; i < 4; i++) counter(kit, M, 2.2, 0.9, (i - 1.5) * 2.6, -r + 2.4, Math.PI, 0.95);
+    for (const sx of [-1, 1]) counter(kit, M, 2.2, 0.9, sx * 3.4, -r + 2.4, Math.PI, 0.95); /* two, either side of the door line (V18) */
   },
 
   /** #43 Medbay: a TRIAGE HALL. Six curtained bays down one side, the surgery
@@ -2950,7 +2989,7 @@ export const SHAPES = {
     /* The saber vault: a heavy round door in the end wall. */
     kit.post(M.wing, 1.3, 1.3, 0.4, -w / 2 + 1.2, 1.6, -d / 2 + 1.2, { rz: Math.PI / 2, radial: 14, collide: true });
     kit.post(M.strip, 0.3, 0.3, 0.1, -w / 2 + 1.0, 1.6, -d / 2 + 1.2, { rz: Math.PI / 2, radial: 10 });
-    counter(kit, M, 4.0, 1.0, 0, -d / 2 + 1.4, 0, 1.05);
+    counter(kit, M, 4.0, 1.0, -w / 2 + 4.5, -d / 2 + 1.4, 0, 1.05); // beside the door, not across it (V18)
     /* The range: glass, then a lane with targets down it. */
     kit.slab(M.glass, 10, h - 0.8, 0.16, w / 2 - 7, h / 2 - 0.4, -d / 2 + 3.0, { collide: true, bevel: 0 });
     for (let i = 0; i < 3; i++) {
@@ -2997,7 +3036,7 @@ export const SHAPES = {
     for (let i = 0; i < 6; i++) ringOf(kit, M, M.wing, 3.4, 0.6, 16, i * (h / 6), { rad: 0.3 });
     /* The spiral: eight catwalk segments climbing a full turn and a half. */
     for (let i = 0; i < 12; i++) {
-      const a = TAU * (i / 8), y = 3 + i * (h - 8) / 12;
+      const a = TAU * ((i + 0.5) / 8), y = 3 + i * (h - 8) / 12; /* half a step round: none on the door line (V18) */
       const rr = r - 3.5;
       catwalk(kit, M, 2 * rr * Math.tan(Math.PI / 8) * 1.06, 2.4, y, rr * Math.sin(a), rr * Math.cos(a), a + Math.PI / 2);
       kit.post(M.dark, 0.2, 0.2, y, rr * Math.sin(a), y / 2, rr * Math.cos(a), { radial: 6, collide: true });
@@ -3057,6 +3096,7 @@ export const SHAPES = {
     for (const s of [-1, 1]) {
       for (let i = 0; i < 8; i++) {
         const x = -w / 2 + (w / 8) * (i + 0.5);
+        if (s < 0 && (i === 3 || i === 4)) continue; /* the doorway (V18) */
         kit.slab(M.hull, w / 8 - 0.2, 2.1, 1.2, x, 1.05, s * (d / 2 - 0.7), { collide: true, bevel: 0 });
         kit.slab(M.dark, w / 8 - 0.5, 1.8, 0.5, x, 0.9, s * (d / 2 - 1.35), { collide: false, bevel: 0 });
         kit.slab(M.strip, 0.3, 0.06, 0.1, x, 1.95, s * (d / 2 - 1.4), { collide: false, bevel: 0 });
@@ -3076,6 +3116,8 @@ export const SHAPES = {
      * loose on top (they are the sandbox). */
     for (const s of [-1, 1]) {
       for (let i = 0; i < 5; i++) {
+        /* the middle stack on the door side would stand in the doorway (V18) */
+        if (s < 0 && i === 2) continue;
         for (let k = 0; k < 3; k++) {
           const x = -w / 2 + (w / 5) * (i + 0.5), y = k * 2.6;
           kit.slab(k % 2 ? M.deep : M.wing, w / 5 - 0.4, 2.5, 4.6, x, y + 1.25, s * (d / 2 - 3), { collide: true, bevel: 0 });
