@@ -144,6 +144,11 @@ at 28° from one bearing per deck with a cool rim, so a room has a lit side and
 a dark side (`lightStation`); the ring's lid hangs lamps and ducts; partners
 stand together in their quarters.
 
+**The gate on all of it:** station 44/44, stationlife 9/9, home 14/14,
+medbay 13/13, consequence 7/7, holodeck 13/13, flightops 18/18, starfury 2/2,
+bench 6/6, games 11/11, pits 21/21, spectacle 20/20, tote 25/25, work 7/7,
+melee 14/14, packed 5/5 at 29.48 MB. Merged to the default.
+
 **Tried and reverted, and worth knowing:** the texture foundry on the
 station's walls. Brushed plate and duracrete at any repeat that read as a
 panel read as terrazzo and dirt against the cel bands. Flat fills with ink
