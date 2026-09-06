@@ -119,6 +119,7 @@ import { dressShuttle, stepShuttle, shuttleKey, undressShuttle } from './Shuttle
 import { seatedOnTram } from './TramCabin.js';
 import { stepGreetings, undressGreetings } from './Greetings.js';
 import { dressRemoteTest, stepRemoteTest, remoteTestKey, undressRemoteTest } from './RemoteTest.js';
+import { stepCoopGames, coopGamesKey, coopGuest } from './CoopGames.js'; // V19 addition 4: the two-player things
 
 import * as Food from './Food.js';
 import { shelfFor } from './Counter.js';
@@ -3094,6 +3095,7 @@ export function stationKey(world) {
    * upright seat is within `SIT_REACH`, and takes it again to stand you up.
    * Step away from every chair and the room's verb answers as before.
    */
+  if (coopGamesKey(world)) return true; // V19 addition 4: a shared table or tote window with the other human within 3 m — before the chair beside you
   if (sitKey(world)) return true;
   /**
    * ── AND THE PLACE TEST IS *BELOW* THE TALK BRANCH, WHICH IS THE POINT ───
@@ -3602,7 +3604,7 @@ function questContext(world) {
    * been fought in this world; what this line stops is a reader of a field
    * nothing writes. */
   const kinds = world?.killedKinds ? Object.keys(world.killedKinds) : null;
-  return { men, kinds: kinds && kinds.length ? kinds : null };
+  return { men, kinds: kinds && kinds.length ? kinds : null, guest: coopGuest(world) }; // V19 addition 4: the crate is offered only with a guest
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -5105,6 +5107,7 @@ export function stepStation(world, dt) {
   stepStationSound(world, st, dt); // V18 hole 7: crossfade the bed under the player
 
   stepShuttle(world, dt); stepGreetings(world, world._stationLife, dt); stepRemoteTest(world, dt);
+  stepCoopGames(world, dt); // V19 addition 4: the shared hand, the side bet, the crate
 
 
   const cam = world.player?.camera?.obj || world.player;
