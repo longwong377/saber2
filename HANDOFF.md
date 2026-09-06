@@ -39,6 +39,96 @@ Playable two ways:
 
 ---
 
+## 0. V17b — THE REVIEW OF EVERYTHING POST-SHARK, AND THE ONE THING IT FOUND
+
+Branch `claude/saber-game-review-f23c9s`, 6 Sep, cut off the default at
+`0b45752`. The player's V17 brief, logged as asked (condensed; the intent is
+the whole of it):
+
+> *Read the handoff and log my request. Since 9/3 Opus 5 has built Shark, V15,
+> V16 and more. Look at all of it and fix or redo anything broken, lazy or bad;
+> make major changes if you wish. What I want: a living, breathing station — a
+> mix of the B5 species and our Star Wars characters, working parts that do
+> something, a sense of scale, endless things to do, everything with weight and
+> physics like Battlefield Borz, every NPC an individual with a home, job, task,
+> partner. Most importantly the station cannot read as a series of connected
+> boxes — think DS9, Babylon 5's cylinder, a Star Trek ship, Galactica. Every
+> wall, floor and ceiling has a million things going on; Opus 5 always built
+> bare interiors and that ruins the immersion. Everything cel-shaded, everything
+> touchable real, different from run to run, room for surprise. Everything must
+> still work in the original game. Give me critiques and future ideas.*
+
+### 0.1 WHAT THE CONTACT SHEET SAID, BEFORE A LINE WAS READ
+
+`tools/_stationshot.mjs` on all three decks, every place from its door. The
+verdict was one sentence and it was exactly the player's fear: **the imported
+Zocalo reads as a place; every kit-built room and every corridor reads as a
+flat box with a lid.** Tan on 40, white on 44, grey on 48 — a plan is not what
+a player sees from a door, the SURFACES are, and every surface was one slab in
+one material. The plans underneath are genuinely varied (rule 4 measures it
+and it is true); it did not matter, because a sunken bar in a bare box is a
+bare box with a hole in it.
+
+Everything else the suites claim was re-run and holds: 44/44 on `station`,
+9/9 `stationlife`, 13/13 `medbay`, 7/7 `coop-home`, 14/14 `home`. §0.5's
+open item 1 ("nobody walks on a flight deck") is CLOSED in the tree — the
+station suite's own check reads *"2 flight decks walked"*.
+
+### 0.2 WHAT LANDED — THE DRESSING, in the four parts and not in fifty rooms
+
+`StationKit.dressWallRun` / `dressSoffit` / `dressFloor`, called from the
+kit's own `walls`, `ceiling`, `floor` and `arcWall`, and from
+`Station.buildSpines`. So all 79 builders and every corridor got it in one
+change and every future builder gets it for free:
+
+- **By deck** (§3.1 rule 2): 40 — wing panels over a brass dado, sconces,
+  pilasters, hanging amber lamps, coffers; 44 — white panels under timber
+  battens, lit "window" panels, timber slats across the soffit, pendants;
+  48/32/12 — pipe bundles at dado height, conduit drops to junction boxes,
+  caged lamps, ducts and a rung cable tray overhead, plate seams underfoot;
+  the dome is sparse. Every deck: skirting, a floor border, a lit threshold.
+- **By seed**: `kit.dressSeed` is the place, so bay widths and which bay is
+  a vent, a hatch, a service panel, a board or a window are the same on every
+  visit and different in every room.
+- **Cost**: triangles, never draws. Deck 40's station geometry went 316 k →
+  761 k triangles (bound 3 M); shell draws unchanged at 9, deck draws 204 of
+  400. Every piece is `collide: false` and at most 12 cm proud.
+- **Rule 4 and the walkway rule** both still pass; the pictures are in
+  `tools/_stationshot.mjs`'s output — re-shoot and look, do not take this
+  paragraph's word for it.
+
+### 0.3 THE TRAP IT ADDED
+
+**`Home.js` finds the cabin's movable partition by scanning every mesh in the
+room's group for vertices inside the declared rectangle.** A skirting board,
+a floor band or a soffit slat crossing that rectangle is read as part of the
+wall and the takeover refuses ("4 meshes carry geometry inside the
+partition's rectangle") — ten `home` checks went red at once. The answer is
+`kit.dressKeep`: a list of rectangles in the room's frame that the dressing
+leaves alone, declared by `SHAPES.twinroom` for the partition. Any future
+room whose furniture is selected by geometry rather than by handle needs the
+same declaration, or a keep-out by handle in `Home.js` — the second is the
+better fix and was not made here.
+
+### 0.4 STILL OPEN, and worth the next session
+
+1. **Furniture density.** The rooms are dressed now; they are still under-
+   furnished for their `heads` — the Fresh Air seats four tables for sixteen
+   diners, the Pit has one desk for twelve players. That is per-builder work
+   (loose `Prop` bodies, so it is also more sandbox) and `station-sandbox`'s
+   "a place with nothing in it to pick up" bound should rise with it.
+2. **Renderer draw calls.** The station suite bounds `st.draws` (204); the
+   renderer in the browser reports ~1 250 calls on deck 40 with 60 bodies and
+   170 props up. §12.2's 400 is a bound on the kit, not on the frame; the
+   frame's number has never been read on a real card (§12.4). Read it.
+3. **Door framings.** Several door shots stand inside a jamb or a fixture
+   (#7, #34, #41). The shot tool stands exactly ON the door line; a player
+   arrives a metre short of it. Harmless in play, useless as a picture — the
+   tool should step back 1.5 m.
+4. **The between-space still has flat SOFFITS on the ring** (the annulus over
+   the walk). The spines and rooms are dressed; the ring's lid is the ribs
+   `buildRing` already lays and nothing between them.
+
 ## 0. V17 — TWO ROUNDS OF HOSTILE AUDIT, AND WHAT THEY TAUGHT
 
 Branch `claude/shark-development-ozwq6w`, 5–6 Sep, merged to the default at

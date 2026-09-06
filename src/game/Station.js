@@ -49,7 +49,7 @@ import { Kit, propMaterials, makeCrate } from '../world/Props.js';
 import { deckMats, factionOf } from './DeckKit.js';
 import { loadRoom, materialKeyFor } from './StationMesh.js';
 import { PLACES, PLACE, DECK_Y, DRUM, CORRIDOR, SHAFTS, placesOn, floorOf, sectorAt } from './StationPlan.js';
-import { buildPlace, SHAPES, buildWays, dressWayfinding } from './StationKit.js';
+import { buildPlace, SHAPES, buildWays, dressWayfinding, dressWallRun } from './StationKit.js';
 import { dressDeckLift, stepDeckLift, undressDeckLift, liftKey, liftFloors } from './DeckLift.js';
 import { dressStationLife, primeStationLife, stepStationLife, undressStationLife, dressTram,
   STOPS, headcount, servedHere } from './StationLife.js';
@@ -715,6 +715,14 @@ function buildSpines(kit, M, deck) {
     for (const s of [-1, 1]) {
       kit.slab(M.hull, 0.5, DRUM.storey, len, s * (hw + 0.25), DRUM.storey / 2, 0, { collide: true, bevel: 0 });
       kit.slab(M.strip, 0.1, 0.12, len * 0.9, s * hw, DRUM.storey - 0.9, 0, { collide: false, bevel: 0 });
+      /* WHAT IS ON THE WALL. A spine was two flat slabs and a lid — the
+       * contact sheet's plainest picture on every deck — and it is the walk
+       * every visit takes. The corridor at local +X faces the walk at −X, so
+       * it turns −π/2 into the run's frame; the other turns +π/2. The run
+       * lies along the spine, which is local Z here, so the wall's frame is
+       * rotated a quarter turn from the spine's own. */
+      kit.dressSeed = deck * 1000 + deg;
+      dressWallRun(kit, M, len - 1.0, DRUM.storey, s * hw, 0, 0, s * Math.PI / 2, { sparse: true, salt: s + 9 });
     }
     kit.slab(M.dark, DRUM.spineW + 1, 0.4, len, 0, DRUM.storey + 0.2, 0, { collide: false, bevel: 0 });
     kit.pop();

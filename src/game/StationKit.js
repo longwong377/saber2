@@ -83,6 +83,354 @@ const TAU = Math.PI * 2;
 /** A floor plate. Every place has one; what differs is what stands on it. */
 function floor(kit, M, w, d, y = 0, mat = null) {
   kit.slab(mat || M.deep, w, 0.4, d, 0, y - 0.2, 0, { collide: true, bevel: 0 });
+  dressFloor(kit, M, w, d, y);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  THE DRESSING — what is ON a wall, a soffit and a floor, so that a room
+ *  is not "a roof plus four walls" (HANGAR.md's definition of a box)
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * Fifty-odd builders below call `walls`, `ceiling`, `floor` and `arcWall`,
+ * and every one of them got the same thing: a flat slab per face with one
+ * material on it. The contact sheet (V17) made the verdict unambiguous —
+ * the imported Zocalo reads as a place and every kit-built room reads as a
+ * tan (or white, or grey) box with a lid, whatever its plan. A plan is not
+ * what a player sees from the door; the SURFACES are. A real station's
+ * walls carry panelling, conduit, vents, hatches, lamps, trim, signage; its
+ * soffits carry ducts, trays, ribs and lights; its floors carry plates,
+ * kerbs and thresholds.
+ *
+ * So the dressing lives in the four PARTS rather than in fifty builders:
+ * every existing call gets it, and every future builder gets it for free.
+ * It is:
+ *
+ *   - by DECK: three characters (§3.1 rule 2) — deck 40's brass dado, wing
+ *     panels, sconces and hanging amber lamps; deck 44's timber battens over
+ *     white panels, pendants and slatted soffits; deck 48's pipe bundles,
+ *     conduit drops, caged lamps, ducts and cable trays. Flight ops (32, 12)
+ *     take the working deck's kit in the hangar's steel, the dome is sparse.
+ *   - by SEED: bay widths, which bay is a vent, a hatch, a service panel or
+ *     a board, where the sconces fall — all drawn from a stream keyed on the
+ *     PLACE (`kit.dressSeed`) and the wall, so no two walls on the station
+ *     are the same run and a room is the same room on every visit.
+ *   - CHEAP: every piece is a box in the place's own kit, merged per
+ *     material, so it costs triangles and never a draw call. A 20 × 12 room
+ *     dresses for ~2 000 triangles against a 3 M budget.
+ *   - NOT A COLLIDER: everything stands proud of its surface by 12 cm at
+ *     most, under the capsule's radius, so a walker along a wall never
+ *     catches. The wall behind is still the wall.
+ *
+ * ── THE FRAME ─────────────────────────────────────────────────────────────
+ * `dressWallRun` works in the WALL's frame: the run lies along local +X,
+ * the floor is local y = 0, and the room is at local −Z. `kit.push(cx, y,
+ * cz, ry)` composes with whatever the builder already has on the stack, so
+ * a spine wall in `Station.js` and a room wall here take the same call.
+ */
+
+/** A seeded stream for one dressing run. Never `kit.rng`: that stream is the
+ * builders' own, and drawing from it here would shift every scatter and
+ * every loose body in every room by however many pieces a wall took. */
+function dressRng(kit, salt) {
+  const base = (kit.dressSeed ?? 7) | 0;
+  let a = (Math.imul(base, 2654435761) ^ Math.imul(salt | 0, 40503) ^ 0x9e3779b9) >>> 0;
+  const rng = () => {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+  rng.range = (lo, hi) => lo + rng() * (hi - lo);
+  rng.pick = (arr) => arr[Math.floor(rng() * arr.length) % arr.length];
+  return rng;
+}
+
+/** Which of the three characters a deck's kit takes. */
+function dressStyle(M) {
+  const d = M.deck;
+  if (d === 44) return 'living';
+  if (d === 40) return 'warm';
+  if (d === 60) return 'dome';
+  return 'working'; // 48, 32, 12
+}
+
+/**
+ * Where a room has asked for NO dressing: `kit.dressKeep` is a list of
+ * rectangles in the room's own frame. The cabin uses it for the partition
+ * `Home.js` takes over and moves — that takeover selects the slab by scanning
+ * every mesh in the group for vertices inside the declared rectangle, so a
+ * skirting or a floor band crossing it would be read as part of the wall.
+ */
+function keptOut(kit, x, z) {
+  const K = kit.dressKeep;
+  if (!K) return false;
+  for (const r of K) {
+    if (Math.abs(x - r.x) <= r.w / 2 + 0.2 && Math.abs(z - r.z) <= r.d / 2 + 0.2) return true;
+  }
+  return false;
+}
+
+/** An axis-aligned footprint in the room's frame, overlapping any kept-out
+ * rectangle (with the same 0.2 m margin `keptOut` gives a point). */
+function keptOutBox(kit, x, z, hx, hz) {
+  const K = kit.dressKeep;
+  if (!K) return false;
+  for (const r of K) {
+    if (Math.abs(x - r.x) <= r.w / 2 + hx + 0.2 && Math.abs(z - r.z) <= r.d / 2 + hz + 0.2) return true;
+  }
+  return false;
+}
+
+/** A running salt PER KIT, so two identical walls in one room still differ
+ * and a room dresses the same on every visit — a module counter would make
+ * the second visit a different room. */
+function dressN(kit) { return (kit._dressN = (kit._dressN || 0) + 1); }
+
+/**
+ * Dress one straight wall face. `len` along local X, `h` tall, room at −Z.
+ * `opts.sparse` is the arc-wall and corridor form: bays and trim, fewer
+ * fixtures, because a chord is short and a corridor is long.
+ */
+export function dressWallRun(kit, M, len, h, cx, cy, cz, ry, opts = {}) {
+  if (len < 1.2 || h < 2.2) return;
+  const style = dressStyle(M);
+  const R = dressRng(kit, (opts.salt ?? 0) + dressN(kit) * 7 + Math.round(len * 13) + Math.round(h * 3));
+  const sparse = !!opts.sparse;
+  const F = { collide: false, bevel: 0 };
+  kit.push(cx, cy, cz, ry);
+  /* A piece is skipped where the room said not to dress — see `keptOut`. The
+   * wall's frame turns by `ry`, so a local point is carried back into the
+   * room's before it is tested. */
+  const cs = Math.cos(ry), sn = Math.sin(ry);
+  const keep = (lx, lz, hx, hz) => {
+    /* The piece's whole FOOTPRINT against the rectangle — the takeover in
+     * `Home.js` reads vertices, and a slab is tessellated along its length,
+     * so a long panel spanning the band would still put vertices in it. */
+    let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    for (const [ex, ez] of [[hx, hz], [-hx, hz], [hx, -hz], [-hx, -hz]]) {
+      const px = lx + ex, pz = lz + ez;
+      const rx = cx + px * cs + pz * sn, rz = cz - px * sn + pz * cs;
+      if (rx < x0) x0 = rx; if (rx > x1) x1 = rx; if (rz < z0) z0 = rz; if (rz > z1) z1 = rz;
+    }
+    return keptOutBox(kit, (x0 + x1) / 2, (z0 + z1) / 2, (x1 - x0) / 2, (z1 - z0) / 2);
+  };
+  const slab = (mat, sw, sh, sd, x, y, z, o) => { if (!keep(x, z, sw / 2, sd / 2)) kit.slab(mat, sw, sh, sd, x, y, z, o); };
+  const post = (mat, r0, r1, ph2, x, y, z, o) => {
+    const r = Math.max(r0, r1), hx = o && o.rz ? ph2 / 2 : r, hz = o && o.rx ? ph2 / 2 : r;
+    if (!keep(x, z, hx, hz)) kit.post(mat, r0, r1, ph2, x, y, z, o);
+  };
+  const X0 = -len / 2 + 0.05, X1 = len / 2 - 0.05;
+  /* The dado line and the top of the lower band — where panels stop and
+   * structure over them begins. */
+  const dado = 0.92, top = Math.min(h - 0.55, 3.6);
+  const ph = top - dado - 0.1;
+  /* 1. SKIRTING, on every deck: the line a wall meets a floor along. */
+  slab(M.dark, len, 0.16, 0.08, 0, 0.08, -0.04, F);
+  /* 2. THE BAYS: panels of varied width, some of them something else. */
+  let x = X0;
+  let bayN = 0;
+  while (x < X1 - 0.5) {
+    const bw = Math.min(X1 - x, R.range(1.1, 2.7));
+    const bx = x + bw / 2;
+    const roll = R();
+    /* What this bay is. Sparse runs are mostly plain. */
+    let kind = 'panel';
+    if (!sparse || R() < 0.35) {
+      if (roll < 0.08) kind = 'vent';
+      else if (roll < 0.15) kind = 'hatch';
+      else if (roll < 0.22) kind = 'service';
+      else if (roll < 0.27 && style !== 'working') kind = 'board';
+      else if (roll < 0.30 && style === 'living') kind = 'window';
+    }
+    if (kind === 'panel') {
+      const pm = style === 'working' ? M.deep : style === 'living' ? M.wing : M.wing;
+      slab(pm, bw - 0.08, ph, 0.05, bx, dado + 0.05 + ph / 2, -0.025, F);
+      /* Seam between panels: a batten on the living deck, a dark reveal else. */
+      if (style === 'living') slab(M.dark, 0.09, ph + 0.1, 0.11, x + bw, dado + ph / 2, -0.055, F);
+      else slab(M.dark, 0.05, ph, 0.02, x + bw, dado + 0.05 + ph / 2, -0.01, F);
+    } else if (kind === 'vent') {
+      const vw = Math.min(bw - 0.3, 1.1), vy = dado + 0.75;
+      slab(M.dark, vw, 0.62, 0.07, bx, vy, -0.035, F);
+      for (let k = 0; k < 4; k++) slab(M.deep, vw - 0.16, 0.06, 0.03, bx, vy - 0.22 + k * 0.15, -0.085, F);
+      slab(M.wing, bw - 0.08, ph, 0.03, bx, dado + 0.05 + ph / 2, -0.015, F);
+    } else if (kind === 'hatch') {
+      const hw2 = Math.min(bw - 0.3, 1.0), hh = Math.min(ph - 0.2, 1.7);
+      slab(M.dark, hw2 + 0.16, hh + 0.16, 0.04, bx, dado + 0.1 + hh / 2, -0.02, F);
+      slab(M.wing, hw2, hh, 0.08, bx, dado + 0.1 + hh / 2, -0.04, F);
+      slab(M.dark, 0.08, 0.34, 0.06, bx + hw2 / 2 - 0.16, dado + 0.1 + hh / 2, -0.11, F);
+      slab(M.status, 0.1, 0.1, 0.04, bx - hw2 / 2 + 0.16, dado + hh - 0.05, -0.1, F);
+    } else if (kind === 'service') {
+      slab(M.dark, bw - 0.1, ph, 0.06, bx, dado + 0.05 + ph / 2, -0.03, F);
+      /* A conduit bundle climbing out of a junction box. */
+      slab(M.deep, 0.42, 0.3, 0.12, bx, dado + 0.45, -0.12, F);
+      for (const dx of [-0.12, 0, 0.12]) {
+        post(M.wing, 0.035, 0.035, ph - 0.6, bx + dx, dado + 0.6 + (ph - 0.6) / 2, -0.1, { radial: 5 });
+      }
+      slab(M.status, 0.12, 0.06, 0.04, bx + 0.12, dado + 0.32, -0.2, F);
+    } else if (kind === 'board') {
+      slab(M.wing, bw - 0.08, ph, 0.03, bx, dado + 0.05 + ph / 2, -0.015, F);
+      const bw2 = Math.min(bw - 0.4, 1.3);
+      slab(M.dark, bw2 + 0.1, 0.9, 0.05, bx, dado + 0.9, -0.05, F);
+      slab(M.mark, bw2, 0.8, 0.02, bx, dado + 0.9, -0.09, F);
+    } else if (kind === 'window') {
+      /* A lit panel — the living deck's "window" onto a light well. */
+      slab(M.dark, bw - 0.2, ph - 0.3, 0.05, bx, dado + 0.2 + (ph - 0.3) / 2, -0.03, F);
+      slab(M.strip, bw - 0.4, ph - 0.5, 0.02, bx, dado + 0.2 + (ph - 0.3) / 2, -0.065, F);
+    }
+    x += bw;
+    bayN++;
+  }
+  /* 3. THE DADO — brass on 40, timber on 44, a pipe bundle on the working
+   * decks (where a rail would be a thing to trip on). */
+  if (style === 'warm') slab(M.mark, len, 0.1, 0.12, 0, dado, -0.06, F);
+  else if (style === 'living') slab(M.dark, len, 0.12, 0.12, 0, dado, -0.06, F);
+  else if (style === 'working') {
+    for (const [dy, r] of [[0.0, 0.07], [0.19, 0.05]]) {
+      post(M.wing, r, r, len, 0, dado + dy, -0.12, { radial: 6, rz: Math.PI / 2 });
+    }
+    for (let bx = X0 + 0.6; bx < X1; bx += 2.4) slab(M.dark, 0.16, 0.42, 0.1, bx, dado + 0.09, -0.06, F);
+  } else slab(M.wing, len, 0.08, 0.1, 0, dado, -0.05, F);
+  /* 4. OVER THE BAND: a cable tray or cornice, and the storeys above it on a
+   * tall room, so a 10 m wall is not a 3 m wall with 7 m of nothing over it. */
+  const trayY = top + 0.28;
+  if (style === 'working') {
+    slab(M.dark, len, 0.06, 0.34, 0, trayY, -0.17, F);
+    for (let bx = X0 + 0.3; bx < X1; bx += 1.1) slab(M.dark, 0.05, 0.05, 0.3, bx, trayY + 0.05, -0.17, F);
+    post(M.dark, 0.11, 0.11, len, 0, trayY + 0.42, -0.22, { radial: 6, rz: Math.PI / 2 });
+  } else if (style === 'warm') {
+    slab(M.mark, len, 0.14, 0.16, 0, trayY, -0.08, F);
+  } else {
+    slab(M.dark, len, 0.1, 0.14, 0, trayY, -0.07, F);
+  }
+  for (let y = top + 1.2; y < h - 1.6; y += 3.4) {
+    /* A storey band: a rail of panels and, on the working decks, a duct. */
+    const bh = Math.min(2.4, h - 0.5 - y);
+    let bx = X0;
+    while (bx < X1 - 0.4) {
+      const bw = Math.min(X1 - bx, R.range(1.6, 3.4));
+      slab(style === 'working' ? M.deep : M.wing, bw - 0.1, bh - 0.1, 0.04, bx + bw / 2, y + bh / 2, -0.02, F);
+      bx += bw;
+    }
+    if (style === 'working') post(M.dark, 0.2, 0.2, len, 0, y + bh + 0.35, -0.3, { radial: 7, rz: Math.PI / 2 });
+    else slab(M.dark, len, 0.1, 0.12, 0, y + bh + 0.1, -0.06, F);
+  }
+  /* 5. THE LAMPS on the wall, and the pilasters between them. */
+  const pitch = sparse ? R.range(4.5, 6.5) : R.range(3.2, 4.6);
+  for (let lx = X0 + pitch * R.range(0.3, 0.7); lx < X1 - 0.4; lx += pitch) {
+    if (style === 'warm') {
+      slab(M.dark, 0.2, 0.12, 0.16, lx, 2.05, -0.08, F);
+      slab(M.strip, 0.14, 0.44, 0.08, lx, 2.35, -0.09, F);
+      slab(M.mark, 0.3, h - 0.3, 0.2, lx + pitch / 2, h / 2, -0.1, F);
+    } else if (style === 'living') {
+      slab(M.strip, 0.7, 0.1, 0.06, lx, 2.3, -0.08, F);
+      slab(M.dark, 0.74, 0.04, 0.1, lx, 2.37, -0.06, F);
+    } else if (style === 'working') {
+      slab(M.dark, 0.36, 0.2, 0.14, lx, 2.5, -0.07, F);
+      slab(M.strip, 0.3, 0.12, 0.12, lx, 2.5, -0.1, F);
+      for (const dx of [-0.12, 0, 0.12]) slab(M.dark, 0.02, 0.2, 0.02, lx + dx, 2.5, -0.17, F);
+      /* A conduit drop from the tray to a box. */
+      post(M.wing, 0.045, 0.045, Math.max(0.2, trayY - 2.7), lx + pitch / 2, 2.6 + Math.max(0.2, trayY - 2.7) / 2, -0.1, { radial: 5 });
+      slab(M.deep, 0.3, 0.36, 0.12, lx + pitch / 2, 2.4, -0.09, F);
+    } else {
+      slab(M.strip, 0.5, 0.08, 0.06, lx, 2.3, -0.06, F);
+    }
+  }
+  kit.pop();
+}
+
+/** Between the ribs of a soffit: what hangs from a real ceiling. */
+function dressSoffit(kit, M, w, d, h, ribs, skip) {
+  const style = dressStyle(M);
+  const R = dressRng(kit, 91 + dressN(kit) * 3 + Math.round(w * 7 + d * 3));
+  const F = { collide: false, bevel: 0 };
+  const bay = d / ribs;
+  const slab = (mat, sw, sh, sd, x, y, z, o) => { if (!keptOutBox(kit, x, z, sw / 2, sd / 2)) kit.slab(mat, sw, sh, sd, x, y, z, o); };
+  const post = (mat, r0, r1, ph2, x, y, z, o) => {
+    const r = Math.max(r0, r1), hx = o && o.rz ? ph2 / 2 : r, hz = o && o.rx ? ph2 / 2 : r;
+    if (!keptOutBox(kit, x, z, hx, hz)) kit.post(mat, r0, r1, ph2, x, y, z, o);
+  };
+  const hidden = (x, z) => skip && skip(x, z);
+  if (style === 'warm') {
+    /* Coffered panels between the ribs and hanging amber lamps on a grid. */
+    for (let i = 0; i < ribs; i++) {
+      const z = -d / 2 + bay * (i + 0.5);
+      if (hidden(0, z)) continue;
+      if (i % 2 === 1 && bay > 2.2) slab(M.wing, w - 1.6, 0.08, bay - 0.9, 0, h - 0.06, z, F);
+    }
+    const nx = Math.max(1, Math.round(w / 6)), nz = Math.max(1, Math.round(d / 6));
+    const drop = Math.min(1.4, Math.max(0.5, h - 2.9));
+    for (let i = 0; i < nx; i++) for (let k = 0; k < nz; k++) {
+      const x = -w / 2 + w * ((i + 0.5) / nx), z = -d / 2 + d * ((k + 0.5) / nz);
+      if (hidden(x, z)) continue;
+      post(M.dark, 0.025, 0.025, drop, x, h - drop / 2, z, { radial: 4 });
+      post(M.dark, 0.42, 0.14, 0.3, x, h - drop - 0.15, z, { radial: 8 });
+      post(M.strip, 0.3, 0.3, 0.06, x, h - drop - 0.32, z, { radial: 8 });
+    }
+  } else if (style === 'living') {
+    /* Timber slats across the width in every bay, and a pendant disc. */
+    const step = 1.25;
+    for (let z = -d / 2 + 0.6; z < d / 2 - 0.4; z += step) {
+      if (hidden(0, z)) continue;
+      slab(M.dark, w - 0.8, 0.1, 0.09, 0, h - 0.05, z, F);
+    }
+    const nz = Math.max(1, Math.round(d / 5.5));
+    for (let k = 0; k < nz; k++) {
+      const z = -d / 2 + d * ((k + 0.5) / nz);
+      if (hidden(0, z)) continue;
+      const drop = Math.min(0.9, Math.max(0.3, h - 2.8));
+      post(M.dark, 0.02, 0.02, drop, 0, h - drop / 2, z, { radial: 4 });
+      post(M.wing, 0.5, 0.5, 0.05, 0, h - drop - 0.03, z, { radial: 10 });
+      post(M.strip, 0.36, 0.36, 0.04, 0, h - drop - 0.07, z, { radial: 10 });
+    }
+  } else if (style === 'working') {
+    /* Ducts the length of the room, a cable tray down the middle with its
+     * rungs, and a caged status lamp at every rib. */
+    const dr = Math.min(0.45, h * 0.08 + 0.15);
+    const ducts = w > 9 ? [-w / 3, w / 3] : [w / 4];
+    for (const x of ducts) {
+      if (hidden(x, 0)) continue;
+      post(M.dark, dr, dr, d - 1.0, x, h - dr - 0.22, 0, { radial: 8, rx: Math.PI / 2 });
+      for (let z = -d / 2 + 1.5; z < d / 2 - 1; z += 3.1) post(M.deep, dr + 0.06, dr + 0.06, 0.18, x, h - dr - 0.22, z, { radial: 8, rx: Math.PI / 2 });
+    }
+    const tx = R.range(-w / 6, w / 6);
+    slab(M.dark, 0.5, 0.05, d - 0.8, tx, h - 0.5, 0, F);
+    for (let z = -d / 2 + 0.6; z < d / 2 - 0.5; z += 1.0) slab(M.dark, 0.46, 0.05, 0.05, tx, h - 0.45, z, F);
+    for (let i = 0; i < ribs; i++) {
+      const z = -d / 2 + bay * (i + 0.5);
+      const x = R.range(-w / 2 + 1.5, w / 2 - 1.5);
+      if (hidden(x, z)) continue;
+      slab(M.status, 0.18, 0.18, 0.14, x, h - 0.55, z + 0.5, F);
+      for (const dx of [-0.11, 0.11]) slab(M.dark, 0.02, 0.24, 0.02, x + dx, h - 0.55, z + 0.62, F);
+    }
+  } else {
+    for (let i = 0; i < ribs; i++) {
+      const z = -d / 2 + bay * (i + 0.5);
+      if (hidden(0, z)) continue;
+      slab(M.wing, w - 2, 0.05, bay - 1.2, 0, h - 0.04, z, F);
+    }
+  }
+}
+
+/** The floor's own marks: a kerb round the edge, plate seams, a threshold. */
+function dressFloor(kit, M, w, d, y) {
+  const style = dressStyle(M);
+  const F = { collide: false, bevel: 0 };
+  const inset = 0.9;
+  if (w < 4 || d < 4) return;
+  const slab = (mat, sw, sh, sd, x, y, z, o) => { if (!keptOutBox(kit, x, z, sw / 2, sd / 2)) kit.slab(mat, sw, sh, sd, x, y, z, o); };
+  /* The border band. */
+  const bm = style === 'warm' ? M.mark : style === 'living' ? M.wing : M.dark;
+  for (const s of [-1, 1]) {
+    slab(bm, w - inset * 2, 0.03, 0.22, 0, y + 0.015, s * (d / 2 - inset), F);
+    slab(bm, 0.22, 0.03, d - inset * 2, s * (w / 2 - inset), y + 0.015, 0, F);
+  }
+  /* Plate seams on the working decks: deck plate is laid in sheets. */
+  if (style === 'working') {
+    for (let z = -d / 2 + 2.4; z < d / 2 - 1; z += 2.4) slab(M.dark, w - inset * 2, 0.02, 0.06, 0, y + 0.012, z, F);
+    for (let x = -w / 2 + 2.4; x < w / 2 - 1; x += 2.4) slab(M.dark, 0.06, 0.02, d - inset * 2, x, y + 0.012, 0, F);
+  }
+  /* The threshold: a lit line just inside the door, which is at −Z. */
+  slab(M.strip, Math.min(w - 2, 3.2), 0.025, 0.1, 0, y + 0.012, -d / 2 + 0.9, F);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -193,19 +541,25 @@ function walls(kit, M, w, d, h, opts = {}) {
   const t = 0.4, gap = opts.doorW ?? 3.4;
   const mat = opts.mat || M.hull;
   const open = new Set(opts.open || []);
+  const dress = opts.dress !== false;
   /* +Z, the back. */
-  if (!open.has('back')) kit.slab(mat, w + t * 2, h, t, 0, h / 2, d / 2 + t / 2, { collide: true, bevel: 0 });
-  else if (opts.glaze) kit.slab(M.glass, w, h - 0.6, 0.2, 0, h / 2, d / 2, { collide: true, bevel: 0 });
-  /* ±X, the sides. */
+  if (!open.has('back')) {
+    kit.slab(mat, w + t * 2, h, t, 0, h / 2, d / 2 + t / 2, { collide: true, bevel: 0 });
+    if (dress) dressWallRun(kit, M, w, h, 0, 0, d / 2, 0, { salt: 1 });
+  } else if (opts.glaze) kit.slab(M.glass, w, h - 0.6, 0.2, 0, h / 2, d / 2, { collide: true, bevel: 0 });
+  /* ±X, the sides. The room is at −Z in the wall's own frame, so the +X wall
+   * turns a quarter one way and the −X wall the other. */
   for (const s of [-1, 1]) {
     if (open.has(s < 0 ? 'left' : 'right')) continue;
     kit.slab(mat, t, h, d, s * (w / 2 + t / 2), h / 2, 0, { collide: true, bevel: 0 });
+    if (dress) dressWallRun(kit, M, d, h, s * w / 2, 0, 0, s * Math.PI / 2, { salt: 2 + s });
   }
   /* −Z, the front, with the doorway cut out of it. */
   if (!open.has('front')) {
     const side = (w - gap) / 2;
     for (const s of [-1, 1]) {
       kit.slab(mat, side, h, t, s * (gap + side) / 2, h / 2, -d / 2 - t / 2, { collide: true, bevel: 0 });
+      if (dress) dressWallRun(kit, M, side, h, s * (gap + side) / 2, 0, -d / 2, Math.PI, { salt: 5 + s });
     }
     /* The lintel over the opening, and the light in its reveal. */
     kit.slab(mat, gap, h - 2.6, t, 0, 2.6 + (h - 2.6) / 2, -d / 2 - t / 2, { collide: true, bevel: 0 });
@@ -238,6 +592,10 @@ function ceiling(kit, M, w, d, h, opts = {}) {
       if (spans(z)) continue;
       kit.slab(M.strip, w * 0.66, 0.09, 0.16, 0, h - 0.42, z, { collide: false, bevel: 0 });
     }
+  }
+  /* And what hangs between the ribs — kept clear of the shaft, like them. */
+  if (opts.dress !== false && w >= 4 && d >= 4) {
+    dressSoffit(kit, M, w, d, h, n, o ? (x, z) => Math.abs(z - o.z) <= o.h + 0.5 && Math.abs(x - o.x) <= o.h + 0.5 : null);
   }
 }
 
@@ -329,8 +687,18 @@ function arcWall(kit, mat, r, h, from, to, n, y = 0, t = 0.4, collide = true) {
   for (let i = 0; i < n; i++) {
     const a = from + span * ((i + 0.5) / n);
     kit.slab(mat, wide, h, t, r * Math.sin(a), y + h / 2, r * Math.cos(a), { ry: a, collide, bevel: 0 });
+    /* The chord's inner face — the room is at local −Z under `ry: a`, the
+     * same convention `walls` uses, so the same dressing fits it. */
+    if (kit.dressArcs !== false && wide >= 1.4) {
+      const ri = r - t / 2;
+      dressWallRun(kit, kit.M || _arcM, wide - 0.1, h, ri * Math.sin(a), y, ri * Math.cos(a), a, { sparse: true, salt: 40 + i });
+    }
   }
 }
+/** `arcWall` is handed a MATERIAL, not the deck's set; the dressing wants the
+ * set. `buildPlace` parks it on the kit, and this is the fallback for a
+ * caller that made its own kit (none do today). */
+let _arcM = null;
 
 /**
  * A counter with a top and a face — a bar, a stall, a hatch, a desk.
@@ -1627,6 +1995,9 @@ export const SHAPES = {
    * describes, is one line per obstacle and it is checked (`home.mjs`). */
   twinroom(kit, M, p, ctx) {
     const { w, d, h } = p;
+    /* Nothing dresses across the partition's rectangle: `Home.js` finds the
+     * slab to move by what stands in it — see `keptOut`. */
+    kit.dressKeep = [{ x: -1.6, z: 0.6, w: w - 3.2, d: 0.3 }];
     floor(kit, M, w, d, 0, M.dark);
     walls(kit, M, w, d, h, { open: ['back'], glaze: true, doorW: 2.2 });
     ceiling(kit, M, w, d, h, { ribs: 3 });
@@ -2753,6 +3124,12 @@ export function buildPlace(world, group, place, M, st) {
   if (!fn) throw new Error(`StationKit: place #${place.id} (${place.name}) declares shape '${place.shape}', which has no builder`);
   const kit = new Kit(1000 + Math.round(place.id * 7));
   kit.weather = false;
+  /* The dressing's two hooks: the place is the seed, so a wall's bays are the
+   * same on every visit and different in every room; and `arcWall` — which
+   * takes one material — can find the deck's set. */
+  kit.dressSeed = Math.round(place.id * 100);
+  kit.M = M;
+  _arcM = M;
   const ctx = {
     sunk: [],
     trees: [],
