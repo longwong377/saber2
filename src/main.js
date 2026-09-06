@@ -118,7 +118,7 @@ import { benchFor } from './game/Bench.js';
  * that is right about the rule and imprecise about the evidence.
  */
 import { STRATAGEMS as CALL_ROWS } from './game/Stratagems.js';
-import { loadStation, standing, stationDay as stationDayOf, stationHour,
+import { loadStation, standing, stationDay as stationDayOf, stationHour, stationName,
   HOURS_PER_SECOND, casinoState, setCasinoState } from './game/StationSave.js';
 /* THE IDENTITIES a provision is merged against — see `runProvisions`. One
  * table, and it is the one every boon in the game is already written against. */
@@ -375,6 +375,9 @@ let fpsSmooth = 60;
 /* ══════════════════════════════════════════════════════════════════════ */
 
 const menu = new Menu(settings, {
+  /* THE STATION'S NAME AND DAY under the title (V19 §9). One reader for both
+   * — `stationDay()` below is the pass-through to StationSave's derivation. */
+  station: () => ({ name: stationName(), day: stationDay() }),
   onDeploy: () => { deploy().catch((e) => console.error('deploy failed', e)); },
   onResume: () => resume(),
   onRestart: () => { menu.hidePause(); restartWave(); },
