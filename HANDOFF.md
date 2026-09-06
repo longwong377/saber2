@@ -4,7 +4,22 @@ Written for whoever picks this up next, human or otherwise. It is not a status
 report; it is the set of things that cost time to learn and would cost the same
 again. Read the traps section before touching a tool.
 
-Repo: `longwong377/saber2` · branch `claude/shark-development-ozwq6w`
+Repo: `longwong377/saber2`
+
+> **START HERE, NEXT SESSION.** `claude/shark-development-ozwq6w` is FULLY
+> MERGED into the default branch and both sat at `efac23d` when this was
+> written. Do NOT continue on it — stacking new work on already-merged
+> history is the trap the note two paragraphs down records from last time.
+> Cut a fresh branch off the default instead:
+>
+> ```
+> git fetch origin claude/lightsaber-combat-game-lxw391
+> git checkout -B <your-branch> origin/claude/lightsaber-combat-game-lxw391
+> ```
+>
+> And remember Pages deploys from the DEFAULT BRANCH ONLY: work sitting on a
+> feature branch is not on the play link however green it is, so merging is
+> part of finishing (CLAUDE.md says so in as many words).
 
 > **THE DEFAULT BRANCH HAS MOVED.** PR #1 merged 303 commits into
 > `claude/lightsaber-combat-game-lxw391` (merge `a092074`), so the default *is*
