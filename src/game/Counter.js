@@ -60,6 +60,7 @@
  * over `Credits.js` be a short file somebody can actually read.
  */
 
+import { stationDiff } from './StationDifficulty.js';
 import { makeRng } from '../engine/MathUtil.js';
 import { standing } from './StationSave.js';
 
@@ -207,7 +208,7 @@ export function saneRow(r) {
 export function priceOf(row) {
   const r = saneRow(row);
   if (!r) return Infinity;
-  return Math.max(1, Math.round(r.base));
+  return Math.max(1, Math.round(r.base * stationDiff().prices)); // V19 add 10: the tier's markup
 }
 
 /** …and after it. `standing` is the second half of a price. */

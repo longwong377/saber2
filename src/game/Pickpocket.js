@@ -17,6 +17,10 @@
  * the credits back plus the bounty #25's board posted for him. If he reaches
  * the room he is gone with them.
  *
+ * V19 add 10: WHETHER HE STRIKES AT ALL TODAY, AND HIS CUT, READ THE TIER —
+ * `pickPlan` below, off `StationDifficulty.pickOdds`: three days in ten on
+ * Padawan, every day on Grandmaster, and the share scaled to the same number.
+ *
  * ONE STRIKE A DAY, KEPT IN THE STATION FOLD (`StationSave.pick`), because a
  * lift ride rebuilds `StationLife` and a thief who struck again on every
  * deck change would be a tax rather than an event. His name and the bounty
@@ -28,6 +32,7 @@ import { DRUM } from './StationPlan.js';
 import { resident } from './StationCast.js';
 import { purse, spend, pay } from './Credits.js';
 import { pickpocketState, setPickpocketState } from './StationSave.js';
+import { stationDiff } from './StationDifficulty.js';
 
 export const PICK = Object.freeze({
   /** The cut he takes: 5–15 % of the purse, seeded off the day. */
@@ -82,6 +87,18 @@ export function bountyFor(day) {
   return { name: who.name, pay: bounty, caught: !!today?.caught, gone: !!today?.gone, hides: hideFor(day) };
 }
 
+/**
+ * V19 add 10: DOES HE STRIKE TODAY, AND FOR HOW MUCH. The tier's `pickOdds`
+ * is the day's chance, drawn off the day; his cut is the day's share scaled
+ * to the same number. One read, here, where it is decided.
+ */
+export function pickPlan(day, world = null) {
+  const D = stationDiff(world);
+  const strikes = h2(day | 0, 27) < D.pickOdds;
+  const share = (PICK.share.min + h2(day | 0, 21) * PICK.share.span) * (0.5 + 0.5 * D.pickOdds);
+  return { strikes, share, odds: D.pickOdds };
+}
+
 function pickOf(life) {
   return life.pick || (life.pick = { key: KEY, body: null, lifted: 0, caught: false, tries: 0, name: '', hide: 0, bounty: 0 });
 }
@@ -112,7 +129,7 @@ function lift(world, st, life, T, body) {
   const P = pickOf(life);
   const day = st.day | 0;
   const have = purse();
-  const share = PICK.share.min + h2(day, 21) * PICK.share.span;
+  const share = pickPlan(day, world).share;
   const amount = Math.max(1, Math.round(have * share));
   const r = spend(amount, 'pickpocket');
   if (!r.ok) return false;
@@ -195,6 +212,7 @@ export function stepPickpocket(world, st, life, dt, T) {
     return;
   }
   if (Math.floor(Number(st.hour) || 0) !== pickHour(day)) return;
+  if (!pickPlan(day, world).strikes) return;
   if (purse() <= 0) return;
   begin(world, st, life, T);
 }
