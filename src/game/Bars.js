@@ -922,9 +922,24 @@ export function seatTop(prop) {
 /** Standing on its legs, not on its side — and not being thrown. */
 export function seatUpright(prop) {
   const b = prop?.body;
-  if (!b || prop.dead) return false;
+  if (!b || prop.dead || b.velocity.lengthSq() >= 0.25) return false;
   _up.set(0, 1, 0).applyQuaternion(b.quaternion);
-  return _up.y > 0.9 && b.velocity.lengthSq() < 0.25;
+  return _up.y > 0.9;
+}
+
+/**
+ * At rest — on its legs OR on its side. A chair on its side is claimable,
+ * because the sitter STANDS IT UP: measured in the shipped page, every one of
+ * the cantina's ten chairs is on its side within two seconds of the room
+ * being built (they spawn into the well's floor and tumble — `StationKit`'s,
+ * not this file's), so a verb that only took upright chairs would never fire
+ * in the one room whose verb is "sit and drink". Pulling a fallen chair
+ * upright before sitting on it is what a person does anyway. `holdSeat`
+ * does the standing-up, on arrival, off the claim's righted pose.
+ */
+export function seatStill(prop) {
+  const b = prop?.body;
+  return !!b && !prop.dead && b.velocity.lengthSq() < 0.25;
 }
 
 /**
@@ -938,7 +953,7 @@ export function seatYaw(prop) {
 }
 
 /**
- * Every free, upright seat within `r` of a point on the same floor, nearest
+ * Every free seat at rest within `r` of a point on the same floor, nearest
  * first — so the choice is a function of the world and not of iteration
  * order. `taken` is the pool's claim table (`Map<prop, body>`).
  */
@@ -951,7 +966,7 @@ export function seatsNear(world, x, y, z, r, taken) {
     const q = p.body?.position;
     if (!q || Math.abs(q.y - y) > 0.6) continue;
     const d = Math.hypot(q.x - x, q.z - z);
-    if (d > r || !seatUpright(p)) continue;
+    if (d > r || !seatStill(p)) continue;
     out.push({ prop: p, d });
   }
   out.sort((a, b) => a.d - b.d || (a.prop.id < b.prop.id ? -1 : 1));

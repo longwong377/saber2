@@ -13,15 +13,14 @@
  *   · The verb is seeded: nothing in it reads a clock or `Math.random`.
  *   · The step stays inside §12.2's 2.5 ms with people sitting.
  *
- * ── THE SCAFFOLD, SAID PLAINLY ──────────────────────────────────────────
+ * ── THE CHAIRS ARE ON THEIR SIDES, AND THAT IS PART OF THE TEST ────────
  *
  * The cantina's kit puts its ten chairs down at the well's depth and they
- * spawn INTO the concourse's floor, pop out and tumble: measured on a fresh
- * world, ten upright at t=0, three at t=2 s. That is `StationKit`'s — the
- * furniture's ground, not the sitter's — and a check on the sit verb cannot
- * hang on it, so the clause stands the cantina's chairs back up on the floor
- * the bodies stand on before it starts the clock, and says so in its note.
- * `Bars.seatUpright` is what refuses a chair on its side in play.
+ * spawn INTO the concourse's floor, pop out and tumble: measured in the
+ * shipped page, all ten on their sides two seconds after the room is built.
+ * That is `StationKit`'s. The verb's answer is `Bars.seatStill`: a fallen
+ * chair is claimable and the sitter stands it up on arrival, so this clause
+ * runs on the room as it is and holds every sat-on chair upright.
  */
 
 import { readFile } from 'node:fs/promises';
@@ -125,24 +124,13 @@ export async function run({ check, assert, THREE }) {
       const inRoom = () => [...life.live.values()].filter((b) => b && b.stationPlace === CANTINA && !b.wayR);
       const bodies = inRoom();
       assert(bodies.length >= 10, `${bodies.length} people standing in the cantina at 22:00`);
-      const floorY = bodies.reduce((a, b) => a + b.position.y, 0) / bodies.length;
-      /* THE SCAFFOLD — see the header. In the room's own frame. */
       const c = Math.cos(p.yaw || 0), s = Math.sin(p.yaw || 0);
       const inPlace = (q) => {
         const dx = q.x - p.x, dz = q.z - p.z;
         return Math.abs(dx * c - dz * s) <= p.w / 2 && Math.abs(dx * s + dz * c) <= p.d / 2;
       };
       const chairs = world.props.filter((q) => SEAT_KINDS.has(q.kind) && inPlace(q.body.position));
-      let righted = 0;
-      for (const q of chairs) {
-        if (seatUpright(q) && Math.abs(q.body.position.y - floorY) < 0.3) continue;
-        righted++;
-        const yaw = Math.atan2(p.x - q.body.position.x, p.z - q.body.position.z);
-        q.body.setTransform(new THREE.Vector3(q.body.position.x, floorY, q.body.position.z),
-          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw + Math.PI));
-        q.body.velocity.set(0, 0, 0); q.body.angularVelocity.set(0, 0, 0);
-        q.mesh.position.copy(q.body.position); q.mesh.quaternion.copy(q.body.quaternion);
-      }
+      const over = chairs.filter((q) => !seatUpright(q)).length;
       assert(chairs.length >= 6, `the cantina has ${chairs.length} seats — nothing to sit on`);
 
       const seatedNow = () => inRoom().filter((b) => b.seat && b.seat.state === 'sit' && b.seat.blend >= 0.99);
@@ -155,7 +143,7 @@ export async function run({ check, assert, THREE }) {
         if (seated.length >= 6 && at < 0) at = t;
         if (at > 0 && t >= at + 3) break;
       }
-      assert(seated.length >= 6, `${seated.length} people sitting in the cantina after 60 s (peak ${peak}), on ${chairs.length} chairs (${righted} righted) with ${inRoom().length} in the room`);
+      assert(seated.length >= 6, `${seated.length} people sitting in the cantina after 60 s (peak ${peak}), on ${chairs.length} chairs (${over} on their sides) with ${inRoom().length} in the room`);
 
       /* Each on a chair, low, one to a chair, the chair held under them. */
       const used = new Set();
@@ -209,7 +197,7 @@ export async function run({ check, assert, THREE }) {
       });
       assert(floating === 0, `${floating} cups left in the air after everybody stood`);
       const lo = Math.min(...hipsAbove), hi = Math.max(...hipsAbove);
-      return `${seated.length} seated by ${at} s (peak ${peak}) on ${chairs.length} chairs (${righted} righted), hips ${lo.toFixed(2)}–${hi.toFixed(2)} over the seat, every cup in a hand; step ${mean.toFixed(3)} ms; all up again in 3 s, ${onTables} cups on tables`;
+      return `${seated.length} seated by ${at} s (peak ${peak}) on ${chairs.length} chairs (${over} were on their sides), hips ${lo.toFixed(2)}–${hi.toFixed(2)} over the seat, every cup in a hand; step ${mean.toFixed(3)} ms; all up again in 3 s, ${onTables} cups on tables`;
     } finally { world.dispose?.(); }
   });
 

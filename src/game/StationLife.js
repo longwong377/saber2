@@ -47,7 +47,7 @@ import {
   SPECIES_KEYS, SPECIES_BY, RHYTHMS, ROLE_BY, resident, speciesFor, roleFor,
   residents, frictionBetween, BORZ_BY_PLACE, borzArchetype, nameFor,
 } from './StationCast.js';
-import { barman, isBar, seatsNear, seatTop, seatYaw, seatUpright, tableBefore, tableTop, holdSeat,
+import { barman, isBar, seatsNear, seatTop, seatYaw, seatUpright, seatStill, tableBefore, tableTop, holdSeat,
   makeCup, cupInHand, cupDown } from './Bars.js';
 /* #44's tanks, read here so the men in them are bodies in the glass. */
 import { TANKS, tankLocal, wardOf, party, checkIn, inTank } from './Medbay.js';
@@ -3857,9 +3857,11 @@ function seatClaim(world, life, body, reach) {
   if (!near.length) return null;
   const prop = near[0];
   const q = prop.body.position;
-  let yaw = seatYaw(prop), table = null;
+  const upright = seatUpright(prop);
+  let yaw = upright ? seatYaw(prop) : null, table = null;
   if (yaw === null) {
-    /* No back to read: face the nearest table, or the middle of the room. */
+    /* No back to read — a stool, or a chair on its side that the sitter is
+     * about to stand up: face the nearest table, or the middle of the room. */
     let bd = 1.6;
     for (const t of world.props) {
       if (t.kind !== 'table' || t.dead) continue;
@@ -3870,10 +3872,16 @@ function seatClaim(world, life, body, reach) {
     const tz = table ? table.body.position.z : (place?.z ?? q.z);
     yaw = Math.atan2(tx - q.x, tz - q.z);
   } else table = tableBefore(world, q.x, q.z, yaw);
+  /* THE RIGHTED POSE — see `Bars.seatStill`. Where the chair is, on the
+   * floor the body stands on, upright, its front on `yaw` (a chair's front is
+   * its local −z). An upright seat keeps the pose it has. */
+  const pos = q.clone(); pos.y = p.y;
+  const quat = upright ? prop.body.quaternion.clone()
+    : new THREE.Quaternion().setFromAxisAngle(_UP, prop.kind === 'chair' ? yaw + Math.PI : yaw);
   const claim = {
     prop, table, yaw, state: 'walk', blend: 0,
-    pos: q.clone(), quat: prop.body.quaternion.clone(),
-    y: q.y + seatTop(prop),
+    pos, quat,
+    y: pos.y + seatTop(prop),
     tableY: table ? tableTop(table) : null,
     cup: false, cupObj: null, hold: 0,
     serves: servesHere(place),
@@ -3983,9 +3991,10 @@ function stepStanding(world, life, dt) {
         mx = dx / d * step; mz = dz / d * step;
         body.standCx += mx; body.standCz += mz;
       } else if (S) {
-        /* ARRIVED at the chair: sit, for the hold. A chair knocked over on the
-         * way is not sat on. */
-        if (!seatUpright(S.prop)) { seatRelease(world, life, body); body.standIn = 0; continue; }
+        /* ARRIVED at the chair: stand it up if it is over, and sit, for the
+         * hold. A chair still tumbling — thrown just now — is let go. */
+        if (!seatStill(S.prop)) { seatRelease(world, life, body); body.standIn = 0; continue; }
+        holdSeat(S);
         S.state = 'sit';
         body.standIn = S.hold;
         body.standFace = S.yaw;

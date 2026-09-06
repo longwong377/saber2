@@ -152,7 +152,13 @@ const shot = async (name, at) => {
 /* The camera's forward at yaw θ is (−sin θ, −cos θ) — `_stationshot`. */
 const P = sat.place;
 const aim = (fx, fz, tx, tz) => Math.atan2(-(tx - fx), -(tz - fz));
-await shot('door', { x: P.door[0], y: 1.7, z: P.door[1], yaw: aim(P.door[0], P.door[1], P.x, P.z), pitch: -0.08 });
+/* Four metres in from the door along its line — the cantina's door shot proper
+ * is a wall corner and the room's name plate over the bottom third. */
+{
+  const dx = P.x - P.door[0], dz = P.z - P.door[1], d = Math.hypot(dx, dz);
+  const x = P.door[0] + dx / d * 4, z = P.door[1] + dz / d * 4;
+  await shot('door', { x, y: 1.7, z, yaw: aim(x, z, P.x, P.z), pitch: -0.28 });
+}
 /* From inside: a few metres past the door toward the nearest sitter in the room. */
 const mine = sat.seated.filter((b) => b.place === PLACE_ID);
 if (mine.length) {
