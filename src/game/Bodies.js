@@ -4117,14 +4117,14 @@ const SPECIES_HEADS = {
     const O = new THREE.Vector3(0, 0.100 * s, 0.010 * s);
     const d = new THREE.Vector3();
     for (let row = 0; row < 3; row++) {
-      const y = 0.106 + 0.011 * row;                       // brow ridge up to the hairline
-      const half = 0.72 - 0.10 * row;                      // the top ridge is the shortest
+      const y = 0.094 + 0.010 * row;                       // from the brow ridge up, clear of the fringe
+      const half = 0.74 - 0.10 * row;                      // the top ridge is the shortest
       const nodes = [];
       for (let i = 0; i <= 4; i++) {
         const th = -half + (2 * half * i) / 4;
         d.set(Math.sin(th), (y - 0.100) / 0.09, Math.cos(th)).normalize();
-        const p = onSurface(hg, d, -0.0035 * s, O);
-        const r = (0.0060 - 0.0018 * Math.abs(th) / half) * s;
+        const p = onSurface(hg, d, -0.0045 * s, O);
+        const r = (0.0072 - 0.0022 * Math.abs(th) / half) * s;
         nodes.push([p[0], p[1], p[2], r]);
       }
       k.add(ridge, tubeGeo(nodes, 6, { tip: 1.0 }));
@@ -4145,7 +4145,7 @@ const SPECIES_HEADS = {
     const O = new THREE.Vector3(0, 0.062 * s, 0.020 * s);
     const nd = new THREE.Vector3(0, -0.10, 1).normalize();
     const np = onSurface(hg, nd, 0.011 * s, O);
-    k.add(skin, new THREE.SphereGeometry(1, 12, 9), np, null, [0.031 * s, 0.024 * s, 0.026 * s]);
+    k.add(skin, new THREE.SphereGeometry(1, 12, 9), np, null, [0.036 * s, 0.027 * s, 0.030 * s]);
     // the two ridges of the brow, one over each wide-set eye
     for (const sx of [-1, 1]) {
       const bd = new THREE.Vector3(sx * 0.42, 0.28, 0.86).normalize();
@@ -4154,7 +4154,7 @@ const SPECIES_HEADS = {
       // nostrils: two dark discs on the underside of the bulb
       const nn = new THREE.Vector3(sx * 0.40, -0.70, 0.60).normalize();
       k.aim(nostril, new THREE.CylinderGeometry(0.0045 * s, 0.0045 * s, 0.004 * s, 8),
-        [np[0] + nn.x * 0.026 * s, np[1] + nn.y * 0.021 * s, np[2] + nn.z * 0.024 * s], nn);
+        [np[0] + nn.x * 0.030 * s, np[1] + nn.y * 0.024 * s, np[2] + nn.z * 0.028 * s], nn);
     }
     k.bake(headObj);
   },
@@ -4178,17 +4178,20 @@ const SPECIES_HEADS = {
     const n = Math.abs(Math.round((F.skull * 7 + F.brow * 13 + F.cheek * 17 + F.jaw * 19 + F.nose * 23 + F.chin * 29) * 1000));
     const pick = n % 4;
     if (pick === 0) {
-      // a crest: five bone plates along the midline, tallest over the crown,
-      // seated on the hair when a cut covers it
-      const O = new THREE.Vector3(0, 0.100 * s, -0.010 * s);
-      for (let i = 0; i < 5; i++) {
-        const th = 0.95 - 0.45 * i;                          // from the brow back over the crown
+      // a crest: one sagittal bone fin, brow to nape, standing 4 cm off the
+      // crown — seated on the hair when a cut covers it. Five chips of bone
+      // poking out of a haircut read as litter; a fin reads as a species.
+      const blade = (u) => 0.30 + 0.70 * Math.abs(Math.sin(u));
+      const O = new THREE.Vector3(0, 0.100 * s, -0.006 * s);
+      const nodes = [];
+      for (let i = 0; i < 6; i++) {
+        const th = 1.05 - 0.42 * i;                          // from above the brow back over the crown
         const d = new THREE.Vector3(0, Math.cos(th), Math.sin(th)).normalize();
-        const p = onOuter([hg, over], d, 0.006 * s, O);
-        const h = (0.040 - 0.006 * Math.abs(i - 2)) * s;
-        k.aim(bone, plateGeo(0.010 * s, h, 0.024 * s, 0.003 * s, 1),
-          [p[0] + d.x * h * 0.42, p[1] + d.y * h * 0.42, p[2] + d.z * h * 0.42], d, null, new THREE.Vector3(0, 0, 1));
+        const lift = (0.008 + 0.024 * Math.sin(Math.PI * (i + 0.5) / 6)) * s;
+        const p = onOuter([hg, over], d, -lift, O);
+        nodes.push([p[0], p[1], p[2], (0.010 + 0.016 * Math.sin(Math.PI * (i + 0.5) / 6)) * s]);
       }
+      k.add(bone, tubeGeo(nodes, 8, { section: blade, tip: 1.0 }));
     } else if (pick === 1) {
       // ear frills: two swept skin fans off the temples, above the ear
       const blade = (u) => 0.30 + 0.70 * Math.abs(Math.sin(u));
@@ -4206,16 +4209,17 @@ const SPECIES_HEADS = {
         }
       }
     } else if (pick === 2) {
-      // a cheek ridge: bone from under each eye back along the cheekbone
+      // a cheek ridge: a fold of skin from beside the nose, under each eye,
+      // back along the cheekbone toward the ear
       for (const sx of [-1, 1]) {
         const nodes = [];
         for (let i = 0; i <= 3; i++) {
           const t = i / 3;
-          const d = new THREE.Vector3(sx * (0.40 + 0.55 * t), -0.04 - 0.10 * t, 0.90 - 0.75 * t).normalize();
-          const p = onSurface(hg, d, -0.003 * s, new THREE.Vector3(0, 0.078 * s, 0.012 * s));
-          nodes.push([p[0], p[1], p[2], (0.0072 - 0.0030 * t) * s]);
+          const d = new THREE.Vector3(sx * (0.30 + 0.65 * t), -0.34 - 0.06 * t, 0.90 - 0.72 * t).normalize();
+          const p = onSurface(hg, d, -0.004 * s, new THREE.Vector3(0, 0.080 * s, 0.014 * s));
+          nodes.push([p[0], p[1], p[2], (0.0080 - 0.0032 * t) * s]);
         }
-        k.add(bone, tubeGeo(nodes, 6, { tip: 1.0 }));
+        k.add(skin, tubeGeo(nodes, 6, { tip: 1.0 }));
       }
     } else {
       // markings: a scatter of dark discs across the brow and the temples
@@ -4253,7 +4257,7 @@ const SPECIES_HEADS = {
     const R = [0.098 * s, 0.128 * s, 0.108 * s];
     k.add(skin, new THREE.SphereGeometry(1, 18, 13), C, null, R);
     // the lower face: a narrower mass tapering to the chin
-    k.add(skin, new THREE.SphereGeometry(1, 14, 10), [0, 0.046 * s, 0.014 * s], null, [0.066 * s, 0.070 * s, 0.076 * s]);
+    k.add(skin, new THREE.SphereGeometry(1, 14, 10), [0, 0.044 * s, 0.004 * s], null, [0.060 * s, 0.074 * s, 0.066 * s]);
     const on = (dx, dy, dz, out = 0) => {
       const t = 1 / Math.sqrt((dx / R[0]) ** 2 + (dy / R[1]) ** 2 + (dz / R[2]) ** 2);
       const l = Math.hypot(dx, dy, dz);
@@ -4261,16 +4265,17 @@ const SPECIES_HEADS = {
     };
     for (const sx of [-1, 1]) {
       // the main lens: wide, low, flat against the dome
-      const d = new THREE.Vector3(sx * 0.52, -0.16, 0.84).normalize();
+      const d = new THREE.Vector3(sx * 0.50, -0.10, 0.85).normalize();
       k.face(lens, new THREE.SphereGeometry(1, 12, 8), on(d.x, d.y, d.z, -0.006 * s), d, [0.038 * s, 0.021 * s, 0.012 * s]);
-      // the outer lobe, higher and further round: the sweep of the almond
-      const e = new THREE.Vector3(sx * 0.80, 0.06, 0.58).normalize();
-      k.face(lens, new THREE.SphereGeometry(1, 10, 7), on(e.x, e.y, e.z, -0.006 * s), e, [0.026 * s, 0.015 * s, 0.011 * s]);
+      // the outer lobe, a little higher and further round, overlapping the
+      // lens by half its width: the sweep of the almond
+      const e = new THREE.Vector3(sx * 0.68, 0.02, 0.72).normalize();
+      k.face(lens, new THREE.SphereGeometry(1, 10, 7), on(e.x, e.y, e.z, -0.006 * s), e, [0.030 * s, 0.016 * s, 0.011 * s]);
     }
     // the mouth: one small dark slit, low on the lower mass
     const md = new THREE.Vector3(0, -0.30, 0.95).normalize();
     k.face(slit, plateGeo(0.016 * s, 0.0035 * s, 0.004 * s, 0.0015 * s, 1),
-      [0, 0.024 * s, 0.014 * s + 0.074 * s], md);
+      [0, 0.020 * s, 0.068 * s], md);
     k.bake(headObj);
   },
 };
