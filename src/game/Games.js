@@ -76,30 +76,39 @@ const streamFor = (seed) => (seed == null ? gamesRng : makeRng((seed >>> 0) || 1
  *          this game — there is no house seat, so without it four players
  *          would be passing one pot round a table for nothing.
  *
- * The rake is priced against measurement rather than taste. `sabaccEdge` drives
- * four thousand hands with a player who knows the rules at seat 0 and three who
- * do at the rest, and again with a player who does not, and the two numbers are
- * the whole justification for the 0.10:
+ * The rake is priced against measurement rather than taste. `games.mjs` drives
+ * thousands of hands with a player at seat 0 and three who know the rules at
+ * the rest, and the numbers are the whole justification for the 0.05:
  *
- *     knows the rules   the house keeps  2.6%   (97.4 back per 100 staked)
- *     stands on every hand             36.5%
- *     draws on every hand              38.8%
+ *     knows the rules   the house keeps  6.7%   (93.3 back per 100 staked)
+ *     stands on every hand             29.3%
+ *     draws on every hand              35.7%
+ *     "hold within 8, else draw,
+ *      never fold", calls every bet    8.2%   against the seated residents
  *
- * ── AND THE HOUSE KEEPS LESS THAN IT RAKES, BECAUSE SEAT 0 IS THE BEST SEAT
+ * ── AND IT WAS 0.10 BEFORE THE BETTING ROUND ───────────────────────────────
  *
- * 2.6% and not 10% because the seats are not equal and the player always has
- * the first one. `playSabacc` asks the seats in order and they draw off one
- * deck, so seat 0 sees the earliest cards: four identical bots over 20,000
- * hands take 27.2 / 25.6 / 24.5 / 22.5 per cent. That is a real 2.2-point
- * advantage to the player over a fair share, and the rake is set knowing it —
- * ten per cent of the middle less a two-point seat is a house that keeps about
- * two and a half, which is a card room rather than a grating.
+ * With the ante as the only stake the house kept 2.6% against the best play
+ * there was, because seat 0 draws first off one deck and that was worth two
+ * points. The betting round (V16 D1) turned that round: seat 0 also BETS
+ * first, into three seats that have not spoken, and a hand's put is now
+ * about 40 on a 25 ante. Four identical bots at a 10% rake each lost eleven
+ * per cent, which is a grating; at 5% they lose about six and a half, and a
+ * player who never folds and calls every bet — the line a hostile review
+ * showed beat the old table — loses eight. `HOLD` is where that bot stands:
+ * five off, which is the setting at which not knowing the game costs more
+ * than twenty points over knowing it, measured across 4..6 and both rakes.
+ *
+ * UNIT is the fixed bet and RAISES the cap on a round: three raises of ten
+ * on a 25 ante is a middle that can reach 400 from 100 without a single
+ * decision being about the size of a bet, which is the one thing a card game
+ * on a panel of four buttons cannot ask.
  *
  * WHAT IS NOT HERE IS A BALANCE. This prices a pot; `Credits.js` is still the
  * only file that holds one, and the two lines that move it are in the panel
  * beside the pit's, exactly as this file's header promises.
  */
-export const SABACC = { TARGET: 23, HAND: 2, ROUNDS: 3, SHIFT: 0.22, SEATS: 4, ANTE: 25, RAKE: 0.10 };
+export const SABACC = { TARGET: 23, HAND: 2, ROUNDS: 3, SHIFT: 0.22, SEATS: 4, ANTE: 25, RAKE: 0.05, UNIT: 10, RAISES: 3, HOLD: 5 };
 
 function sabaccDeck() {
   const d = [];
@@ -115,16 +124,51 @@ export function sabaccScore(hand) {
   return { sum, off, bomb: Math.abs(sum) > SABACC.TARGET, pure: Math.abs(sum) === SABACC.TARGET };
 }
 
+/** The one-word read of a temper. `push` is Casino.js's dial, 1..9 about 4. */
+export function sabaccTemper(push = 4) {
+  return push > 5 ? 'pushy' : push < 3 ? 'timid' : 'steady';
+}
+
 /**
- * Play one hand out. `players` are functions `(view) => 'hold' | 'draw' | 'fold'`.
+ * Play one hand out. `players` are functions `(view) => verb`.
+ *
+ * A hand is three rounds and each round asks every live seat TWICE: once in
+ * the DRAW phase (`'hold' | 'draw' | 'fold'`) and once or more in the BETTING
+ * round that follows it (`'check' | 'bet' | 'call' | 'raise' | 'fold'`). The
+ * view says which (`view.phase`) and lists what is legal (`view.can`).
  *
  * The view is what a player may see: their own hand, how many cards each
- * opponent holds, the round, and the shift chance. NOT the deck and NOT
- * anybody else's cards — a bot that could see those would not be testing the
- * game, it would be testing itself.
+ * opponent holds, the round, the shift chance, the pot, what it costs to stay
+ * in, and what every seat DID this round. NOT the deck and NOT anybody else's
+ * cards — a bot that could see those would not be testing the game, it would
+ * be testing itself.
+ *
+ * ── THE BETTING ROUND, and why the hand has one (V16 D1) ─────────────────
+ *
+ * Without it the hand had one stake, the ante, and a hostile review measured
+ * that "hold within eight of 23, else draw, never fold" beat the house — the
+ * middle was a fixed hundred and a seat that never left it took more than a
+ * quarter share. Worse, the three opponents' TEMPER was invisible: `push` set
+ * how they drew, and drawing is silent.
+ *
+ * So after every draw phase the seats go round: CHECK (nothing owed, nothing
+ * put in), BET a fixed `UNIT`, CALL what is owed, RAISE by a unit — at most
+ * `RAISES` raises a round — or FOLD, which forfeits what is already in. The
+ * round ends when every live seat has matched the bet; a seat left alone
+ * takes the middle without a showdown. The pot is `put` summed, and `put` is
+ * per seat because a fold gives up exactly that seat's share and no other.
+ *
+ * `view.roll` is a number off the seeded stream, one per ask, and it is how a
+ * bot BLUFFS without reaching for `Math.random` — `determinism.mjs` refuses
+ * that, and a table that dealt the same hand twice and bet it differently
+ * would be a replay that does not replay.
  */
-export function playSabacc(players, seed = null) {
+export function playSabacc(players, seed = null, opts = {}) {
   const rng = streamFor(seed);
+  const ante = Math.max(0, Math.round(Number(opts.ante ?? SABACC.ANTE) || 0));
+  /* A hand dealt for nothing bets nothing: the free table the door shows
+   * before the ante still goes round, but its units are worth zero. */
+  const unit = ante > 0 ? SABACC.UNIT : 0;
   const deck = sabaccDeck();
   /* Fisher–Yates off the seeded stream. Nothing here touches Math.random. */
   for (let i = deck.length - 1; i > 0; i--) {
@@ -135,20 +179,86 @@ export function playSabacc(players, seed = null) {
   const draw = () => (top < deck.length ? deck[top++] : (top = 0, deck[top++]));
   const hands = players.map(() => [draw(), draw()]);
   const out = players.map(() => false);
+  const put = players.map(() => ante);
+  const did = players.map(() => '');
   const events = [];
+  const live = () => out.reduce((n, o) => n + (o ? 0 : 1), 0);
+  const pot = () => put.reduce((a, b) => a + b, 0);
+  const ask = (i, view) => {
+    let act = null;
+    try { act = players[i](view); } catch { act = null; }
+    return typeof act === 'string' ? act : '';
+  };
+  const others = (i) => hands.map((h, k) => (k === i ? null : (out[k] ? 0 : h.length)));
 
   for (let round = 0; round < SABACC.ROUNDS; round++) {
+    if (live() < 2) break;
+    /* ── THE DRAW PHASE. */
     for (let i = 0; i < players.length; i++) {
       if (out[i]) continue;
       const view = {
+        phase: 'draw', can: ['hold', 'draw', 'fold'],
         hand: hands[i].slice(), round, rounds: SABACC.ROUNDS,
         target: SABACC.TARGET, shift: SABACC.SHIFT,
-        others: hands.map((h, k) => (k === i ? null : (out[k] ? 0 : h.length))),
+        others: others(i), pot: pot(), put: put[i], toCall: 0, raises: 0, unit,
+        table: did.slice(), roll: rng(),
       };
-      let act = 'hold';
-      try { act = players[i](view) || 'hold'; } catch { act = 'hold'; }
-      if (act === 'fold') { out[i] = true; events.push({ t: 'fold', who: i }); continue; }
-      if (act === 'draw') { hands[i].push(draw()); events.push({ t: 'draw', who: i }); }
+      const act = ask(i, view) || 'hold';
+      if (act === 'fold') { out[i] = true; did[i] = 'folded'; events.push({ t: 'fold', who: i, round }); continue; }
+      if (act === 'draw') { hands[i].push(draw()); events.push({ t: 'draw', who: i, round }); }
+    }
+    /* ── THE BETTING ROUND. Everybody live starts owing nothing and having
+     * said nothing; it goes round until every live seat has spoken since the
+     * last raise and matched it. Bounded: at most RAISES raises, so at most
+     * RAISES + 1 laps of the table. */
+    let bet = 0, raises = 0;
+    const paid = players.map(() => 0);
+    const spoke = players.map(() => false);
+    for (let i = 0; i < players.length; i++) if (!out[i]) did[i] = '';
+    let settled = false;
+    for (let lap = 0; lap <= SABACC.RAISES + 1 && !settled; lap++) {
+      settled = true;
+      for (let i = 0; i < players.length; i++) {
+        if (out[i] || live() < 2) continue;
+        if (spoke[i] && paid[i] === bet) continue;
+        settled = false;
+        const toCall = bet - paid[i];
+        const can = toCall > 0 ? ['call', ...(raises < SABACC.RAISES ? ['raise'] : []), 'fold']
+          : ['check', ...(raises < SABACC.RAISES ? ['bet'] : []), 'fold'];
+        const view = {
+          phase: 'bet', can,
+          hand: hands[i].slice(), round, rounds: SABACC.ROUNDS,
+          target: SABACC.TARGET, shift: SABACC.SHIFT,
+          others: others(i), pot: pot(), put: put[i], toCall, raises, unit,
+          table: did.slice(), roll: rng(),
+        };
+        let act = ask(i, view);
+        /* THE VERBS NORMALISE: a draw-phase verb said here is "stay in", a
+         * raise past the cap is a call, a check into a bet is a call. */
+        if (act === 'bet') act = 'raise';
+        if (act === 'raise' && raises >= SABACC.RAISES) act = 'call';
+        if (act !== 'fold' && act !== 'raise') act = toCall > 0 ? 'call' : 'check';
+        spoke[i] = true;
+        if (act === 'fold') {
+          out[i] = true; did[i] = 'folded';
+          events.push({ t: 'fold', who: i, round });
+          continue;
+        }
+        if (act === 'raise') {
+          bet += unit; raises++;
+          did[i] = toCall > 0 || bet > unit ? 'raised' : 'bet';
+          for (let k = 0; k < players.length; k++) if (k !== i) spoke[k] = false;
+          events.push({ t: 'raise', who: i, round, to: bet });
+        } else if (act === 'call') {
+          did[i] = 'called';
+          events.push({ t: 'call', who: i, round, to: bet });
+        } else {
+          did[i] = 'checked';
+          events.push({ t: 'check', who: i, round });
+        }
+        put[i] += bet - paid[i];
+        paid[i] = bet;
+      }
     }
     /**
      * THE SHIFT, and it is the whole game. Every card in every live hand may
@@ -167,23 +277,32 @@ export function playSabacc(players, seed = null) {
   }
 
   /* THE SHOWDOWN. Nearest to the target on either side of zero; a bomb-out
-   * cannot win; everybody folded or bombed is a push. */
+   * cannot win; everybody folded or bombed is a push. A seat left alone by
+   * everybody else folding takes it without showing. */
   let best = -1, bestOff = Infinity, pure = false, tied = false;
-  for (let i = 0; i < hands.length; i++) {
-    if (out[i]) continue;
-    const s = sabaccScore(hands[i]);
-    if (s.bomb) continue;
-    if (s.pure && !pure) { pure = true; best = i; bestOff = 0; tied = false; continue; }
-    if (s.pure && pure) { tied = true; continue; }
-    if (!pure && s.off < bestOff) { bestOff = s.off; best = i; tied = false; }
-    else if (!pure && s.off === bestOff) tied = true;
+  if (live() === 1) {
+    best = out.indexOf(false);
+    pure = sabaccScore(hands[best]).pure;
+  } else {
+    for (let i = 0; i < hands.length; i++) {
+      if (out[i]) continue;
+      const s = sabaccScore(hands[i]);
+      if (s.bomb) continue;
+      if (s.pure && !pure) { pure = true; best = i; bestOff = 0; tied = false; continue; }
+      if (s.pure && pure) { tied = true; continue; }
+      if (!pure && s.off < bestOff) { bestOff = s.off; best = i; tied = false; }
+      else if (!pure && s.off === bestOff) tied = true;
+    }
+    /* A TIE IS A PUSH (V17). Strict `<` handed every tie to the lowest seat,
+     * and the player is always seat 0: measured over 6 000 hands that was a
+     * five-point gift hiding inside the house edge. Two hands the same distance
+     * from 23 split nothing — the middle stands and nobody is paid. */
+    if (tied) best = -1;
   }
-  /* A TIE IS A PUSH (V17). Strict `<` handed every tie to the lowest seat,
-   * and the player is always seat 0: measured over 6 000 hands that was a
-   * five-point gift hiding inside the house edge. Two hands the same distance
-   * from 23 split nothing — the middle stands and nobody is paid. */
-  if (tied) best = -1;
-  return { winner: best, hands: hands.map((h) => h.slice()), out: out.slice(), events, pure };
+  return {
+    winner: best, hands: hands.map((h) => h.slice()), out: out.slice(), events, pure,
+    ante, unit, put: put.slice(), pot: pot(), did: did.slice(),
+  };
 }
 
 /**
@@ -192,9 +311,11 @@ export function playSabacc(players, seed = null) {
  *
  * It is not optimal and is not meant to be — it holds when it is close, draws
  * when it is far, and folds when it is both far and late, which is what
- * knowing the game looks like from outside.
+ * knowing the game looks like from outside. In the betting round it is
+ * `sabaccBet` at the middle of the dial.
  */
 export function sabaccBot(view) {
+  if (view.phase === 'bet') return sabaccBet(view, 4);
   const s = sabaccScore(view.hand);
   const left = view.rounds - view.round - 1;
   /**
@@ -232,11 +353,76 @@ export function sabaccBot(view) {
    * the target. Everything else is worth another card.
    */
   if (s.bomb) return (Math.abs(s.sum) - SABACC.TARGET) > BIGGEST ? 'fold' : 'draw';
-  if (s.off <= 4) return 'hold';
+  if (s.off <= SABACC.HOLD) return 'hold';
   /* Short of the target on either side: a card can only help, and the shift
    * will move it again anyway. `left` is here because a hand held into the
    * last round is the one that gets shown. */
   return left >= 0 ? 'draw' : 'hold';
+}
+
+/**
+ * HOW A SEAT BETS, off one dial and one roll.
+ *
+ * `push` is Casino.js's temper (1..9, 4 is the middle): a pushy seat raises
+ * on a thin hand and stays in under pressure, a timid one bets only a made
+ * hand and folds to a raise. `view.roll` is the seeded number the engine
+ * hands every ask, and it is the bluff — the same hand at the same seat bets
+ * the same way every time it is replayed, which is what lets the panel hold
+ * `{seed, acts}` and nothing else.
+ *
+ *   STRENGTH   0 for a bomb-out, 1 for a pure sabacc, a straight line between
+ *              at twelve off. Not a probability: the shift makes the true
+ *              equity of any hand a fog, and a bot that pretended otherwise
+ *              would be reading cards it cannot see.
+ *   RAISE      when strength clears a bar that a pushy temper lowers, or on a
+ *              bluff roll that a pushy temper widens.
+ *   FOLD       to a bet, when strength is under a bar a timid temper raises.
+ *              A bomb-out facing a bet is nearly always a fold — a hand that
+ *              cannot win a showdown is paying to see one.
+ */
+export function sabaccBet(view, push = 4) {
+  const s = sabaccScore(view.hand);
+  const a = Math.max(0, Math.min(1, (push - 1) / 8));
+  const strength = s.bomb ? 0 : Math.max(0, 1 - s.off / 12);
+  const roll = Number.isFinite(view.roll) ? view.roll : 0.5;
+  const last = view.round >= view.rounds - 1;
+  const bluff = roll < 0.03 + 0.22 * a;
+  const canRaise = view.can.includes('raise') || view.can.includes('bet');
+  if (view.toCall > 0) {
+    /* A BOMB-OUT FACING A BET: dead on the last round, a chase before it —
+     * and how long a chase is the temper. */
+    if (s.bomb) return (last || roll > 0.35 + 0.55 * a) ? 'fold' : 'call';
+    /* FOLDING FORFEITS THE ANTE, so the bar is low and lower still while a
+     * shift can still fix the hand; a timid seat is the one that folds to
+     * pressure and a pushy one nearly never does. */
+    const bar = last ? 0.4 - 0.4 * a : 0.15 - 0.15 * a;
+    if (strength < bar && !bluff) return 'fold';
+    if (canRaise && (strength > 0.82 - 0.3 * a || (bluff && strength > 0.4))) return 'raise';
+    return 'call';
+  }
+  if (canRaise && !s.bomb && (strength > 0.7 - 0.4 * a || bluff)) return 'bet';
+  return 'check';
+}
+
+/**
+ * What a seat is owed when the hand is over, with the bets in it.
+ *
+ *   TOOK IT      the whole middle, less the house's cut.
+ *   NOBODY DID   what that seat put in comes back, if it did not fold — a
+ *                fold forfeits, and a forfeited share of a pushed hand is the
+ *                house's.
+ *   ANYBODY ELSE nothing.
+ *
+ * `sabaccPays` below prices the ANTES alone and is kept for the door's line
+ * ("four seats ante 25, so the middle is 100"); a played hand has bets in it
+ * and this is the one that settles it.
+ */
+export function sabaccOwed(r, seat = 0) {
+  if (!r || r.winner === null || r.winner === undefined) return 0;
+  const mine = Math.max(0, Math.round(Number(r.put?.[seat]) || 0));
+  if (r.winner < 0) return r.out?.[seat] ? 0 : mine;
+  if (r.winner !== seat) return 0;
+  return Math.round((r.pot || 0) * (1 - SABACC.RAKE));
 }
 
 /** The largest magnitude in the deck — a face card at seventeen. */

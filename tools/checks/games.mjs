@@ -12,6 +12,9 @@
 export async function run({ check, assert, near }) {
   const { clocked } = await import('./_shared.mjs');
   check = await clocked(check);
+  /* ENOUGH VERBS TO FINISH A HAND. A round asks a seat once to draw and up
+   * to four times to bet; `hold` past the draw phase reads as stay in. */
+  const STAY = Array(15).fill('hold');
 
   check('games: sabacc — knowing the rules beats not knowing them', async () => {
     /**
@@ -26,7 +29,9 @@ export async function run({ check, assert, near }) {
      * every time it runs — `determinism.mjs` refuses that and is right to. */
     let s = 12345;
     const rnd = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
-    const random = () => ['hold', 'draw', 'fold'][Math.floor(rnd() * 3)];
+    /* AND IT PICKS FROM WHAT IS LEGAL — draw verbs in the draw phase, bet
+     * verbs in the betting round — or it is not a player, it is a fold. */
+    const random = (v) => v.can[Math.floor(rnd() * v.can.length)];
 
     let botWins = 0, rndWins = 0, pushes = 0;
     const N = 3000;
@@ -427,9 +432,9 @@ export async function run({ check, assert, near }) {
       let staked = 0, back = 0;
       for (let i = 0; i < hands; i++) {
         const players = [me, G.sabaccBot, G.sabaccBot, G.sabaccBot];
-        const r = G.playSabacc(players, 700003 + i * 7);
-        staked += G.SABACC.ANTE;
-        back += G.sabaccPays(r.winner, G.SABACC.ANTE, G.SABACC.SEATS);
+        const r = G.playSabacc(players, 700003 + i * 7, { ante: G.SABACC.ANTE });
+        staked += r.put[0];
+        back += G.sabaccOwed(r, 0);
       }
       return 1 - back / staked;
     };
@@ -453,17 +458,130 @@ export async function run({ check, assert, near }) {
     const free = C.sabaccTable(C.WHEELHOUSE, 4, 0, [], 3, 0);
     assert(free.ante === 0 && free.pot === 0 && free.staked === false,
       'a hand dealt before anybody anted claims to be staked');
-    const live = C.sabaccTable(C.WHEELHOUSE, 4, 0, ['hold', 'hold', 'hold'], 3, G.SABACC.ANTE);
-    assert(live.staked && live.pot === 100 && live.done && live.result,
+    const live = C.sabaccTable(C.WHEELHOUSE, 4, 0, STAY, 3, G.SABACC.ANTE);
+    assert(live.staked && live.pot >= 100 && live.done && live.result,
       `a staked hand came back ante ${live.ante} pot ${live.pot} done ${live.done}`);
     assert(Number.isInteger(live.result.pay) && live.result.pay >= 0,
       `the result owes ${live.result.pay}, which is not a number of credits`);
-    assert(live.result.pay === G.sabaccPays(live.result.winner, live.ante, live.seats.length + 1),
+    const w = live.result.winner;
+    assert(live.result.pay === (w === 0 ? Math.round(live.result.pot * (1 - G.SABACC.RAKE)) : w < 0 ? live.result.put : 0),
       'the table and the rules disagree about what the hand is worth');
     return `middle ${G.sabaccPot(G.SABACC.ANTE)} at an ante of ${G.SABACC.ANTE}, rake `
       + `${(G.SABACC.RAKE * 100).toFixed(0)}%; the house keeps ${(knows * 100).toFixed(1)}% against a player `
       + `who knows the rules, ${(stands * 100).toFixed(1)}% against one who stands on everything and `
       + `${(draws * 100).toFixed(1)}% against one who draws on everything`;
+  });
+
+  check('games: sabacc has a betting round, the bots bet from their temper, and a caller loses', async () => {
+    /**
+     * ══ THE DEFECT: ONE STAKE, AND THE TEMPER WAS INVISIBLE ══════════════
+     *
+     * A hostile review measured that "hold if within 8 of 23, else draw,
+     * never fold" BEAT the house at the old table: the middle was a fixed
+     * hundred, and a seat that never left it took more than a quarter share.
+     * And `push` — the number §D1's "species and temper" came down to — set
+     * only how a seat DREW, which nobody at the table can see.
+     *
+     * So after every draw phase there is a betting round (V16 D1): check,
+     * bet a unit, call, raise up to a cap, or fold and forfeit what is in.
+     * This holds the four things that make it a betting round and not a
+     * decoration: the pot grows with raises, a folded seat cannot take it,
+     * the bots differ measurably by `push`, and the line that beat the old
+     * table pays the house at this one.
+     */
+    const G = await import('../../src/game/Games.js');
+    const C = await import('../../src/game/Casino.js');
+    const ANTE = G.SABACC.ANTE;
+
+    /* ── 1. THE POT GROWS WITH RAISES, and only through the raise cap. */
+    const raiser = (v) => (v.phase === 'bet' ? 'raise' : 'hold');
+    const checker = (v) => (v.phase === 'bet' ? (v.toCall > 0 ? 'call' : 'check') : 'hold');
+    const quiet = G.playSabacc([checker, checker, checker, checker], 41, { ante: ANTE });
+    assert(quiet.pot === ANTE * 4, `four seats that only check built a middle of ${quiet.pot}, not ${ANTE * 4}`);
+    const loud = G.playSabacc([raiser, raiser, raiser, raiser], 41, { ante: ANTE });
+    const cap = ANTE * 4 + 4 * G.SABACC.UNIT * G.SABACC.RAISES * G.SABACC.ROUNDS;
+    assert(loud.pot > quiet.pot, `four seats raising built a middle of ${loud.pot} — the same as four checking`);
+    assert(loud.pot === cap, `four seats raising every time built ${loud.pot}; the cap is ${cap}`);
+    assert(loud.events.filter((e) => e.t === 'raise').length === G.SABACC.RAISES * G.SABACC.ROUNDS,
+      'the raise cap is not a cap');
+    assert(loud.put.every((p) => p === cap / 4), `the put per seat is [${loud.put}] on a middle of ${loud.pot}`);
+    assert(G.sabaccOwed({ ...loud, winner: 0 }, 0) === Math.round(cap * (1 - G.SABACC.RAKE)),
+      'taking the middle does not pay the middle less the rake');
+    /* AND A FOLD FORFEITS what is in — the pot keeps it, the folder gets none
+     * of it back even on a push. */
+    const folder = (v) => (v.phase === 'bet' && v.toCall > 0 ? 'fold' : v.phase === 'bet' ? 'check' : 'hold');
+    let forfeit = 0, folds = 0;
+    for (let i = 0; i < 300; i++) {
+      const r = G.playSabacc([folder, raiser, checker, checker], 900 + i, { ante: ANTE });
+      if (r.out[0]) { folds++; forfeit += r.put[0]; assert(G.sabaccOwed(r, 0) === 0, `a folded seat was paid ${G.sabaccOwed(r, 0)}`); }
+    }
+    assert(folds > 200 && forfeit >= folds * ANTE, `${folds} folds forfeited ${forfeit}`);
+
+    /* ── 2. A FOLDED SEAT CANNOT WIN, over two thousand hands of mixed play. */
+    let s = 777;
+    const rnd = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+    const random = (v) => v.can[Math.floor(rnd() * v.can.length)];
+    let foldedWon = 0, decided = 0, aloneWon = 0;
+    for (let i = 0; i < 2000; i++) {
+      const r = G.playSabacc([random, G.sabaccBot, random, G.sabaccBot], 5000 + i, { ante: ANTE });
+      if (r.winner >= 0) { decided++; if (r.out[r.winner]) foldedWon++; }
+      if (r.out.filter((o) => !o).length === 1 && r.winner === r.out.indexOf(false)) aloneWon++;
+      assert(r.pot === r.put.reduce((a, b) => a + b, 0), 'the pot is not the sum of what the seats put in');
+    }
+    assert(foldedWon === 0, `${foldedWon} of ${decided} decided hands were taken by a seat that had folded`);
+    assert(aloneWon > 50, `only ${aloneWon} hands were taken by the last seat standing — a table everybody else left pays nobody`);
+
+    /* ── 3. THE BOTS DIFFER BY PUSH, measurably: raise rate over 2000 hands. */
+    const raiseRate = (push) => {
+      const bot = C.botFor({ push, nerve: 9 });
+      let raises = 0, folds = 0;
+      for (let i = 0; i < 2000; i++) {
+        const r = G.playSabacc([G.sabaccBot, bot, G.sabaccBot, G.sabaccBot], 31000 + i, { ante: ANTE });
+        raises += r.events.filter((e) => e.t === 'raise' && e.who === 1).length;
+        folds += r.events.filter((e) => e.t === 'fold' && e.who === 1 && e.round !== undefined).length;
+      }
+      return { raises: raises / 2000, folds: folds / 2000 };
+    };
+    const pushy = raiseRate(8), steady = raiseRate(4), timid = raiseRate(1.5);
+    assert(pushy.raises > steady.raises * 1.3 && steady.raises > timid.raises * 1.3,
+      `raises a hand: pushy ${pushy.raises.toFixed(2)}, steady ${steady.raises.toFixed(2)}, timid `
+      + `${timid.raises.toFixed(2)} — the temper is not on the table`);
+    assert(timid.folds > pushy.folds,
+      `folds a hand: timid ${timid.folds.toFixed(2)}, pushy ${pushy.folds.toFixed(2)} — a timid seat has to fold to pressure`);
+    assert(G.sabaccTemper(8) === 'pushy' && G.sabaccTemper(4) === 'steady' && G.sabaccTemper(1.5) === 'timid',
+      'the one-word read does not match the dial');
+    /* AND THE TABLE SAYS SO: species, temper and what each seat did. */
+    const t = C.sabaccTable(C.WHEELHOUSE, 3, 0, ['hold'], 3, ANTE);
+    assert(t.phase === 'bet' && t.can.includes('check') && t.can.includes('bet') && t.can.includes('fold'),
+      `after the first draw the player is asked ${t.phase} with [${t.can}] — the betting round is missing`);
+    assert(t.seats.every((w) => w.species && ['pushy', 'steady', 'timid'].includes(w.temper)),
+      'a seat at the table has no species or no temper to read');
+    const later = C.sabaccTable(C.WHEELHOUSE, 3, 0, ['hold', 'check', 'hold'], 3, ANTE);
+    assert(later.seats.some((w) => ['bet', 'raised', 'called', 'checked', 'folded'].includes(w.did)),
+      `after a betting round the seats say [${later.seats.map((w) => w.did)}] — a read is not possible`);
+    const rerun = C.sabaccTable(C.WHEELHOUSE, 3, 0, ['hold', 'check', 'hold'], 3, ANTE);
+    assert(JSON.stringify(rerun.seats.map((w) => w.did)) === JSON.stringify(later.seats.map((w) => w.did))
+      && rerun.pot === later.pot, 'the same hand bet differently the second time it was dealt — the bluff is off Math.random');
+
+    /* ── 4. THE LINE THAT BEAT THE OLD TABLE PAYS THIS ONE. "Hold within 8,
+     *      else draw, never fold", calling every bet, against the residents
+     *      actually seated over thirty days, six thousand hands. */
+    const rulebot = (v) => {
+      if (v.phase === 'bet') return v.toCall > 0 ? 'call' : 'check';
+      return G.sabaccScore(v.hand).off <= 8 ? 'hold' : 'draw';
+    };
+    let staked = 0, back = 0;
+    for (let i = 0; i < 6000; i++) {
+      const foes = [1, 2, 3].map((seat) => C.botFor(C.opponentAt(C.WHEELHOUSE, i % 30, seat)));
+      const r = G.playSabacc([rulebot, ...foes], 700003 + i * 7, { ante: ANTE });
+      staked += r.put[0]; back += G.sabaccOwed(r, 0);
+    }
+    const edge = 1 - back / staked;
+    assert(edge > 0.02, `the never-fold line keeps ${((1 - edge) * 100).toFixed(1)} per 100 staked — it still beats the house`);
+    assert(edge < 0.12, `the house keeps ${(edge * 100).toFixed(1)}% against a caller — past a tenth nobody sits down twice`);
+    return `middle ${quiet.pot} → ${loud.pot} raised to the cap; raises a hand pushy ${pushy.raises.toFixed(2)} / `
+      + `steady ${steady.raises.toFixed(2)} / timid ${timid.raises.toFixed(2)}; the never-fold caller loses `
+      + `${(edge * 100).toFixed(1)}% over 6000 hands`;
   });
 
   check('games: the ante moves real credits, and a live hand outlives the door', async () => {
@@ -515,7 +633,7 @@ export async function run({ check, assert, near }) {
      *      arrive — driven over enough hands that a winner is certain. */
     let dealt = 0, won = 0, staked = 0, backIn = 0;
     for (let i = 0; i < 200 && won < 3; i++) {
-      const t = C.sabaccTable(C.WHEELHOUSE, 6, i, ['hold', 'hold', 'hold'], 3, G.SABACC.ANTE);
+      const t = C.sabaccTable(C.WHEELHOUSE, 6, i, STAY, 3, G.SABACC.ANTE);
       const before = Credits.purse();
       const spent = Credits.spend(G.SABACC.ANTE, 'sabacc');
       if (!spent.ok) { Credits.pay(500, 'check'); continue; }
@@ -591,7 +709,7 @@ export async function run({ check, assert, near }) {
      * each of them can end. */
     const missing = [];
     for (let day = 0; day < 12; day++) {
-      const t = C.sabaccTable(C.WHEELHOUSE, day, 0, ['hold', 'hold', 'hold'], 3, 25);
+      const t = C.sabaccTable(C.WHEELHOUSE, day, 0, STAY, 3, 25);
       if (!t.result?.line) missing.push(`sabacc day ${day} winner ${t.result?.winner}`);
       const nowt = C.sabaccTable(C.WHEELHOUSE, day, 0, ['fold'], 3, 25);
       if (!nowt.result?.line) missing.push(`sabacc folded day ${day}`);
@@ -786,11 +904,11 @@ export async function run({ check, assert, near }) {
 
     /* AND A HAND IS A REPLAY: the same seed and the same verbs are the same
      * cards, which is what lets the panel hold `{seed, acts}` and nothing. */
-    const a = C.sabaccTable(60, 7, 2, ['draw', 'hold', 'hold']);
-    const b = C.sabaccTable(60, 7, 2, ['draw', 'hold', 'hold']);
+    const a = C.sabaccTable(60, 7, 2, ['draw', ...STAY]);
+    const b = C.sabaccTable(60, 7, 2, ['draw', ...STAY]);
     assert(JSON.stringify(a.hand) === JSON.stringify(b.hand) && a.result.winner === b.result.winner,
       'the same hand played the same way came out differently');
-    assert(a.done && a.result, 'three verbs did not finish a three-round hand');
+    assert(a.done && a.result, 'a draw and enough stays did not finish a three-round hand');
     const half = C.sabaccTable(60, 7, 2, ['draw']);
     assert(!half.done && half.result === null && half.can.length === 3,
       'a hand with one verb in it is showing a showdown it has not played to');
