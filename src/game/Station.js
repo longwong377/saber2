@@ -107,6 +107,9 @@ import { GANTRY_Y, stepCook, dressFeeds, stepFeeds, CookSet } from './StationKit
 import { disposeLiveFeeds } from './RaceFeed.js';
 import { dressTV, stepTV } from './Holonet.js';
 import { sitKey, releaseSeat } from './StationSit.js';
+import { dressMorning, stepMorning, undressMorning } from './Morning.js';
+import { stepSleep, endSleep } from './Sleep.js';
+import { stepDomeSeat } from './DomeSeat.js';
 import * as Food from './Food.js';
 import { shelfFor } from './Counter.js';
 import { flightState, setFlightState } from './StationSave.js';
@@ -1503,6 +1506,8 @@ export function dressStation(world) {
    * every deck the three rooms are not on. */
   dressFeeds(world, st);
   dressTV(world, st);
+  /* V18 cool 8: the shutters and the ring's sector runs — see `Morning.js`. */
+  dressMorning(world, st);
   /* ── AND THE PEOPLE BEHIND THE COUNTERS (V16 Lane B) ───────────────────
    *
    * AFTER `dressStationLife`, so the pool has already claimed its budget and
@@ -1656,6 +1661,8 @@ export function orderJump(world, to) {
 /** Everything the station made, put down. `StationDirector.dispose` calls it. */
 export function undressStation(world) {
   releaseSeat(world);
+  endSleep(world, false);
+  undressMorning(world);
   disposeLiveFeeds(world?._station);
   const st = world._station;
   if (!st) return;
@@ -4568,7 +4575,7 @@ const PA_EVERY = 30;
  * onto the synthesiser's pitch and `cadence` onto its rate, and those two
  * fields are the whole of what it reads.
  */
-const PA_SPEAKER = Object.freeze({
+export const PA_SPEAKER = Object.freeze({
   id: 'tannoy', name: 'Station control',
   f0: 122, wave: 'sawtooth', formants: [560, 1180], q: [5.5, 4.6], mix: 0.5,
   rasp: 0.12, raspFreq: 1900, cadence: 0.94, bend: 0.05, gain: 1.0,
@@ -4903,6 +4910,8 @@ export function stepStation(world, dt) {
   setDeckBed(world, st);
   /* THE HOLONET, on every screen a room declared — see `Holonet.js`. */
   stepTV(world, st, dt);
+  /* V18 cool 11: the night on the cabin's screen, painted over the holonet's frame. */
+  stepSleep(world, st, dt);
   /* THE SORTIE, on the same terms and for the same reason (§7). A no-op until
    * somebody launches, which is one property read a frame. */
   if (world._sortie || world._flying) stepSortie(world, st, dt);
@@ -4925,6 +4934,9 @@ export function stepStation(world, dt) {
    * clock (V15 §1.1). One floor and one integer compare a frame — see
    * `stepTannoy`. */
   stepTannoy(world, st, dt);
+  /* V18 cool 8 and 12: the morning's clock, and the window seat's camera. */
+  stepMorning(world, st, dt);
+  stepDomeSeat(world, dt);
 
   const cam = world.player?.camera?.obj || world.player;
   if (!cam) return;
