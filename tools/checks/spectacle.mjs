@@ -1245,6 +1245,63 @@ export async function run({ check, assert }) {
   /*  6. THE WINDOW — the sim rendered as moments on a screen in a room */
   /* ══════════════════════════════════════════════════════════════════ */
 
+  /**
+   * A RASTER THAT REMEMBERS WHERE THINGS WERE PAINTED.
+   *
+   * The shim's 2D context is a no-op, and "the canvas changed between two
+   * ticks" is a claim about PIXELS. Nothing in node_modules rasterises, so
+   * this is the smallest thing that is honestly a picture: a coarse grid
+   * (one cell per 4×4 px of the feed's canvas) where every fill, stroke and
+   * text stamps the colour it was painted in over the box it covers. Two
+   * shots that put the same shapes in the same colours at the same places
+   * read as the same picture; a pod that moved a lane, or a burst that
+   * appeared, reads as cells that differ. Coarse — but a stamp is a pixel
+   * that cannot lie about WHERE, which is what the marker test needs.
+   */
+  function stampRaster(W, H, cell = 4) {
+    const cols = Math.ceil(W / cell), rows = Math.ceil(H / cell);
+    const px = new Uint32Array(cols * rows);
+    const hashOf = (s) => { let h = 7; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h || 1; };
+    let box = null;
+    const grow = (x, y) => {
+      if (!box) box = { x0: x, y0: y, x1: x, y1: y };
+      else { box.x0 = Math.min(box.x0, x); box.y0 = Math.min(box.y0, y); box.x1 = Math.max(box.x1, x); box.y1 = Math.max(box.y1, y); }
+    };
+    const stamp = (x0, y0, x1, y1, colour) => {
+      const h = hashOf(colour);
+      const c0 = Math.max(0, Math.floor(x0 / cell)), c1 = Math.min(cols - 1, Math.floor(x1 / cell));
+      const r0 = Math.max(0, Math.floor(y0 / cell)), r1 = Math.min(rows - 1, Math.floor(y1 / cell));
+      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) px[r * cols + c] = h;
+    };
+    const ctx = {
+      canvas: null, fillStyle: '#000', strokeStyle: '#000', lineWidth: 1, font: '', textAlign: 'left', textBaseline: 'top',
+      paints: 0,
+      fillRect(x, y, w, h) { ctx.paints++; stamp(x, y, x + w, y + h, ctx.fillStyle); },
+      clearRect(x, y, w, h) { stamp(x, y, x + w, y + h, 'clear'); },
+      beginPath() { box = null; },
+      closePath() {},
+      moveTo(x, y) { grow(x, y); },
+      lineTo(x, y) { grow(x, y); },
+      rect(x, y, w, h) { grow(x, y); grow(x + w, y + h); },
+      arc(x, y, r) { grow(x - r, y - r); grow(x + r, y + r); },
+      ellipse(x, y, rx, ry) { grow(x - rx, y - ry); grow(x + rx, y + ry); },
+      fill() { if (box) { ctx.paints++; stamp(box.x0, box.y0, box.x1, box.y1, ctx.fillStyle); } },
+      stroke() { if (box) { ctx.paints++; stamp(box.x0, box.y0, box.x1, box.y1, 's' + ctx.strokeStyle); } },
+      fillText(t, x, y) {
+        const size = Number((ctx.font.match(/(\d+)px/) || [])[1]) || 12;
+        const w = String(t).length * size * 0.6;
+        const x0 = ctx.textAlign === 'right' ? x - w : ctx.textAlign === 'center' ? x - w / 2 : x;
+        ctx.paints++;
+        stamp(x0, y - size / 2, x0 + w, y + size / 2, 't' + hashOf(t) + ctx.fillStyle);
+      },
+      measureText(t) { return { width: String(t).length * 8 }; },
+      save() {}, restore() {}, translate() {}, rotate() {}, scale() {},
+      snapshot() { return px.slice(); },
+      diff(a, b) { let n = 0; for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) n++; return n; },
+    };
+    return ctx;
+  }
+
   check('spectacle: #19 has the race ON it, and the picture changes as the race does', async () => {
     /**
      * ══ THE FIFTH ELEMENT OF LANE D, AND IT DID NOT EXIST ═══════════════
@@ -1306,6 +1363,14 @@ export async function run({ check, assert }) {
       `the screens are on places [${ids}] and the three rooms with a book in them are 18, 19, 20`);
     const feed = st.feeds.find((f) => f.id === 19);
     assert(feed.panel && feed.mesh, '#19 recorded a screen and nothing hung one');
+    /* THE SHOT PAINTS ON THE PANEL'S OWN CANVAS — one canvas per screen and
+     * no material of its own. Hang the raster on it and count what lands. */
+    assert(feed.canvas && feed.canvas === feed.panel.texture?.image,
+      'the feed paints on a canvas that is not the one behind the panel\'s texture');
+    const raster = stampRaster(feed.canvas.width, feed.canvas.height);
+    feed.canvas.getContext = (kind) => (kind === '2d' ? raster : null);
+    const { paintShot } = await import('../../src/game/StationKit.js');
+    const { shotOf } = await import('../../src/game/Spectacle.js');
 
     /* Stand in it. `stepStation`'s last block is §12.3's door cull and
      * `stepFeeds` will not read a room that is not drawn. */
@@ -1342,9 +1407,35 @@ export async function run({ check, assert }) {
      * 0.3 h a Holo-theatre race lasts, and short of the 0.5 h to the next one
      * off — so the window is exactly one race, from the first gate to the
      * call, with nothing else on the screen at either end. */
+    /* THE PICTURE, MEASURED: a snapshot of the raster after every redraw,
+     * the leader's x after every tick, and the caption against the rail. */
+    let snap = raster.snapshot(), draws = feed.draws, paints = 0, diffs = [], zero = 0, zeroAt = [], lastKey = feed.key;
+    const leadX = [];
+    let captionOff = null, noFlash = 0, flashes = 0;
     for (let i = 0; i < 60 * 43; i++) {
       stepStation(world, DT);
       if (!feed.rows) continue;
+      if (feed.draws !== draws) {
+        draws = feed.draws;
+        const now = raster.snapshot();
+        const d = raster.diff(snap, now);
+        diffs.push(d);
+        if (d === 0) { zero++; zeroAt.push(`${lastKey} =>> ${feed.key}`); }
+        lastKey = feed.key;
+        snap = now;
+        paints = raster.paints;
+        const lead = feed.shot?.runners.find((r) => r.lead);
+        if (lead && feed.phase === 'running') leadX.push({ x: lead.x, gate: feed.gate, id: lead.id, prog: feed.shot.progress });
+        /* THE CAPTION IS THE ANNOUNCER'S LATEST LINE — the same `calls`
+         * stream the crowd hears, read off the shipped `watch()` at the
+         * same hour, not a word table of the screen's own. */
+        const heard = watch('holo-theatre', st.day | 0, st.hour).calls;
+        if (heard.length && feed.shot?.caption !== heard[heard.length - 1]) {
+          captionOff = `"${feed.shot?.caption}" against the rail's "${heard[heard.length - 1]}"`;
+        }
+        if (feed.shot?.flash?.now) flashes++;
+        if (feed.cut && feed.cut.type !== 'off' && feed.cut.type !== 'result' && !feed.shot?.flash) noFlash++;
+      }
       pics.add(feed.key);
       gates.push(feed.gate);
       if (feed.phase === 'called') called++;
@@ -1382,8 +1473,69 @@ export async function run({ check, assert }) {
     assert(winner && last[1].includes(winner.name.toUpperCase()),
       `the call on the screen is "${last[1]}" and the winner is ${winner?.name}`);
 
+    /* ══ THE SHOT — V16 Lane D: a posed picture, not a list ══════════════
+     *
+     * Three things, each a number off the SHIPPED paint on the panel's own
+     * canvas: the picture changes between two ticks of a running race; the
+     * leader's marker advances with the sim and never runs backwards; and
+     * the caption strip carries the announcer's latest line. */
+    assert(diffs.length >= 8, `${diffs.length} paints over a whole race`);
+    assert(diffs.every((d) => d > 0),
+      `${zero} of ${diffs.length} redraws changed no pixel — the key changed and the picture did not: ${zeroAt.slice(0, 2).join(" || ")}`);
+    const changed = diffs.filter((d) => d > 0).length;
+    assert(paints > 20, `${paints} paint operations for a whole race — that is a caption, not a scene`);
+    assert(leadX.length >= 8, `the leader was marked on ${leadX.length} paints`);
+    let back = null, moved = 0;
+    for (let i = 1; i < leadX.length; i++) {
+      if (leadX[i].x < leadX[i - 1].x - 1e-9) back = `${leadX[i - 1].x} → ${leadX[i].x} at gate ${leadX[i].gate}`;
+      if (leadX[i].x > leadX[i - 1].x) moved++;
+    }
+    assert(!back, `the leader's marker went backwards: ${back}`);
+    assert(moved >= 8, `the leader's marker advanced on ${moved} paints of ${leadX.length}`);
+    assert(leadX[leadX.length - 1].x - leadX[0].x > 0.5,
+      `the leader's marker crossed ${(leadX[leadX.length - 1].x - leadX[0].x).toFixed(2)} of the band over a whole race`);
+    for (const p of leadX) {
+      assert(Math.abs(p.x - p.prog) < 1e-9, `the leader is at ${p.x} and the sim is at ${p.prog}`);
+    }
+    assert(!captionOff, `the caption strip carried ${captionOff}`);
+    assert(noFlash === 0, `${noFlash} paints cut to a moment and drew nothing at the runner`);
+    assert(flashes > 0, 'no moment was ever drawn as a flash on the gate it happened');
+    /* Every body on the screen is a body on the card, in the card's colour. */
+    for (const r of feed.shot.runners) {
+      assert(names.has(r.name.toUpperCase()), `the shot drew "${r.name}", who is not on #19's card`);
+      assert(r.kind === 'pod', `a ${r.kind} in a podrace`);
+    }
+    assert(new Set(feed.shot.runners.map((r) => r.hue)).size === feed.shot.runners.length,
+      'two pods on #19 share a colour');
+
+    /* ── AND TWO CARDS ARE TWO PICTURES. The Pit's bout, off the same
+     * shipped reading at a running hour, painted onto a second raster of the
+     * same size: a ring with a pair in it, not a band with pods on it. */
+    let pit = null;
+    for (let d = 0; d < 8 && !pit; d++) {
+      for (let h = 10; h < 23; h += 0.01) {
+        const r = watch('the-pit', d, h);
+        if (r.phase === 'running' && r.progress > 0.3) { pit = r; break; }
+      }
+    }
+    assert(pit, 'no bout at #18 in eight days');
+    const bout = shotOf(pit, resultOf(pit.race).events);
+    assert(bout.mode === 'bout' && feed.shot.mode === 'course',
+      `#18 painted a ${bout.mode} and #19 a ${feed.shot.mode}`);
+    assert(bout.pair && bout.runners.filter((r) => r.scale >= 1).length === 2,
+      'a bout shot has two bodies in the ring');
+    assert(bout.pair.d >= 0.16 && bout.pair.d <= 0.30, `the pair stand ${bout.pair.d} apart`);
+    assert(bout.runners.every((r) => r.kind !== 'pod'), 'a pod in the Pit');
+    const raster2 = stampRaster(feed.canvas.width, feed.canvas.height);
+    paintShot(raster2, feed.canvas.width, feed.canvas.height, bout);
+    const twoCards = raster2.diff(raster2.snapshot(), raster.snapshot());
+    assert(twoCards > 500, `#18's bout and #19's race differ in ${twoCards} cells — two cards, one picture`);
+
     return `#19's holo volume is the feed: ${pics.size} distinct pictures and ${feed.draws} redraws `
-      + `over ${race.ground.segments} gates of a real card, gate 1 → ${gates[gates.length - 1]}, `
+      + `over ${race.ground.segments} gates, ${changed}/${diffs.length} paints changed pixels `
+      + `(${Math.round(diffs.reduce((a, b) => a + b, 0) / diffs.length)} cells a paint), leader `
+      + `${leadX[0].x.toFixed(2)} → ${leadX[leadX.length - 1].x.toFixed(2)} in ${moved} steps, ${flashes} flashes, `
+      + `caption off the rail; #18's bout differs in ${twoCards} cells; gate 1 → ${gates[gates.length - 1]}, `
       + `0 early calls, every name off the card, ending "${last[1].replace(/\s+/g, ' ')}"; `
       + `screens on places ${ids.join(', ')}`;
   });
