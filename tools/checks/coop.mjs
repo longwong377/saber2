@@ -3478,7 +3478,8 @@ export async function run({ check, assert }) {
        * apart is the queue, not a ghost — the ghost test is the one above. */
       const nh = alive(H).length, nc = alive(C).length;
       assert(nh > 15 && Math.abs(nh - nc) <= 3, `the host's deck 44 holds ${nh} people and the guest's ${nc}`);
-      assert(alive(C).filter((e) => e.netDriven).length === 0, 'net-driven ghosts on the guest\'s deck 44');
+      const ghosts44 = alive(C).filter((e) => e.netDriven);
+      assert(ghosts44.length === 0, `${ghosts44.length} net-driven ghosts on the guest's deck 44: ${ghosts44.slice(0, 6).map((e) => `${e.type || e.A?.id || '?'}${e.stationRole ? ' ' + e.stationRole : ''}`).join(', ')}`);
       const y = DECK_Y[44];
       for (const [who, w] of [['host', H], ['guest', C]]) {
         const py = w.player.position.y;

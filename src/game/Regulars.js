@@ -204,10 +204,19 @@ export function regularTalkLine(body, world, rec) {
 
 /** The plate: `HUD._nameplates` prints `stationRole`, so a regular's says so. */
 function plate(body, regular) {
-  if (!body.stationRoleBase) body.stationRoleBase = body.stationRole;
   if (!body.stationNameBase) body.stationNameBase = body.stationName;
-  const want = regular ? `${body.stationRoleBase} — a regular` : body.stationRoleBase;
-  if (body.stationRole !== want && !body._followRole) body.stationRole = want;
+  /* Only a REGULAR's plate is this module's to write. Other modules put
+   * lines on `stationRole` — the vigil's officiant reads the roll on his,
+   * the follower asks on theirs — and a writer that "restored" every plate
+   * to what it first saw wiped those every frame. */
+  if (!regular) {
+    if (body._regularRole && body.stationRole === body._regularRole) body.stationRole = body.stationRoleBase;
+    body._regularRole = null;
+    return;
+  }
+  if (!body.stationRoleBase) body.stationRoleBase = body.stationRole;
+  const want = `${body.stationRoleBase} — a regular`;
+  if (body.stationRole !== want && !body._followRole) { body.stationRole = want; body._regularRole = want; }
 }
 
 /**
