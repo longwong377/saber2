@@ -81,6 +81,8 @@ function blank() {
     /** THE REGULARS (V18 cool 10): how many times you have talked to each
      * resident, by person — `{ [key]: { n, lastDay } }`. See `Regulars.js`. */
     regulars: {},
+    /** THE BUSKER'S HAT (V19 add 5): `{ tips, lastDay, requests }` — see `Music.js`. */
+    busker: {},
     /**
      * ── HOW MANY MIDNIGHTS THIS STATION HAS CROSSED ────────────────────────
      *
@@ -394,6 +396,9 @@ export function flightState() { return read().flight; }
 /** The regulars' ledger — see `Regulars.js`. Always an object. */
 export function regularsState() { const r = read().regulars; return r && typeof r === 'object' ? r : {}; }
 export function setRegularsState(v) { const s = read(); s.regulars = v && typeof v === 'object' ? v : {}; return write(s).regulars; }
+/** The busker's ledger — see `Music.js`. Always an object. */
+export function buskerState() { const r = read().busker; return r && typeof r === 'object' ? r : {}; }
+export function setBuskerState(v) { const s = read(); s.busker = v && typeof v === 'object' ? v : {}; return write(s).busker; }
 /** The Forge's remote-test fold — see `RemoteTest.js`. */
 export function forgeTest() { const f = read().forgeTest; return f && typeof f === 'object' ? f : null; }
 export function setForgeTest(v) { const s = read(); s.forgeTest = v; return write(s).forgeTest; }
