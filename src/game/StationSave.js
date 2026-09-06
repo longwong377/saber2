@@ -208,6 +208,21 @@ function blank() {
      * and the desk it is read at. Null until the first line is written.
      */
     journal: null,
+
+    /**
+     * V20 lane 7: WHAT YOU HAVE DONE IN THE WELL — `{ bouts, won, lost,
+     * touches, against, last, day }`. `StationDuel.js` owns the shape; the
+     * plaque on the arena kiosk prints it and the tote prices your side of
+     * the card off it, so a player who has won four is a shorter price than
+     * one who has never taken a bout. One object, not a list of bouts: a
+     * record is a record, and a fight-by-fight log is a leaderboard.
+     */
+    duels: {},
+    /**
+     * V20 lane 7: THE HILTS OFF PEOPLE WHO YIELDED — `[{ id, name, day, what }]`,
+     * six kept, oldest dropped. They stand on the cabin's desk (`Home.js`).
+     */
+    trophies: [],
   };
 }
 
@@ -225,6 +240,7 @@ function read() {
   if (!Array.isArray(_cache.seen)) _cache.seen = [];
   if (!Array.isArray(_cache.funerals)) _cache.funerals = [];
   if (!Array.isArray(_cache.sidebets)) _cache.sidebets = [];
+  if (!Array.isArray(_cache.trophies)) _cache.trophies = [];
   return _cache;
 }
 
@@ -409,6 +425,14 @@ export function setBuskerState(v) { const s = read(); s.busker = v && typeof v =
 /** The Forge's remote-test fold — see `RemoteTest.js`. */
 export function forgeTest() { const f = read().forgeTest; return f && typeof f === 'object' ? f : null; }
 export function setForgeTest(v) { const s = read(); s.forgeTest = v; return write(s).forgeTest; }
+
+/** The arena record — V20 lane 7. Always an object; `StationDuel.js` shapes it. */
+export function duelsState() { const d = read().duels; return d && typeof d === 'object' ? d : {}; }
+export function setDuelsState(v) { const s = read(); s.duels = v && typeof v === 'object' ? v : {}; return write(s).duels; }
+
+/** The hilts on the desk — V20 lane 7. Always an array, six at most. */
+export function trophiesState() { const t = read().trophies; return Array.isArray(t) ? t.slice() : []; }
+export function setTrophies(v) { const s = read(); s.trophies = Array.isArray(v) ? v.slice(-6) : []; return write(s).trophies; }
 
 export function setFlightState(v) { const s = read(); s.flight = v; return write(s).flight; }
 

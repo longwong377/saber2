@@ -66,6 +66,7 @@ import { signPanel } from './StationKit.js';
 import { floorOf } from './StationPlan.js';
 import { atBed, beginSleep } from './Sleep.js';
 import { openJournal, journalKey, journalOpen, flipJournal, stepJournal } from './Journal.js';
+import { dressTrophies } from './StationDuel.js'; // V20 lane 7: a won hilt goes on the desk
 import * as Food from './Food.js';
 /**
  * ── AND THE ONE SMALL COMPANION — V15 §1.3's last clause ──────────────────
@@ -1081,6 +1082,7 @@ export function dressHome(world, st, M, opts = {}) {
   /* THE DESK is the shape's own (`StationKit.twinroom`); only its reach is
    * kept here. A home dressed in a room without one has no journal to read. */
   h.desk = h.spot.desk ? { lx: h.spot.desk.x, lz: h.spot.desk.z, at: toWorld(h, h.spot.desk.x, h.spot.desk.z).clone() } : null;
+  if (h.mine) dressTrophies(world, h); // V20 lane 7: the hilts off people who yielded, lying on your own desk
   dressPanel(world, h);
   /* …and the one fixture that may not be there at all. AFTER the panel and
    * before the sign for no reason but the order they stand in the room. */

@@ -188,7 +188,15 @@ export async function run({ check, assert, THREE }) {
       /* Free, or somebody else's already — the next drinker may have taken it. */
       for (const b of were) assert(life.seats.get(b.__wasOn) !== b, `chair ${b.__wasOn?.id} is still ${b.stationName}'s after he stood`);
       const held = new Set();
-      for (const b of life.live.values()) if (b?.seat?.cupObj) held.add(b.seat.cupObj);
+      /* EVERY BODY HOLDING ONE, not only the pool's. A cup in a hand is not a
+       * cup in the air, and the pool is no longer the only thing that seats
+       * somebody: V20 lane 7 sits a named acolyte at a booth in this room at
+       * this hour with a drink in his hand, and he is a body of `StationDuel`'s
+       * rather than a slot of `life.live`'s. Asking `world.enemies` — which
+       * every seated body in the room is in, the pool's included — is the same
+       * question with the right population under it. */
+      for (const b of world.enemies) if (b?.seat?.cupObj) held.add(b.seat.cupObj);
+      if (world.player?.seat?.cupObj) held.add(world.player.seat.cupObj);
       let floating = 0, onTables = 0;
       world.scene.traverse((o) => {
         if (o.name !== 'cup') return;

@@ -878,6 +878,78 @@ export function resultOf(race) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
+ *  3½. THE DUEL — a kind of race the card does not draw
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * V20 lane 7: *"a duel in the arena with a crowd betting."* A bout in the well
+ * is not on the programme — it is two named people, one of whom is the player,
+ * at an hour `StationDuel.boutHoursOn` seeds — so it cannot come out of
+ * `programmeAt`, which draws fields out of a yard. What it CAN be is the same
+ * SHAPE, and that is the whole of this section: a race object with a card, a
+ * ground, an hour and a seed, so `boardFor` prices it, `ticketFor` writes a
+ * ticket against it and `settleTickets` pays that ticket, with not one line of
+ * odds arithmetic written twice.
+ *
+ * THE RESULT IS NOT `resultOf`'s AND MUST NOT BE. Every other race in this
+ * file is a pure function of a seed, which is exactly what makes a card
+ * something the house can publish before it is run. A duel is fought by a
+ * player with a saber in their hands: the outcome is the fight and nothing
+ * else, so `duelResult` takes the winner it is TOLD and builds the ledger
+ * shape `settleTickets` reads. A seed cannot know who won a fight.
+ */
+
+/** The venue a duel is fought at — #20, the one room with a marshal in it. */
+export const DUEL_VENUE = 'the-arena';
+
+/** The race kind, so a reader can tell a bout from a drawn field. */
+export const DUEL_KIND = 'duel';
+
+/**
+ * A BOUT, IN THE SHAPE OF A RACE. `entrants` is the pair, already made
+ * (`Spectacle.makeEntrant`) by whoever knows who is fighting.
+ */
+export function duelRace({ day = 0, hour = 0, entrants = null, ground = 'arena-sand' } = {}) {
+  const v = venueById(DUEL_VENUE);
+  const list = Array.isArray(entrants) ? entrants : [];
+  if (list.length < 2) throw new Error('a duel is two');
+  const d = day | 0;
+  const key = `${DUEL_VENUE}:duel:${d}:${hour}`;
+  return {
+    id: key, kind: DUEL_KIND, venue: v.id, day: d, meet: -1, index: 0,
+    hour: Number(hour) || 0, runs: v.runs, word: 'bout',
+    card: makeCard({ skin: v.skin, entrants: list }),
+    ground: dressGround(groundById(ground), hashOf(`tote:duel:going:${key}`)),
+    goingSeed: hashOf(`tote:duel:going:${key}`),
+    runSeed: hashOf(`tote:duel:run:${key}`),
+    drawSeed: hashOf(`tote:duel:draw:${key}`),
+    _board: null, _result: null,
+  };
+}
+
+/**
+ * THE LEDGER SHAPE `settleTickets` READS, off the name of whoever won.
+ *
+ * Memoised on the race the way `resultOf` memoises a run, so settling twice
+ * cannot pay twice at two different prices; a second call with a different
+ * winner is refused rather than quietly rewriting a result tickets have
+ * already been paid against.
+ */
+export function duelResult(race, winnerId) {
+  if (!race || race.kind !== DUEL_KIND) throw new Error('that is not a duel');
+  const id = String(winnerId);
+  if (race._result) {
+    if (race._result.winner !== id) throw new Error(`the bout was already given to ${race._result.winner}`);
+    return race._result;
+  }
+  const ids = race.card.entrants.map((e) => e.id);
+  if (!ids.includes(id)) throw new Error(`${id} was not in the well`);
+  const order = ids.slice().sort((a, b) => (a === id ? -1 : b === id ? 1 : 0))
+    .map((e, i) => ({ id: e, position: i + 1, out: null }));
+  race._result = { winner: id, order, events: [], margin: null, kind: DUEL_KIND };
+  return race._result;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
  *  4. THE SPECTATOR — and this is the half the player actually asked for
  * ══════════════════════════════════════════════════════════════════════════ */
 

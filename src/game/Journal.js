@@ -45,7 +45,7 @@ export const DAYS_KEPT = 30;
 export const PAGE = Object.freeze({ w: 512, h: 640, slabW: 0.42, slabH: 0.525, ahead: 0.62, reach: 2.2 });
 
 /** The kinds a line may carry — a reader's index, not a gate. */
-export const KINDS = Object.freeze(['talk', 'bet', 'buy', 'paid', 'fate', 'job', 'funeral', 'pickpocket', 'sleep', 'test', 'lift', 'muster', 'note']);
+export const KINDS = Object.freeze(['talk', 'bet', 'buy', 'paid', 'fate', 'job', 'funeral', 'pickpocket', 'sleep', 'test', 'lift', 'muster', 'duel', 'note']);
 
 const fmt = (h) => `${String(Math.floor(h)).padStart(2, '0')}${String(Math.floor((h % 1) * 60)).padStart(2, '0')}`;
 
