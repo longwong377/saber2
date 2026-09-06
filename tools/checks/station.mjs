@@ -845,6 +845,10 @@ export async function run({ check, assert, THREE }) {
         world.update(1 / 60, idle);
         for (const [, b] of life.live) {
           if (!b.wayR) continue;
+          /* A MISSION WALKER GOES INTO A ROOM ON PURPOSE — the guide starts at
+           * the lift doors inside Arrivals and your wounded end inside the
+           * medbay (V17). They are not the between-space's population. */
+          if (b.wayMission) continue;
           for (const p of rooms) {
             if (!inside(p, b.position.x, b.position.z)) continue;
             trespass.set(p.id, (trespass.get(p.id) | 0) + 1);

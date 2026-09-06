@@ -148,6 +148,28 @@ at 28° from one bearing per deck with a cool rim, so a room has a lit side and
 a dark side (`lightStation`); the ring's lid hangs lamps and ducts; partners
 stand together in their quarters.
 
+**Round three, "get all that done":** the GUIDE (a reprogrammed B1 meets a
+first visit at the lift doors, walks the spine and the rim to the Concourse
+naming the decks, waits when you fall ten metres behind, `markSeen` after —
+112 s door to door headless); YOUR WOUNDED walk to the medbay on the working
+deck (walking wounded at a limp, litter cases on a stretcher between two
+fit men, `checkIn` on arrival — three men in three tanks at 162 s); SABACC
+has a betting round (check / bet / call / raise / fold, the pot on the table,
+each seat's species and temper and what it did this round; the old
+threshold line now loses 6.4 % over 6 000 hands; rake 10 → 5 %); the FEED
+SCREEN is a drawn scene and the SPECIES SUITS are built — both by lanes in
+worktrees, see their commits. NOT done: a sit verb for men on leave — the
+rig has no seated pose, and a chair a man stands beside is worse than a
+bar he stands at; curved outer walls for the ring rooms and windows between
+rooms (geometry, a session); the tailor, barber and courier board exist as
+counters and rows, the funeral and the window seat do not exist at all.
+
+**Mission walkers** (`StationLife.missionWalker`): a body with `wayMission`
+lays its own legs (spine, walk, door), is exempt from the pool's reseat and
+drop, may `wait`, gets `along` each frame and `arrive` once. The guide and
+the litters are the two users; anything that needs a person to go somewhere
+and do something on arrival is a third.
+
 **The gate on all of it:** station 44/44, stationlife 9/9, home 14/14,
 medbay 13/13, consequence 7/7, holodeck 13/13, flightops 18/18, starfury 2/2,
 bench 6/6, games 11/11, pits 21/21, spectacle 20/20, tote 25/25, work 7/7,
