@@ -123,6 +123,16 @@ const SEAMS = new Map(Object.entries({
   'Vehicles.js::seedVehicles': 'the harness seeds the vehicle stream',
   'World.js::seedWorld': 'the harness seeds the world stream',
 
+  /* THE V18 MEASUREMENT DOORS — each is the live state a check reads or the
+   * pure function an assertion is about; none has a screen. */
+  'Games.js::sabaccPays': 'the pay table games.mjs asserts the betting round against',
+  'Holonet.js::scheduleFor': "a day's programme grid, which holonet.mjs asserts never repeats",
+  'Follower.js::curiousPoint': "regulars.mjs reads where the day's curious walker stands",
+  'Form.js::overroundOf': "form.mjs asserts the book's overround off the printed odds",
+  'Healing.js::wardCount': 'healing.mjs reads the ward count falling as men walk out',
+  'Regulars.js::isRegular': 'regulars.mjs asks the ledger directly',
+  'StationSound.js::bedLevels': 'the gain nodes healing/sound checks assert the crossfade on',
+
   /* THE CLEAN STORE. `StationSave.clearStation`'s own comment is the reason
    * for all six: "Start again. Only a check calls this." A durable key with
    * no reset makes every store check depend on the run before it. */

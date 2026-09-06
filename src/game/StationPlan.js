@@ -648,7 +648,7 @@ export const PLACES = [
    *
    * V18: −2.3 turned out to be inside the Quarters junction's portal pier
    * (±4.1° of the spine), so #58 sits at −7 and the night market moved
-   * to 23–31 on the star-bay side, the only stretch of this deck's ring
+   * to 21–29 on the star-bay side, the only stretch of this deck's ring
    * with eight clear degrees between room fronts. #39 ends at 341.2, and a market
    * stall is allowed to stand in front of a laundry's wall.
    */
@@ -1157,7 +1157,7 @@ export const WAYS = [
 
   /* ── DECK 44, THE PROMENADE. The window wall is the street's one side, so
    *    what stands on it faces the glass: benches, bays, hanging planting. ─ */
-  { deck: 44, at: 19, kind: 'bay', name: 'The star bay', span: 6 },
+  { deck: 44, at: 18, kind: 'bay', name: 'The star bay', span: 6 },
   { deck: 44, at: 54, kind: 'bench', name: "Officers' bench", span: 6 },
   { deck: 44, at: 118, kind: 'planter', name: 'The hanging garden', span: 6 },
   { deck: 44, at: 126, kind: 'alcove', name: 'The Narn shrine niche', span: 6 },
@@ -1168,7 +1168,7 @@ export const WAYS = [
   { deck: 44, at: 236, kind: 'bench', name: 'Drazi benches', span: 6 },
   { deck: 44, at: 288, kind: 'gantry', name: 'The Vorlon gantry', span: 4 },
   { deck: 44, at: 318, kind: 'planter', name: 'Hostel planters', span: 6 },
-  { deck: 44, at: 26.5, kind: 'market', name: 'Night market', span: 8 },
+  { deck: 44, at: 25, kind: 'market', name: 'Night market', span: 8 },
 
   /* ── DECK 48, THE SERVICE WAY. Nothing here is for a visitor: hatches,
    *    conduit, a swap table, and one window nobody meant to be beautiful. ─ */

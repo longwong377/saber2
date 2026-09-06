@@ -192,6 +192,9 @@ export async function run({ check, assert, THREE }) {
       step(world, 1 / 60, idle);
       pl.position.set(q.x - Math.sin(out) * 1.0, floorY, q.z - Math.cos(out) * 1.0);
       chair.body.velocity.set(0, 0, 0);
+      /* Facing the chair: the key sits you only on the seat in front of you
+       * (`StationSit.seatAtHand`), so a press on a platform boards the tram. */
+      pl.facing = out;
       assert(sitKey(world), 'the key did not sit the player');
       assert(pl.seat, 'no seat claim');
       const ws = windowSeat(world);
