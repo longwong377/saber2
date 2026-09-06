@@ -66,38 +66,62 @@ state of each as it stands:
   seconds, painted at 6 fps within 30 m, on screens in the cabin, the
   cantina, the food court, the hostel, the Fresh Air and the Ascendant.
 
-**Twenty things that would be cool** — none built yet unless marked:
-1. A holonet anchor with a face you recognise, gossiping about what you did.
-2. A market day: the concourse doubles its stalls, the tram runs full.
-3. A blackout: a reactor surge drops a deck's lights for thirty seconds and the guards come out with lamps.
+**THE DOORS WERE ON THE WRONG SIDE — found in this round, and it is the
+biggest thing in the file.** `StationKit.walls` cuts every doorway at local
+−Z; `StationPlan.layout` gave the outer band `yaw = a` (so −Z pointed at the
+AXIS) and the inner band `yaw = a + π` (so −Z pointed at the SKIN) — and put
+each row's `door` on the opposite side. Every box-walled room in the drum
+presented a solid wall to the walk its door was on and opened onto the
+empty plate behind; the round rooms (`arcWall`, gap at +Z) faced the other
+way again. Walked in a real world: the cantina's door blocked at 1.25 m by a
+26.8 × 6.5 wall, the Forge's by the Concourse's own 67 m collider, the
+Command deck's by its imported room's end wall, the tram platforms' by the
+skin. Nobody noticed in a year of checks because residents are seated by
+slot (they never walk in), the reachability check walks the PLAN's doors,
+and the door screenshots stood inside the jamb looking at the room they had
+been teleported into. Fixed at the source: outer `yaw = a + π`, inner
+`yaw = a`, `arcWall`'s gap at −Z, the hall's side colliders cut at every
+alcove, the door end of an imported room open, the skin open at the throat
+and the tram gates, and five rooms that stood their own rack, counter,
+planter or glass in their own doorway. `scratchpad/_roomdoor.mjs`'s method —
+build each shape at the origin and walk its own doorway in room space — is
+the check that should be in `station.mjs`; the world-space walk cannot see
+box rotations (`staticBoxes[i].quaternion` reads identity) and misled twice.
+**The outer rooms' fronts now follow the ring** (`StationKit.arcFront`):
+chords of the ring's circle with glass beside the door on public rooms.
+
+**Twenty things that would be cool** — marked as they land:
+1. A holonet anchor with a face you recognise, gossiping about what you did. **BUILT** (`Holonet.js`, the anchor is a resident; `holonet.mjs`).
+2. A market day: the concourse doubles its stalls, the tram runs full. **BUILT** (`StationEvents.js` `marketFill`, 10:00; Concourse 124→204).
+3. A blackout: a reactor surge drops a deck's lights for thirty seconds and the guards come out with lamps. **BUILT** (`StationEvents.js` `surge`).
 4. A shuttle at the docking throat that takes you to the flight deck the long way, outside.
 5. A pickpocket to chase across the concourse, and a bounty board that pays for him.
-6. Rain in the arboretum on a schedule, with residents going to stand in it.
+6. Rain in the arboretum on a schedule, with residents going to stand in it. **BUILT** (`StationEvents.js` `rain`, 19:00).
 7. Your company's names on the memorial wall read aloud at the chapel vigil.
 8. A morning: shutters going up, the ranges lit one by one, the first tram.
-9. Drazi-quarter fights that spill onto the ring and get broken up.
+9. Drazi-quarter fights that spill onto the ring and get broken up. **BUILT** (`StationEvents.js` `drazifight`, 15:00).
 10. Regulars: people you talk to three times remember you and greet you first.
 11. Sleeping in the cabin plays the night as a time-lapse through the window.
 12. A window seat in the dome: sitting swaps to a cinematic camera of the battle.
 13. A resident who follows you asking about your saber, and can be told to go away.
 14. A funeral you can attend, with the man's bunk stripped after.
-15. A late-night channel: the Drum spin live on every screen with the hour.
-16. Weather on the planet below, visible from the dome, changing the news.
+15. A late-night channel: the Drum spin live on every screen with the hour. **BUILT** (`Holonet.js` drum programme).
+16. Weather on the planet below, visible from the dome, changing the news. **HALF** — `StationEvents.weatherAt` is in the news and on the orbit chart; nothing in the dome yet.
 17. A tram interior you can sit in, with residents across from you.
 18. Companions greeting each other; two massiffs meeting on the concourse.
 19. The Mandalorian tests your saber against a remote in the Forge.
-20. Curved ring rooms that follow the drum, with windows onto the promenade glass.
+20. Curved ring rooms that follow the drum, with windows onto the promenade glass. **HALF** — `StationKit.arcFront`: every outer room's front is a chord of the ring with glass beside the door on public rooms; the side and back walls are still straight.
 
 **Ten holes:**
 1. Nobody has measured a frame on a real GPU.
-2. Rooms are rectangles inboard of a curved ring.
-3. No windows between rooms (rule 5 is a wall with a door).
-4. Residents do not sit, eat, drink or hold anything.
+2. Rooms are rectangles inboard of a curved ring. **HALF** — see cool 20.
+3. No windows between rooms (rule 5 is a wall with a door). **HALF** — glazed fronts onto the ring on public rooms; nothing room-to-room yet.
+4. Residents do not sit, eat, drink or hold anything. **CLOSED** — `Rig.poseSeated`, the pool's sit verb with a cup (`seated.mjs`), and the player's own (`StationSit.js`: the key beside a chair sits you, a move key stands you up).
 5. The medbay has no visible healing beyond occupied tanks.
 6. Co-op on the station is apartments only; population and clock unproven with a guest.
 7. Sound is levels, not beds; the PA has three lines.
-8. Human, Brakiri, Llort and Other share one face; the Vree wears the Kel Dor mask.
-9. Every screen but the feeds was static text — the holonet is the answer, and it is new.
+8. Human, Brakiri, Llort and Other share one face; the Vree wears the Kel Dor mask. **CLOSED** — `Bodies.SPECIES_HEADS` brakiri/llort/vree/other.
+9. Every screen but the feeds was static text — the holonet is the answer, and it is new. **CLOSED** — `Holonet.js`, 24/7 procedural, on every kit TV.
 10. The reading room prints form odds for every runner.
 
 ## 0. V17b — THE REVIEW OF EVERYTHING POST-SHARK, AND THE ONE THING IT FOUND

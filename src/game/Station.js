@@ -48,7 +48,7 @@ import * as THREE from '../../vendor/three/three.module.js';
 import { Kit, propMaterials, makeCrate } from '../world/Props.js';
 import { deckMats, factionOf } from './DeckKit.js';
 import { loadRoom, materialKeyFor } from './StationMesh.js';
-import { PLACES, PLACE, DECK_Y, DRUM, CORRIDOR, SHAFTS, placesOn, floorOf, sectorAt } from './StationPlan.js';
+import { PLACES, PLACE, DECK_Y, DRUM, CORRIDOR, SHAFTS, placesOn, floorOf, sectorAt, junctionsOn } from './StationPlan.js';
 import { buildPlace, SHAPES, buildWays, dressWayfinding, dressWallRun } from './StationKit.js';
 import { dressDeckLift, stepDeckLift, undressDeckLift, liftKey, liftFloors } from './DeckLift.js';
 import { dressStationLife, primeStationLife, stepStationLife, undressStationLife, dressTram,
@@ -106,6 +106,7 @@ import { dressCobraBay, drawCobraBay, undressCobraBay } from './CobraBay.js';
 import { GANTRY_Y, stepCook, dressFeeds, stepFeeds, CookSet } from './StationKit.js';
 import { disposeLiveFeeds } from './RaceFeed.js';
 import { dressTV, stepTV } from './Holonet.js';
+import { sitKey, releaseSeat } from './StationSit.js';
 import * as Food from './Food.js';
 import { shelfFor } from './Counter.js';
 import { flightState, setFlightState } from './StationSave.js';
@@ -619,8 +620,22 @@ function buildDeckPlate(kit, M, deck) {
    * the other two are plate with a window band. */
   const skinMat = deck === 44 ? M.glass : M.hull;
   const m = 96;
+  /* A ROOM THROUGH THE SKIN gets an opening in it (V18): the docking throat's
+   * door is at R − 1 and the skin sealed it. */
+  const through = placesOn(deck).filter((p) => p.band === 'skin' && p.door);
+  /* …and so does a junction with a gate through the skin — the tram
+   * platforms on 44 stood behind a sealed wall. */
+  const gates = junctionsOn(deck).filter((j) => j.outboard);
+  const inThroat = (a) => through.some((p) => {
+    const d = Math.abs(((a - (p.at || 0) * Math.PI / 180 + Math.PI * 3) % TAU) - Math.PI);
+    return d < (p.w / 2 - 3) / DRUM.R;
+  }) || gates.some((j) => {
+    const d = Math.abs(((a - j.at * Math.PI / 180 + Math.PI * 3) % TAU) - Math.PI);
+    return d < (DRUM.spineW / 2 + 0.6) / DRUM.R;
+  });
   for (let i = 0; i < m; i++) {
     const a = TAU * (i / m);
+    if (inThroat(a)) continue;
     const x = (DRUM.R + 0.3) * Math.sin(a), z = (DRUM.R + 0.3) * Math.cos(a);
     const wide = 2 * DRUM.R * Math.tan(Math.PI / m) * 1.06;
     kit.slab(skinMat, wide, DRUM.storey + 1.2, 0.7, x, y + (DRUM.storey + 1.2) / 2 - 0.3, z,
@@ -1080,13 +1095,41 @@ function roomColliders(world, place, opts = {}) {
   let n = 0;
   /* The floor, flat and one box. */
   put(cx, -0.3, cz, hw, 0.3, hd); n++;
-  /* Two side walls the full length. */
-  for (const s of [-1, 1]) { put(cx + s * (hw + 0.4), h / 2, cz, 0.4, h / 2, hd); n++; }
+  /* Two side walls the full length — LESS THE DOORWAYS OF THE ROOMS THAT
+   * OPEN THROUGH THEM (V18). The Concourse's alcoves (the Forge, the
+   * Databank, the Standing…) have their doors in this hall's side walls, and
+   * one box the hall's whole length sealed every one of them: walked in a
+   * real world, the Forge's door was blocked at 0.25 m by a 0.8 × 7.5 × 67 m
+   * box. Each side is laid in runs between the alcoves' openings instead. */
+  for (const s of [-1, 1]) {
+    const gaps = [];
+    for (const a of PLACES) {
+      if (a.band !== 'concourse' || a.side !== s || a.deck !== place.deck || !a.door) continue;
+      /* the alcove's door, in the hall's frame */
+      const dx = a.door[0] - place.x, dz = a.door[1] - place.z;
+      const c = Math.cos(place.yaw), sn = Math.sin(place.yaw);
+      const lz = dx * sn + dz * c;
+      gaps.push({ z0: lz - Math.min(a.w, 7) / 2, z1: lz + Math.min(a.w, 7) / 2 });
+    }
+    gaps.sort((g1, g2) => g1.z0 - g2.z0);
+    let z = -hd;
+    for (const g of gaps) {
+      const z1 = Math.max(z, Math.min(g.z0, hd));
+      if (z1 - z > 0.3) { put(cx + s * (hw + 0.4), h / 2, (z + z1) / 2, 0.4, h / 2, (z1 - z) / 2); n++; }
+      /* the lintel over the opening stays solid */
+      put(cx + s * (hw + 0.4), h - 1.2, (g.z0 + g.z1) / 2, 0.4, 1.2, (g.z1 - g.z0) / 2); n++;
+      z = Math.max(z, g.z1);
+    }
+    if (hd - z > 0.3) { put(cx + s * (hw + 0.4), h / 2, (z + hd) / 2, 0.4, h / 2, (hd - z) / 2); n++; }
+  }
   /* The soffit. */
   put(cx, h + 0.3, cz, hw, 0.3, hd); n++;
   /* The ends, unless this room opens at one — the Concourse opens at both. */
   for (const s of [-1, 1]) {
     if (opts.openEnds) continue;
+    /* THE DOOR END IS OPEN (V18): a room's door is at local −Z, and the CnC's
+     * end wall stood across it. */
+    if (s < 0 && place.door) continue;
     put(cx, h / 2, cz + s * (hd + 0.4), hw, h / 2, 0.4); n++;
   }
   return n;
@@ -1612,6 +1655,7 @@ export function orderJump(world, to) {
 
 /** Everything the station made, put down. `StationDirector.dispose` calls it. */
 export function undressStation(world) {
+  releaseSeat(world);
   disposeLiveFeeds(world?._station);
   const st = world._station;
   if (!st) return;
@@ -2874,6 +2918,16 @@ export function stationKey(world) {
    */
   const facing = residentFacing(world);
   if (facing && talkTo(world, facing)) return true;
+  /**
+   * ── A SEAT, IF YOU ARE BESIDE ONE — V18 hole 4 ─────────────────────────
+   *
+   * After the talk and before the room: a person in front of you is more
+   * specific than a chair beside you, and a chair beside you is more
+   * specific than the room. `StationSit.sitKey` takes the press when a free
+   * upright seat is within `SIT_REACH`, and takes it again to stand you up.
+   * Step away from every chair and the room's verb answers as before.
+   */
+  if (sitKey(world)) return true;
   /**
    * ── AND THE PLACE TEST IS *BELOW* THE TALK BRANCH, WHICH IS THE POINT ───
    *

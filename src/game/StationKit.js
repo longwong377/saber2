@@ -546,6 +546,54 @@ function holed(kit, mat, w, t, d, y, o, opts) {
 }
 
 /**
+ * ══ THE FRONT FOLLOWS THE RING — V18 hole 2 ═══════════════════════════════
+ *
+ * A room on the outer band opens onto the ring, and the ring's inner edge is
+ * a circle of radius `DRUM.roomR`. A FLAT front tangent to that circle at
+ * the door puts both its corners OUT into the walk — a metre for a 26 m
+ * room — so the ring read as a run of facets and every wide room shouldered
+ * into the corridor. This lays the front as chords of the ring's own circle
+ * (the centre is behind the room at `arc.c` in its frame), leaves the
+ * doorway at the middle, and on a public room glazes the chords beside the
+ * door from waist to head height, so the ring sees in and the room sees the
+ * ring's traffic — §3.1 rule 5 delivered as a window rather than a wall.
+ * The floor stays rectangular: its corners are flush with the deck plate.
+ */
+function arcFront(kit, M, w, d, h, gap, mat, arc, dress) {
+  const R = arc.R, c = arc.c;
+  const t = 0.4;
+  const zAt = (x) => c - Math.sqrt(Math.max(0, R * R - x * x));
+  const half = w / 2;
+  const seg = Math.max(2, Math.round((half - gap / 2) / 2.2));
+  for (const s of [-1, 1]) {
+    for (let i = 0; i < seg; i++) {
+      const x0 = s * (gap / 2 + (half - gap / 2) * (i / seg));
+      const x1 = s * (gap / 2 + (half - gap / 2) * ((i + 1) / seg));
+      const xm = (x0 + x1) / 2, zm = zAt(xm);
+      const len = Math.hypot(x1 - x0, zAt(x1) - zAt(x0)) * 1.04;
+      const ry = Math.atan2(zAt(x1) - zAt(x0), x1 - x0);
+      const glazed = arc.glass && i > 0 && i < seg - 1;
+      /* the sill and the head, and the glass between, or the whole chord */
+      if (glazed) {
+        kit.slab(mat, len, 1.0, t, xm, 0.5, zm - t / 2, { collide: true, bevel: 0, ry: -ry });
+        kit.slab(mat, len, h - 2.5, t, xm, 2.5 + (h - 2.5) / 2, zm - t / 2, { collide: true, bevel: 0, ry: -ry });
+        kit.slab(M.glass, len - 0.16, 1.5, 0.12, xm, 1.75, zm - t / 2, { collide: true, bevel: 0, ry: -ry });
+        kit.slab(M.dark, len, 0.12, t + 0.1, xm, 1.0, zm - t / 2, { collide: false, bevel: 0, ry: -ry });
+        kit.slab(M.dark, len, 0.12, t + 0.1, xm, 2.5, zm - t / 2, { collide: false, bevel: 0, ry: -ry });
+      } else {
+        kit.slab(mat, len, h, t, xm, h / 2, zm - t / 2, { collide: true, bevel: 0, ry: -ry });
+        if (dress) dressWallRun(kit, M, len - 0.1, h, xm, 0, zm, Math.PI - ry, { salt: 5 + s * (i + 1), sparse: true });
+      }
+    }
+  }
+  /* The lintel over the opening, and the light in its reveal — flat, at the
+   * tangent, where the door is. */
+  const z0 = zAt(0);
+  kit.slab(mat, gap, h - 2.6, t, 0, 2.6 + (h - 2.6) / 2, z0 - t / 2, { collide: true, bevel: 0 });
+  kit.slab(M.strip, gap - 0.4, 0.1, 0.12, 0, 2.5, z0 - 0.1, { collide: false, bevel: 0 });
+}
+
+/**
  * Four walls with a gap for the door, which is always at local −Z (the plan
  * table puts every door on the side a walk arrives from). `open` names sides
  * to leave out entirely — a place with a window onto another place (§3.1
@@ -569,7 +617,9 @@ function walls(kit, M, w, d, h, opts = {}) {
     if (dress) dressWallRun(kit, M, d, h, s * w / 2, 0, 0, s * Math.PI / 2, { salt: 2 + s });
   }
   /* −Z, the front, with the doorway cut out of it. */
-  if (!open.has('front')) {
+  if (!open.has('front') && kit.arc) {
+    arcFront(kit, M, w, d, h, gap, mat, kit.arc, dress);
+  } else if (!open.has('front')) {
     const side = (w - gap) / 2;
     for (const s of [-1, 1]) {
       kit.slab(mat, side, h, t, s * (gap + side) / 2, h / 2, -d / 2 - t / 2, { collide: true, bevel: 0 });
@@ -695,11 +745,21 @@ function ringOf(kit, M, mat, r, h, n, y = 0, opts = {}) {
 }
 
 /** A curved wall segment, `n` chords over an arc. */
+/**
+ * ── THE GAP IS AT −Z, LIKE EVERY DOOR (V18) ───────────────────────────────
+ * Every caller leaves its doorway as the arc it does NOT lay, `x .. τ − x`,
+ * which put the gap at angle 0 = local +Z — while `walls` cuts every
+ * doorway at −Z. The two conventions meant that when the plan was turned
+ * to put the box rooms' doors on the ring, every round room's door turned
+ * away from it. Half a turn here puts an arc room's gap where a box room's
+ * is, and a caller that wants an arc somewhere else (the collar) says so in
+ * its own angles.
+ */
 function arcWall(kit, mat, r, h, from, to, n, y = 0, t = 0.4, collide = true) {
   const span = to - from;
   const wide = 2 * r * Math.tan(Math.abs(span) / n / 2) * 1.06;
   for (let i = 0; i < n; i++) {
-    const a = from + span * ((i + 0.5) / n);
+    const a = Math.PI + from + span * ((i + 0.5) / n);
     kit.slab(mat, wide, h, t, r * Math.sin(a), y + h / 2, r * Math.cos(a), { ry: a, collide, bevel: 0 });
     /* The chord's inner face — the room is at local −Z under `ry: a`, the
      * same convention `walls` uses, so the same dressing fits it. */
@@ -1212,7 +1272,7 @@ export const SHAPES = {
   collar(kit, M, p) {
     const { w, d, h } = p;
     floor(kit, M, w, d);
-    arcWall(kit, M.hull, w / 2, h, -1.9, 1.9, 10);
+    arcWall(kit, M.hull, w / 2, h, Math.PI - 1.9, Math.PI + 1.9, 10);
     /* The collar rings, stepping in toward the shuttle. */
     for (let i = 0; i < 4; i++) {
       ringOf(kit, M, M.dark, w / 2 - 1 - i * 0.7, 0.5, 18, h - 1.6 - i * 0.3, { rad: 0.3 });
@@ -1256,7 +1316,8 @@ export const SHAPES = {
       kit.post(M.wing, 0.05, 0.05, h, x, h / 2, -d / 2, { radial: 4, collide: true });
     }
     for (const y of [1.3, 2.6]) kit.slab(M.wing, w, 0.07, 0.07, 0, y, -d / 2, { collide: false, bevel: 0 });
-    counter(kit, M, 2.2, 0.8, 0, -d / 2 + 0.4, 0, 1.1);
+    /* Beside the door, not in it (V18): a hatch you buy at, a gap you walk. */
+    counter(kit, M, 2.2, 0.8, 3.0, -d / 2 + 0.4, 0, 1.1);
     rack(kit, M, w - 1, h - 0.6, 0, d / 2 - 0.5, 0, 6);
     for (const s of [-1, 1]) rack(kit, M, d - 1.6, h - 0.6, s * (w / 2 - 0.5), 0, s * Math.PI / 2, 6);
     scatter(kit, 6, w * 0.5, d * 0.4, 33, (x, z) => loose(kit, x, 0, z, (world, q) => makeCrate(world, q, 0.55)));
@@ -1269,7 +1330,8 @@ export const SHAPES = {
     floor(kit, M, w, d);
     walls(kit, M, w, d, h, { open: ['front'] });
     ceiling(kit, M, w, d, h, { ribs: 3 });
-    kit.slab(M.glass, w, h - 0.5, 0.14, 0, h / 2, -d / 2, { collide: true, bevel: 0 });
+    /* Two panes and a door between them (V18): one pane sealed the office. */
+    for (const s of [-1, 1]) kit.slab(M.glass, (w - 2.4) / 2, h - 0.5, 0.14, s * (w + 2.4) / 4, h / 2, -d / 2, { collide: true, bevel: 0 });
     for (let i = 1; i * 2.2 < w; i++) kit.slab(M.dark, 0.14, h, 0.24, -w / 2 + i * 2.2, h / 2, -d / 2, { collide: false, bevel: 0 });
     kit.slab(M.mark, 3.0, 3.0, 0.12, 0, h - 2.2, d / 2 - 0.3, { collide: false, bevel: 0 });
     board(kit, M, 3.2, 1.8, -w / 4, 2.0, d / 2 - 0.5);
@@ -1352,9 +1414,12 @@ export const SHAPES = {
     tvScreen(kit, M, ctx, -w / 2 + 0.12, 2.4, 0, Math.PI / 2, 2.4, 1.35);
     ceiling(kit, M, w, d, h, { ribs: 4 });
     /* The rail over the void, and the planters along it. */
-    kit.slab(M.wing, w, 0.1, 0.14, 0, 1.02, -d / 2, { collide: true, bevel: 0 });
+    /* The rail over the void, in two runs either side of the door (V18):
+     * the open front IS the door side, and one rail crossed it. */
+    for (const s of [-1, 1]) kit.slab(M.wing, (w - 3.4) / 2, 0.1, 0.14, s * (w + 3.4) / 4, 1.02, -d / 2, { collide: true, bevel: 0 });
     for (let i = 0; i * 1.4 < w; i++) kit.slab(M.dark, 0.08, 1.0, 0.08, -w / 2 + i * 1.4 + 0.2, 0.5, -d / 2, { collide: false, bevel: 0 });
     for (let i = -2; i <= 2; i++) {
+      if (i === 0) continue; /* not in the doorway (V18) */
       kit.slab(M.mark, 1.1, 0.6, 0.7, i * 3.6, 0.3, -d / 2 + 0.9, { collide: true, bevel: 0 });
       kit.post(M.strip, 0.35, 0.1, 0.9, i * 3.6, 1.05, -d / 2 + 0.9, { radial: 6 });
     }
@@ -1483,7 +1548,8 @@ export const SHAPES = {
     /* ── THE GLASS RAIL at the window, waist high, on brass stanchions. What
      * you walk up to, and what stops you walking through the front of the
      * room into the drum. */
-    kit.slab(M.glass, w - 1.2, 0.9, 0.06, 0, 0.55, -d / 2 + 0.9, { collide: true, bevel: 0 });
+    /* The knee-high glass screen, in two runs with the door between (V18). */
+    for (const s of [-1, 1]) kit.slab(M.glass, (w - 1.2 - 3.0) / 2, 0.9, 0.06, s * (w - 1.2 + 3.0) / 4, 0.55, -d / 2 + 0.9, { collide: true, bevel: 0 });
     kit.slab(M.wing, w - 1.0, 0.08, 0.12, 0, 1.04, -d / 2 + 0.9, { collide: false, bevel: 0.02 });
     for (let i = 0; i * 2.6 < w - 1; i++) {
       kit.post(M.wing, 0.05, 0.05, 1.05, -w / 2 + 0.9 + i * 2.6, 0.52, -d / 2 + 0.9, { radial: 8, collide: false });
@@ -1535,7 +1601,8 @@ export const SHAPES = {
     /* The cold room: a heavy door in the end wall with its own light. */
     kit.slab(M.wing, 2.0, 2.4, 0.3, w / 2 - 1.8, 1.2, d / 2 - 0.2, { collide: true, bevel: 0 });
     kit.slab(M.strip, 1.6, 0.08, 0.1, w / 2 - 1.8, 2.5, d / 2 - 0.4, { collide: false, bevel: 0 });
-    rack(kit, M, w - 3, h - 0.8, 0, -d / 2 + 0.5, Math.PI, 5);
+    /* The rack at the BACK (V18): at −d/2 it stood across the door. */
+    rack(kit, M, w - 3, h - 0.8, 0, d / 2 - 0.5, 0, 5);
   },
 
   /** #17 Food court: LOW COUNTERS in a row. The lowest ceiling on the deck,
@@ -1777,7 +1844,8 @@ export const SHAPES = {
       kit.post(M.status, 0.28, 0.28, 0.28, (r - 5) * Math.sin(a), h - 2.4, (r - 5) * Math.cos(a), { radial: 8 });
     }
     /* The saber rack at the door. */
-    rack(kit, M, 3.4, 2.2, 0, -r + 1.2, 0, 3);
+    /* The practice rack stands at the BACK (V18): at −r it stood in the door. */
+    rack(kit, M, 3.4, 2.2, 0, r - 1.2, Math.PI, 3);
     /* ── AND THE BOUT ON A BOARD OVER THE RING. `arcWall` leaves its gap at
      * +Z, which is the door, so the feed goes on the far side and faces the
      * benches across the sand. */
@@ -3236,6 +3304,14 @@ export function buildPlace(world, group, place, M, st) {
   kit.dressSeed = Math.round(place.id * 100);
   kit.M = M;
   _arcM = M;
+  /* An outer-band room's front is a chord of the ring — see `arcFront`. The
+   * public rooms get glass beside the door; anything private, secure or
+   * industrial keeps a wall. */
+  if (place.band === 'outer' && !place.room && !place.arc && place.w >= 8) {
+    const rc = Math.hypot(place.x, place.z);
+    const PRIVATE = /brig|morgue|armoury|reactor|coolant|waste|cargo|droid|comms|command|quarter|cabin|residential|methane|vorlon|underlift|barracks|officers|laundry|fabric|maint|rack|cobra|tower|ready|chapel/i;
+    kit.arc = { R: DRUM.roomR, c: rc, glass: !PRIVATE.test(place.name) && (place.heads || 0) >= 6 };
+  }
   const ctx = {
     sunk: [],
     trees: [],

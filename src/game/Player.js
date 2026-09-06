@@ -14,7 +14,7 @@ import { Sidearm, setById, paceOf, ORBIT } from './SaberSet.js';
 import { buildPlayerBody, buildShieldBubble } from './Bodies.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
 import { speciesOf, hoodCut } from './Bodies.js';
-import { Rig, BipedAnimator, aimY, limbScale, poseMeditation } from './Rig.js';
+import { Rig, BipedAnimator, aimY, limbScale, poseMeditation, poseSeated } from './Rig.js';
 import { dropSaber, hiltWithinReach, hiltDistanceSq, igniteHilt, hiltBlade,
          ageDropped } from './Dropped.js';
 import { Crew, drivableNear, whyNotDrive, crewOf } from './Driving.js';
@@ -304,7 +304,9 @@ export const RESTORE = { radius: 12, fraction: 0.5, time: 3, cooldown: 75 };
  * opens; on the way out it is the same 0.6 s, which is a person standing up
  * rather than a cut. See `Player.setMeditation`.
  */
-export const MEDITATION_EASE = 0.6;
+export /** Seconds for the player to sit down on a chair, and to get back up. */
+const SEAT_EASE = 0.8, SEAT_RISE = 0.6;
+const MEDITATION_EASE = 0.6;
 
 /**
  * THE SABER, OFF THE HAND — catching it, lighting it, and flying it.
@@ -3567,6 +3569,14 @@ export class Player {
      * up; posed by `_poseMeditation`, at the end of the body pass.
      */
     this.meditation = { want: 0, blend: 0, pose: 'lotus' };
+    /**
+     * THE SEAT — a station chair the player has sat on, or null. The claim
+     * is `StationSit.sitKey`'s (`prop`, `feet`, `yaw`, `y`, `tableY`, `state`
+     * 'sit' | 'rise', `blend`); `_readInput` keeps the look and stands you up
+     * on a move key, `_move` holds the feet on the seat, `_poseSeat` runs
+     * `Rig.poseSeated` at the end of the body pass.
+     */
+    this.seat = null;
     /** The `Crew` this player is at the controls of, or null. See Driving.js. */
     this.driving = null;
     /**
@@ -4425,6 +4435,31 @@ export class Player {
     }
 
     /**
+     * ══ ON A CHAIR — see `StationSit` ═════════════════════════════════════
+     *
+     * The driving branch's shape: the look stays yours, nothing else is read.
+     * A move key, the jump, or the interact key again is "get up" — the rise
+     * eases the pose out over `SEAT_RISE` and then the ordinary path has the
+     * body back.
+     */
+    if (this.seat) {
+      this._wheel = 0;
+      const look = this.control.applyInput(input, dt, {
+        stamina: this.stamina / this.maxStamina,
+        attackRate: this.boonMods.attackRate,
+        grounded: true, moving: 0,
+      });
+      this.camera.addYaw(look.yaw);
+      this.camera.addPitch(look.pitch);
+      if (input.actHit('view')) { this.camera.firstPerson = !this.camera.firstPerson; this._applyViewMode(); }
+      if (this.seat.state === 'sit') {
+        const axis = input.moveAxis(_axis);
+        if (Math.abs(axis.x) + Math.abs(axis.y) > 0.2 || input.actHit('jump') || input.actHit('focus')) this.standUp();
+      }
+      return;
+    }
+
+    /**
      * ══ AND ON THE FLIGHT DECK YOU ARE A MAN IN A ROOM ════════════════════
      *
      * The branch above's shape, one difference at a time, because the two modes
@@ -5198,6 +5233,20 @@ export class Player {
      * is walk, and a bay at 90 m is the one place in the game where that is not
      * a thing being taken away from you.
      */
+    /* SEATED: the feet stay on the seat's own point, and the capsule with
+     * them — see `StationSit`. The chair is the floor, so no gravity. */
+    if (this.seat) {
+      const S = this.seat;
+      this._sprinting = false;
+      this.crouch = damp(this.crouch, 0, 12, dt);
+      this.velocity.set(0, 0, 0);
+      this.grounded = true;
+      this.coyote = 0.14;
+      this.position.x = S.feet.x; this.position.z = S.feet.z;
+      this.facing += Math.atan2(Math.sin(S.yaw - this.facing), Math.cos(S.yaw - this.facing)) * Math.min(1, dt * 6);
+      this.body?.setTransform?.(_v1.set(this.position.x, this.position.y + 0.9, this.position.z), null);
+      return;
+    }
     if (this.riding) {
       this._sprinting = false;
       this.crouch = damp(this.crouch, 0, 12, dt);
@@ -7434,6 +7483,7 @@ export class Player {
      * sitting down is not walking, guarding or looking at anything. It runs
      * before the garments so the robe settles on the seated figure. */
     this._poseMeditation(dt, ctx);
+    this._poseSeat(dt, ctx);
     // the cloak hangs off the finished pose, and feels the wind and the run —
     // computed outside the branch because the hood's fall below reads it too
     _v1.set(0, 0, 0).addScaledVector(this.velocity, -0.85);
@@ -7525,6 +7575,56 @@ export class Player {
   /** How far into the pose the body is, 0..1 — the HUD and the checks read it. */
   get meditating() { return this.meditation.blend; }
 
+  /** Sit on a claimed seat — `StationSit.sitKey` builds the claim. */
+  sitOn(claim) {
+    if (!claim || !this.alive) return;
+    claim.state = 'sit'; claim.blend = 0;
+    this.seat = claim;
+    this._sprinting = false;
+  }
+
+  /** Get up: the pose eases out over `SEAT_RISE`, then the seat is let go. */
+  standUp() {
+    const S = this.seat;
+    if (!S) return;
+    S.state = 'rise';
+  }
+
+  /**
+   * ONE FRAME OF THE SEAT, after the meditation's: blend up over `SEAT_EASE`
+   * while sitting, down over `SEAT_RISE` while rising, and at zero on a rise
+   * the claim is released (through `StationSit.releaseSeat`, so the pool's
+   * map is cleared too). `poseSeated` overrules the gait exactly as the
+   * meditation does.
+   */
+  _poseSeat(dt, ctx) {
+    const S = this.seat;
+    if (!S) return;
+    if (S.state === 'sit') S.blend = Math.min(1, S.blend + dt / SEAT_EASE);
+    else {
+      S.blend = Math.max(0, S.blend - dt / SEAT_RISE);
+      if (S.blend <= 0) { this._releaseSeat(); return; }
+    }
+    /* The chair went — thrown, cut, or knocked over. Up, at once. */
+    if (S.prop?.dead || (S.prop?.body && S.prop.body.velocity.lengthSq() > 0.5)) { this._releaseSeat(); return; }
+    if (!this.rig?.hipsBone) return;
+    poseSeated(this.rig, smoothstep(0, 1, S.blend), {
+      position: this.position, facing: this.facing, time: ctx?.time ?? this.world?.time ?? 0,
+      seatY: S.y - this.position.y,
+      tableY: Number.isFinite(S.tableY) ? S.tableY - this.position.y : null,
+      cup: null,
+    });
+  }
+
+  _releaseSeat() {
+    const S = this.seat;
+    if (!S) return;
+    const life = this.world?._stationLife;
+    if (life?.seats?.get(S.prop) === this) life.seats.delete(S.prop);
+    if (S.prop?.body && !S.prop.dead) S.prop.body.wake?.();
+    this.seat = null;
+  }
+
   /**
    * ONE FRAME OF THE POSE, easing toward `want` over MEDITATION_EASE seconds
    * each way and then handing the rig to `poseMeditation` at that blend. At
@@ -7577,7 +7677,9 @@ export class Player {
       + (this.dashTimer > 0 ? 7 : 0);
     this.camera.rollTarget = clamp(-this.control.angVel.y * 0.006, -0.05, 0.05);
     this.camera.update(dt, this.position, {
-      physics: ctx.physics, terrain: ctx.terrain, eyeHeight: lerp(1.62, 1.22, this.crouch),
+      physics: ctx.physics, terrain: ctx.terrain,
+      /* seated, the eye is at a sitting height — the seat's top plus the trunk */
+      eyeHeight: this.seat ? lerp(1.62, Math.max(0.9, (this.seat.y - this.position.y) + 0.72), smoothstep(0, 1, this.seat.blend)) : lerp(1.62, 1.22, this.crouch),
       // The whole pelvis, not the bob and not half of it. _updateBody runs
       // before this, so `pelvis` is this frame's, not last frame's.
       pelvis: this.animator?.pelvis,
@@ -12276,6 +12378,7 @@ export class Player {
   die(source) {
     if (!this.alive) return;
     this.alive = false;
+    this._releaseSeat();
     /* OUT OF THE TANK FIRST. `Crew.update` would notice on its next frame, but
      * `die` tears down the rig and the saber below and a corpse pinned to a
      * seat by `Crew.ride` is a body in two states. `leave` puts back the

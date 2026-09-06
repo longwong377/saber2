@@ -552,7 +552,10 @@ export const PLACES = [
     id: 34, deck: 44, name: 'Minbari quarter', shape: 'triangular',
     look: 'crystal, blue light, a triangular hall, silence',
     who: '12 Minbari', idle: 'ritual at set hours', verb: 'walk quietly',
-    band: 'outer', at: -172, w: 24, d: 21, h: 7.6, peak: 4, heads: 12,
+    /* At -157, not -172: the arrivals lift lobby (the shaft at z=-74) stands
+     * on the 180 bearing on this deck, and a hall centred on -172 had the
+     * lobby's wall through its east third. */
+    band: 'outer', at: -157, w: 24, d: 21, h: 7.6, peak: 4, heads: 12,
   },
   {
     id: 35, deck: 44, name: 'Drazi quarter', shape: 'fightingpit',
@@ -641,6 +644,11 @@ export const PLACES = [
    * −2.3 are what is left when the 3.5 degrees of slack are split three ways:
    * 1.1 degrees to the night market, 1.1 to the star bay, and the rest between
    * the rooms. Measured, not chosen.
+   *
+   * V18: −2.3 turned out to be inside the Quarters junction's portal pier
+   * (±4.1° of the spine), so #58 sits at −7 and the night market moved
+   * back to 338–346 to clear its door. #39 ends at 341.2, and a market
+   * stall is allowed to stand in front of a laundry's wall.
    */
   {
     id: 61, deck: 44, name: 'The Underlift Pit', shape: 'chainpit',
@@ -709,7 +717,9 @@ export const PLACES = [
     who: '2 — a smuggler and whoever is ahead of you',
     idle: 'the shutter is down two days in three; when it is up he does not look at your face',
     verb: 'see what he has',
-    band: 'outer', at: -2.3, w: 12, d: 12, h: 5.0, peak: 1, heads: 2,
+    /* −7, not −2.3 (V18): the Quarters junction's portal piers stand at
+     * ±4.1° of the spine and the market's door at −2.3° was inside one. */
+    band: 'outer', at: -7, w: 12, d: 12, h: 5.0, peak: 1, heads: 2,
   },
   /* #40 is FOUR platforms and they are four DIFFERENT rooms (§3.2). They keep
    * one id because the gazetteer gives them one; `station.mjs` measures rule 4
@@ -745,7 +755,10 @@ export const PLACES = [
     look: 'the imported CnC: the console dais, a tactical wall showing the battle outside, the comms pit',
     who: 'a commander, 8 officers, 3 shifts', idle: 'the front moves on the wall; orders read out',
     verb: 'brief the next campaign', kiosk: 'campaign',
-    band: 'outer', at: 180, w: 14.3, d: 13, h: 9.9, peak: 14, heads: 9,
+    /* At 160, not 180: the arrivals lift lobby is on the 180 bearing of this
+     * deck too, and its 16 m wall stood inside the CIC. The Command gantry
+     * on the ring at 168 is its front step. */
+    band: 'outer', at: 160, w: 14.3, d: 13, h: 9.9, peak: 14, heads: 9,
   },
   {
     id: 42, deck: 48, name: 'Comms & sensor room', shape: 'screendrum',
@@ -952,7 +965,17 @@ function layout(p) {
       [p.x, p.z] = polar(rMid);
       /* Local +Z points radially OUTWARD, so the room's far wall is the skin
        * side and its door is at local -Z, on the ring. */
-      p.yaw = a;
+      /* ══ THE DOOR IS ON THE RING, SO −Z FACES THE RING (V18) ═══════════
+       * `StationKit.walls` cuts every doorway at local −Z. With `yaw = a`,
+       * −Z pointed at the AXIS: every outer room presented a solid back wall
+       * to the ring at the very point this row called its door, and opened
+       * onto the empty plate behind. Walked in a real world: the cantina's
+       * door blocked at 1.25 m by a 26.8 × 6.5 wall; the food court's and
+       * the Pit's the same. Nobody noticed because residents are seated by
+       * slot, not by walking in. Half a turn puts the doorway where the row
+       * says it is, and every builder is door-relative, so the rooms simply
+       * turn to face the walk they were always meant to open onto. */
+      p.yaw = a + Math.PI;
       p.door = polar(DRUM.roomR - 0.4);
       p.rIn = DRUM.roomR - p.d; p.rOut = DRUM.roomR;
       return p;
@@ -962,7 +985,9 @@ function layout(p) {
       [p.x, p.z] = polar(rMid);
       /* Local +Z points INWARD, at the void: an inner place is one that wants
        * the atrium in its window. */
-      p.yaw = a + Math.PI;
+      /* The same half-turn the other way: the doorway at −Z faces the
+       * balcony the door is on. See the outer band's note. */
+      p.yaw = a;
       p.door = polar(DRUM.balcony + 0.4);
       p.rIn = DRUM.balcony; p.rOut = DRUM.balcony + p.d;
       return p;
@@ -1141,7 +1166,7 @@ export const WAYS = [
   { deck: 44, at: 236, kind: 'bench', name: 'Drazi benches', span: 6 },
   { deck: 44, at: 288, kind: 'gantry', name: 'The Vorlon gantry', span: 4 },
   { deck: 44, at: 318, kind: 'planter', name: 'Hostel planters', span: 6 },
-  { deck: 44, at: 348, kind: 'market', name: 'Night market', span: 8 },
+  { deck: 44, at: 342, kind: 'market', name: 'Night market', span: 8 },
 
   /* ── DECK 48, THE SERVICE WAY. Nothing here is for a visitor: hatches,
    *    conduit, a swap table, and one window nobody meant to be beautiful. ─ */
@@ -1150,7 +1175,7 @@ export const WAYS = [
   { deck: 48, at: 77, kind: 'bench', name: 'The fab bench', span: 5 },
   { deck: 48, at: 122, kind: 'service', name: 'Cargo hatch 122', span: 4 },
   { deck: 48, at: 150, kind: 'stair', name: 'The grating step', span: 9 },
-  { deck: 48, at: 159, kind: 'alcove', name: 'Smoke alcove', span: 6 },
+  { deck: 48, at: 196, kind: 'alcove', name: 'Smoke alcove', span: 6 },
   { deck: 48, at: 168, kind: 'gantry', name: 'Command gantry', span: 4 },
   { deck: 48, at: 190, kind: 'planter', name: 'The CIC planter', span: 5 },
   { deck: 48, at: 238.5, kind: 'service', name: 'Medbay service hatch', span: 3 },

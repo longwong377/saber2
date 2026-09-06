@@ -211,6 +211,82 @@ export async function run({ check, assert, THREE }) {
   });
 
   /* ════════════════════════════════════════════════════════════════════════
+   *  THE PLAYER'S OWN SEAT — `StationSit`
+   * ════════════════════════════════════════════════════════════════════════ */
+
+  check('seated: the interact key beside a chair sits the player, and a move key stands them up', async () => {
+    const { world, idle } = await station(40);
+    try {
+      const { run: step } = await import('./_coop.mjs');
+      const { PLACE } = await import('../../src/game/StationPlan.js');
+      const { seatUpright, SEAT_KINDS } = await import('../../src/game/Bars.js');
+      const { seatAtHand } = await import('../../src/game/StationSit.js');
+      const st = world._station, life = world._stationLife;
+      const p = PLACE.get(CANTINA);
+      /* Two in the morning: the cantina's chairs are free of the pool. */
+      st.hour = 2;
+      life.event = null; life.eventFor = 0; life.eventIn = 1e6;
+      const pl = world.player;
+      pl.position.set(p.door[0], 1.7, p.door[1]);
+      pl.body?.position?.set?.(p.door[0], 1.7, p.door[1]);
+      step(world, 5, idle);
+      const c = Math.cos(p.yaw || 0), sn = Math.sin(p.yaw || 0);
+      const inPlace = (q) => {
+        const dx = q.x - p.x, dz = q.z - p.z;
+        return Math.abs(dx * c - dz * sn) <= p.w / 2 && Math.abs(dx * sn + dz * c) <= p.d / 2;
+      };
+      const floorY = world.floorAt(p.x, p.z);
+      const chairs = world.props.filter((q) => q.kind === 'chair' && inPlace(q.body.position));
+      assert(chairs.length >= 4, `${chairs.length} chairs in the cantina`);
+      /* The scaffold the pool's clause uses: the chairs on the floor, upright. */
+      for (const q of chairs) {
+        if (seatUpright(q) && Math.abs(q.body.position.y - floorY) < 0.3) continue;
+        const yaw = Math.atan2(p.x - q.body.position.x, p.z - q.body.position.z);
+        q.body.setTransform(new THREE.Vector3(q.body.position.x, floorY, q.body.position.z),
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw + Math.PI));
+        q.body.velocity.set(0, 0, 0); q.body.angularVelocity.set(0, 0, 0);
+        q.mesh.position.copy(q.body.position); q.mesh.quaternion.copy(q.body.quaternion);
+      }
+      const chair = chairs.find((q) => !life.seats?.has(q)) || chairs[0];
+      /* Stand a metre from it, and press the key. */
+      const q = chair.body.position;
+      pl.position.set(q.x + 0.8, floorY, q.z + 0.5);
+      pl.body?.setTransform?.(new THREE.Vector3(pl.position.x, floorY + 0.9, pl.position.z), null);
+      step(world, 0.2, idle);
+      assert(seatAtHand(world) === chair || SEAT_KINDS.has(seatAtHand(world)?.kind), `no seat at hand a metre from a chair (${seatAtHand(world)?.kind})`);
+      const hit = new Set(['focus']);
+      const press = { ...idle, act: (id) => hit.has(id), actHit: (id) => { const h = hit.has(id); hit.delete(id); return h; }, actDown: (id) => hit.has(id) };
+      step(world, 0.1, press);
+      assert(pl.seat, 'the key did not sit the player');
+      assert(life.seats.get(pl.seat.prop) === pl, "the player's chair is not claimed in the pool's map");
+      step(world, 1.5, idle);
+      assert(pl.seat && pl.seat.blend >= 0.99, `blend ${pl.seat?.blend?.toFixed(2)} after 1.5 s`);
+      const hips = pl.rig.hipsBone.obj.position;
+      const sq = pl.seat.prop.body.position;
+      const d = Math.hypot(hips.x - sq.x, hips.z - sq.z);
+      assert(d <= 0.4, `the player's hips are ${d.toFixed(2)} m from the chair`);
+      assert(hips.y - sq.y < 0.7, `hips ${(hips.y - sq.y).toFixed(2)} m over the seat — standing`);
+      const knee = pl.rig.tipPos('thighL');
+      assert(Math.abs(knee.y - hips.y) < 0.12, `thigh not level: knee ${knee.y.toFixed(2)} hips ${hips.y.toFixed(2)}`);
+      assert(pl.velocity.lengthSq() < 1e-4, 'the seated player is moving');
+      const eye = pl.camera?.eyeHeight ?? null;
+      /* Nobody else takes the chair. */
+      step(world, 3, idle);
+      assert(pl.seat && life.seats.get(pl.seat.prop) === pl, 'the pool took the chair from under the player');
+      /* A move key: up, and the chair is free. */
+      const walk = { ...idle, moveAxis: (o) => { if (o) { o.x = 0; o.y = 1; return o; } return { x: 0, y: 1 }; } };
+      step(world, 0.1, walk);
+      assert(pl.seat?.state === 'rise', `a move key did not stand the player (${pl.seat?.state})`);
+      step(world, 1.0, idle);
+      assert(!pl.seat, 'the player is still on the chair a second after rising');
+      assert(!life.seats.has(chair), 'the chair is still claimed after the player stood');
+      const up = pl.rig.hipsBone.obj.position.y - pl.position.y;
+      assert(up > 0.8, `stood up to hips at ${up.toFixed(2)}`);
+      return `sat by the key on a chair at ${(hips.y - sq.y).toFixed(2)} m, held it 3 s, up on a move key${eye !== null ? `, eye ${eye.toFixed(2)}` : ''}`;
+    } finally { world.dispose?.(); }
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════
    *  SEEDED
    * ════════════════════════════════════════════════════════════════════════ */
 

@@ -52,6 +52,7 @@ import { DRUM, drumAt, drumPays } from './Games.js';
 import { loadProgress } from './Progress.js';
 import { companyOf } from './StationBoards.js';
 import { owedJobs, pinnedGivers } from './Quests.js';
+import { weatherAt } from './StationEvents.js';
 
 export const TV_W = 512, TV_H = 288;
 export const NEAR = 30;
@@ -238,7 +239,9 @@ function stationLines(world, P, cut) {
     `${theatre} ${pick(WORDS.news, u).toLowerCase()} — the tower reports ${B ? `${B.shown || B.hulls || 0} hulls in the window` : 'a quiet orbit'}`,
     `day ${(P.day | 0) + 1} on ${name} — arrivals every six minutes, departures when they can`,
     `customs held ${Math.floor(u * 40) + 12} at the gates this shift. ${Math.floor(u * 7) + 1} are still there`,
-    `the concourse reports the ${pick(WORDS.weather, hashF(`${P.seed}:w:${cut}`))} over the line has not lifted`,
+    /* the day's weather is `StationEvents.weatherAt`'s — the same word the
+     * arboretum's rain and the tannoy use, so the news and the sky agree */
+    `${theatre}: ${weatherAt(P.day, theatre).line} — ${pick(WORDS.weather, hashF(`${P.seed}:w:${cut}`))} over the line has not lifted`,
   ];
 }
 
@@ -473,7 +476,7 @@ function paintOrbit(ctx, W, H, world, P, cut, t, day, hour) {
   ctx.fillStyle = 'rgba(7,10,18,0.75)'; ctx.fillRect(W * 0.56, 44, W * 0.42, 190);
   ctx.strokeStyle = '#7fc4ff'; ctx.strokeRect(W * 0.56, 44, W * 0.42, 190);
   text(ctx, W * 0.58, 66, (L?.name || 'THE LINE').toUpperCase().slice(0, 18), 18, '#ffffff');
-  text(ctx, W * 0.58, 94, `ORBIT · ${pick(WORDS.weather, hashF(`${P.seed}:w:${cut}`)).toUpperCase()}`, 13, '#9fd0ff', 'left', false);
+  text(ctx, W * 0.58, 94, `ORBIT · ${pick(WORDS.weather, hashF(`${P.seed}:w:${cut}`)).toUpperCase()} · ${weatherAt(day, L?.name || 'the line').line.toUpperCase()}`, 13, '#9fd0ff', 'left', false);
   text(ctx, W * 0.58, 118, B ? `FLEET · ${B.hulls} HULLS · ${B.shown} IN VIEW` : 'FLEET · NONE IN THE WINDOW', 13, '#9fd0ff', 'left', false);
   text(ctx, W * 0.58, 142, B ? `PHASE · ${String(B.phase || '').toUpperCase()} · ROUND ${B.round ?? 0}` : 'THE TOWER REPORTS QUIET', 13, '#9fd0ff', 'left', false);
   text(ctx, W * 0.58, 166, B ? `${B.fighters | 0} FIGHTERS · ${B.bolts | 0} BOLTS` : `${name.toUpperCase()} · DAY ${day + 1}`, 13, '#9fd0ff', 'left', false);

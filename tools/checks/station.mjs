@@ -1437,6 +1437,103 @@ export async function run({ check, assert, THREE }) {
     } finally { world.dispose?.(); }
   });
 
+  check('station: every room can be walked into through its own door', async () => {
+    /**
+     * ══ THE DOOR THAT WAS ON THE WRONG SIDE (V18) ═════════════════════════
+     *
+     * Every drum room built from the kit cuts its doorway at local −Z, and
+     * for the whole of V15–V17 the outer band's yaw pointed local −Z at the
+     * AXIS: each room showed the ring a solid back wall where the plan said
+     * its door was, and opened onto the empty plate behind. The suites were
+     * green through all of it because no check ever WALKED a doorway — the
+     * reachability walk asks the plan where doors are, and the plan was
+     * right; the geometry was not.
+     *
+     * So this walks one. Each room is built alone at the origin with no yaw
+     * (the world probe cannot read a rotated collider, so the walk is done
+     * in room space, which is what the builder actually reasons in), and a
+     * body 1.4 m tall steps from 1.5 m outside the doorway to 3.5 m inside
+     * it, straight down the room's centre line. Anything solid on that line
+     * — the room's own wall, a counter, a rack, a planter — is a room you
+     * cannot enter, and the test names the box.
+     *
+     * Two rooms stand on that line by design and are named here rather than
+     * silently skipped: #24 the Security post is a booth, glass-fronted with
+     * its hatch at the side, and #56 the Standing has its obelisk plinth at
+     * the exact centre, which is 3.25 m in through a door on a 11 m room and
+     * the thing you are there to look at.
+     */
+    const { PLACES } = await import('../../src/game/StationPlan.js');
+    const { stationMats } = await import('../../src/game/Station.js');
+    const { buildPlace } = await import('../../src/game/StationKit.js');
+    const BY_DESIGN = new Set([24, 56]);
+    const q = new THREE.Quaternion(), v = new THREE.Vector3();
+    const bad = [];
+    let walked = 0;
+    for (const p of PLACES) {
+      if (p.room || p.ring || p.band === 'ring' || !p.w || !p.d || p.external) continue;
+      const M = stationMats(p.deck);
+      const boxes = [];
+      const world = {
+        scene: new THREE.Scene(), statics: [], props: [],
+        physics: { add() {}, remove() {}, addStaticBox(c, h, qq) { boxes.push({ c: c.clone(), h: h.clone(), q: qq ? qq.clone() : null }); return {}; }, staticBoxes: [] },
+        spawnEnemy() { return null; },
+      };
+      const st = { draws: 0, tris: 0, solids: 0, places: new Map(), sunk: [] };
+      buildPlace(world, new THREE.Group(), { ...p, x: 0, z: 0, yaw: 0 }, M, st);
+      walked++;
+      let hit = null;
+      for (let s = -1.5; s <= 3.5 && !hit; s += 0.25) {
+        const z = -p.d / 2 + s;
+        for (const y of [0.5, 1.4]) {
+          for (const b of boxes) {
+            v.set(-b.c.x, y - b.c.y, z - b.c.z);
+            if (b.q) { q.copy(b.q).invert(); v.applyQuaternion(q); }
+            if (Math.abs(v.x) <= b.h.x + 0.3 && Math.abs(v.y) <= b.h.y && Math.abs(v.z) <= b.h.z + 0.3) {
+              hit = `${s} m in, a ${(b.h.x * 2).toFixed(1)}x${(b.h.y * 2).toFixed(1)}x${(b.h.z * 2).toFixed(1)} box at ${b.c.x.toFixed(1)},${b.c.y.toFixed(1)},${b.c.z.toFixed(1)}`;
+              break;
+            }
+          }
+          if (hit) break;
+        }
+      }
+      if (hit && !BY_DESIGN.has(p.id)) bad.push(`#${p.id} ${p.name} [${p.shape}]: blocked ${hit}`);
+      if (!hit && BY_DESIGN.has(p.id)) bad.push(`#${p.id} ${p.name}: is listed as blocked by design but its doorway is clear — take it off the list`);
+    }
+    assert(walked > 40, `only ${walked} rooms walked`);
+    assert(bad.length === 0, `${bad.length} rooms block their own doorway:\n      ${bad.join('\n      ')}`);
+  });
+
+  check('station: no room stands where the arrivals lift lobby is', async () => {
+    /**
+     * `buildLobbies` puts a 16 m recess wall and two jambs at every shaft on
+     * every deck it serves, and the arrivals shaft is at r=74 on bearing 180
+     * — in the outer band's inward reach (roomR 81 less half a room's depth).
+     * #41 Command and #34 the Minbari quarter both sat on that bearing, and
+     * the CIC had the lobby's wall through its dais; nothing measured it
+     * because the plan's overlap check only knows about places. Only #7 the
+     * Arrivals hall may cover the bearing: it is the lobby's own room, and
+     * the lift is how you enter it.
+     */
+    const { PLACES, SHAFTS, DRUM } = await import('../../src/game/StationPlan.js');
+    const bad = [];
+    for (const s of SHAFTS) {
+      const r = Math.hypot(s.x, s.z);
+      if (r < DRUM.roomR - 20) continue;                 // the inner shafts stand in the atrium
+      const bearing = Math.atan2(s.x, s.z) * 180 / Math.PI;
+      const half = (8 + 1) / r * 180 / Math.PI;          // 16 m wall, a metre of grace
+      for (const p of PLACES) {
+        if (!s.decks.includes(p.deck) || p.band !== 'outer' || !p.w || p.id === 7) continue;
+        const inner = DRUM.roomR - p.d / 2;
+        if (inner > r + 4) continue;                     // shallow enough to clear the recess
+        const hw = (p.w / 2) / DRUM.roomR * 180 / Math.PI;
+        let da = ((p.at - bearing) % 360 + 540) % 360 - 180;
+        if (Math.abs(da) < hw + half) bad.push(`#${p.id} ${p.name} on deck ${p.deck} at ${p.at}° (±${hw.toFixed(1)}°) covers the ${s.label} lobby at ${bearing.toFixed(0)}°`);
+      }
+    }
+    assert(bad.length === 0, `${bad.length} rooms stand in a lift lobby:\n      ${bad.join('\n      ')}`);
+  });
+
   /* ════════════════════════════════════════════════════════════════════════ */
 
   check('station: §9.2 — the switch is real, and no station file names a mode', async () => {
