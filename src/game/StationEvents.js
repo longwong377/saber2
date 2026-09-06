@@ -45,6 +45,7 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import { PLACE, DRUM, DECK_Y, floorOf, apronOn } from './StationPlan.js';
 import { disarmKinetic } from './Impact.js';
+import { weatherUniforms } from './PlanetWeather.js';
 
 /** The same stable 0..1 from two integers `StationLife` uses. */
 function h2(a, b) {
@@ -463,6 +464,7 @@ export function stepStationEvents(world, st, life, dt, T) {
     const E = evOf(life);
     E.weatherDay = day; E.weatherFor = st.theatre;
     st.weather = weatherAt(day, st.theatre);
+    weatherUniforms(world?.engine?.skyDome, st.weather); // V18 cool 16: the sky shows the word
   }
   if (!ev) return;
   if ((ev.black > 0 || ev.lamps.length) && !life.event?.black) endBlackout(world, life, T);

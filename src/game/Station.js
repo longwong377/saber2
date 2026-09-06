@@ -65,6 +65,7 @@ import { RANKS, rankFor } from './Command.js';
 import { dressNotices, stepNotices, noticeReading, noticesFor } from './Notices.js';
 import { stationHour, setStationHour, stationName, setStationName, standing, setStanding, stationDay, DEFAULT_NAME, NAME_MAX, kiosksShut, brigPending } from './StationSave.js';
 import { outsideLevel } from './Hangar.js';
+import { stepPlanetLook } from './PlanetWeather.js';
 import { dressDeckBattle, stepDeckBattle, undressDeckBattle, deckBattleState } from './DeckBattle.js';
 import { dressHome, stepHome, leaveHome, undressHome, homeKey, inHome } from './Home.js';
 import { myApartment, apartments, GUEST_ROOMS, addressOf } from './Coop.js';
@@ -5057,6 +5058,7 @@ export function stepStation(world, dt) {
    * dressed, so this is unconditional and costs one call on a station whose
    * theatre could not be resolved. */
   stepDeckBattle(world, dt);
+  stepPlanetLook(world, st); // V18 cool 16: one line a day when you look up at the planet
   /* THE JUMP, if one is running. It drives a shader and a fleet and nothing
    * else, which is why it can run while the player walks about — see Warp.js. */
   if (world._warp && !world._warp.done) world._warp.step(dt);
