@@ -265,9 +265,9 @@ export async function run({ check, assert, THREE }) {
     const pw = await readFile(new URL('../../src/game/PlanetWeather.js', import.meta.url), 'utf8');
     assert(!/Math\.random/.test(pw), 'Math.random in PlanetWeather.js');
     const sky = await readFile(new URL('../../src/engine/SkyDome.js', import.meta.url), 'utf8');
-    const at = sky.indexOf('if (uWeather > 0.5');
-    assert(at > 0, 'no weather branch in the source');
-    assert(!/Math\.random|uTime/.test(sky.slice(at, at + 6000)), 'the weather branch reads a clock that is not uOrbitT');
+    const { functionBody } = await import('./_source.mjs');
+    const branch = functionBody(sky, 'if (uWeather > 0.5');
+    assert(!/Math\.random|uTime/.test(branch), 'the weather branch reads a clock that is not uOrbitT');
     for (const f of ['StationEvents.js', 'Station.js', 'Hangar.js']) {
       const s = await readFile(new URL(`../../src/game/${f}`, import.meta.url), 'utf8');
       assert(s.includes('weatherUniforms(') || s.includes('stepPlanetLook('), `${f} has no hook line`);

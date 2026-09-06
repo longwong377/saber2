@@ -132,6 +132,9 @@ const SEAMS = new Map(Object.entries({
   'Healing.js::wardCount': 'healing.mjs reads the ward count falling as men walk out',
   'Regulars.js::isRegular': 'regulars.mjs asks the ledger directly',
   'StationSound.js::bedLevels': 'the gain nodes healing/sound checks assert the crossfade on',
+  'Music.js::inMode': 'music.mjs asserts every note of a tune is in its mode',
+  'Music.js::barShape': 'music.mjs asserts the A A B A phrase shape',
+  'Music.js::musicLevels': 'the band and busker gain nodes music.mjs measures the falloff on',
 
   /* THE CLEAN STORE. `StationSave.clearStation`'s own comment is the reason
    * for all six: "Start again. Only a check calls this." A durable key with

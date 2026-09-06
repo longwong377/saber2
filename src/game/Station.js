@@ -3700,6 +3700,9 @@ export function stakeAtTote(race, bet) {
 /** Settle what is on the record against a result, and hand back the winnings. */
 export function payAtTote(tickets, result) {
   const ledger = settleTickets(tickets, result);
+  /* V19: the journal — written HERE and not in `Tote.js`, which is a pure
+   * library (tote.mjs holds it to the engine and Spectacle). */
+  if (result && ledger.lines.length) note('bet', `the tote — ${ledger.staked} staked, ${ledger.returned} back; ${ledger.lines.filter((l) => l.won).length} of ${ledger.lines.length} ticket${ledger.lines.length === 1 ? '' : 's'} won`);
   const paid = ledger.returned > 0 ? pay(ledger.returned, 'tote') : 0;
   return { ...ledger, paid, capped: paid < ledger.returned };
 }

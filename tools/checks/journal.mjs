@@ -54,6 +54,7 @@ export async function run({ check, assert }) {
   const C = await import('../../src/game/Company.js');
   const Cr = await import('../../src/game/Credits.js');
   const Q = await import('../../src/game/Quests.js');
+  const { payAtTote } = await import('../../src/game/Station.js');
   const T = await import('../../src/game/Tote.js');
   const R = await import('../../src/game/Regulars.js');
   const P = await import('../../src/game/Promotion.js');
@@ -82,8 +83,9 @@ export async function run({ check, assert }) {
     const offers = Q.offersAt(20, 3).concat(Q.offersAt(21, 3), Q.offersAt(23, 3), Q.offersAt(24, 3), Q.offersAt(25, 3));
     assert(offers.length, 'no job on any board on day 3');
     assert(Q.takeJob(offers[0]).ok, 'the job was not taken');
-    /* 4 a bet and its result — Tote.settleTickets */
-    T.settleTickets([{ kind: 'win', on: 'a', stake: 10, price: 3 }], { winner: 'a', order: [{ id: 'a', position: 1 }, { id: 'b', position: 2 }] });
+    /* 4 a bet and its result — `Station.payAtTote`, the purse's side of the
+     * tote (Tote.js is a pure library and writes no journal) */
+    payAtTote([{ kind: 'win', on: 'a', stake: 10, price: 3 }], { winner: 'a', order: [{ id: 'a', position: 1 }, { id: 'b', position: 2 }] });
     /* 5 a man's fate — Company.keep */
     C.clear();
     C.save({ ...C.blank(army), men: [{ id: 'a', army, type: 'trooper', designation: 'CT-1500', kills: 3, runs: 1, xp: 2 }] });
