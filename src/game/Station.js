@@ -67,6 +67,8 @@ import { stationHour, setStationHour, stationName, setStationName, standing, set
 import { outsideLevel } from './Hangar.js';
 import { stepPlanetLook } from './PlanetWeather.js';
 import { dressDeckBattle, stepDeckBattle, undressDeckBattle, deckBattleState } from './DeckBattle.js';
+import { dressStationWar, warKey } from './StationWar.js';
+import { bindStationDiff } from './StationDifficulty.js';
 import { dressHome, stepHome, leaveHome, undressHome, homeKey, inHome } from './Home.js';
 import { myApartment, apartments, GUEST_ROOMS, addressOf } from './Coop.js';
 import { TERRAIN_PRESETS } from '../world/Terrain.js';
@@ -1451,6 +1453,7 @@ export function dressStation(world) {
     theatre: outsideLevel(world)?.name || 'the line',
   };
   world._station = st;
+  bindStationDiff(world); // V19 add 10: the five station readers of the difficulty
   world._deckFaction = factionOf(world);
   st.wells = wellsOn(deck);
   world.floorAt = (x, z) => activeFloorAt(world, x, z);
@@ -1608,6 +1611,7 @@ export function dressStation(world) {
    * first frame, so a player who arrives at the Concourse at 13:00 walks into
    * a market rather than into an empty hall. */
   dressStationLife(world, st);
+  dressStationWar(world, st); // V19 add 1: #41's tactical wall, off the real map
   /**
    * ── AND SEATING THEM IS SLICED, BECAUSE IT IS HALF THE SEAM ────────────
    *
@@ -2992,6 +2996,7 @@ export function stationKey(world) {
   if (namingStation(world)) return true;
   if (liftKey(world)) return true;
   if (shuttleKey(world)) return true;
+  if (warKey(world)) return true; // V19 add 1: a door Command has closed refuses with a line
   /* THE PLAN TABLE, BEFORE THE HOME AND ONLY WITHIN ARM'S REACH OF IT — V15
    * §1.1's second naming door. See the note over `beginStationName`. */
   if (atPlanTable(world)) return beginStationName(world);

@@ -87,6 +87,7 @@
  * behind the glass asks here rather than copying the loop.
  */
 
+import { stationDiff } from './StationDifficulty.js';
 import * as Company from './Company.js';
 /* THE TWO ROLLS, by name. One ward per company for `Company.load`'s own
  * reason — a droid and a clone are two companies — and `stepMedbay` settles
@@ -198,8 +199,13 @@ export function needsLitter(rec) { return hpOf(rec) <= LITTER; }
 export function hoursLeft(rec, rate = 1) {
   const hp = hpOf(rec);
   if (hp >= FIT) return 0;
-  return ((FIT - hp) / FIT) * HOURS / Math.max(1e-6, rate);
+  return (FIT - hp) / mendPerHour() / Math.max(1e-6, rate);
 }
+
+/** V19 add 10: a tank's mend per station hour at this tier — `FIT/HOURS`
+ *  times the difficulty's `healRate`. The ONE read; the clock and the
+ *  panel's "hours left" both take it, so they cannot disagree. */
+function mendPerHour() { return (FIT / HOURS) * stationDiff().healRate; }
 
 /**
  * ONE WORD FOR HOW HE IS, for a screen that has a column and not a paragraph.
@@ -504,7 +510,7 @@ export function advanceIn(company, hours) {
       continue;
     }
     const rate = ward.tanks.includes(m.designation) ? 1 : UNTENDED;
-    const gain = (FIT / HOURS) * rate * h;
+    const gain = mendPerHour() * rate * h;
     const now = hpOf(m) + gain;
     moved = true;
     if (now >= FIT) {

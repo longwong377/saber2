@@ -50,16 +50,16 @@ built in lanes, marked as they land.
 1. Drawn versus solid keeps diverging (doors, wells, the ground sheet were all green for months). → a walk-the-world gate: a body dropped at every door and lobby on every deck (`station.mjs`). **BUILT**, and it found four more things on its first run.
 2. No frame ever measured on a real GPU. → a frame-time overlay and a quality auto-tune. **BUILT** — `src/game/Perf.js`: F3 (action `perf`) shows frame mean/p95 over 2 s, draw calls, triangles, the station's step, bodies, deck and room, tier and GPU, and logs a paste-able copy line to `saber.perf.v1`; quality 'auto' walks the four tiers off the measured p95 (down after two 4 s windows over 24 ms, up after 20 s under 11 ms, one step per 10 s, re-entry costs doubling). `tools/checks/perf.mjs`.
 3. Sound is text plus tones: no music tied to place. → `src/game/Music.js`: a seeded tune engine on `musicBus`, the cantina band, a busker, the Drum's theme (`music.mjs`). **BUILT**
-4. The station never feels the war outside.
+4. The station never feels the war outside. → `StationWar.js`: casualties off the battle's phase, a klaxon and red strips on a turn, Command closing a room, #41's wall painted from the real map (`stationwar.mjs`). **BUILT**
 5. Company men have names and fates but no arc.
 6. Co-op guests get the station but nothing on it is a two-player thing. **CLOSED** — `CoopGames.js`: sabacc against your guest, a side bet on a race, a two-carrier crate job; `coopgames.mjs`.
 7. Saving is a bag of folds; no readable "what changed".
 8. The battlefields have had none of the station's "living" standard. **DROPPED** — the player questioned it; the lane was stopped.
 9. The menus and settings read as a different product.
-10. Difficulty is a slider; the station ignores it.
+10. Difficulty is a slider; the station ignores it. → `StationDifficulty.js`: one ladder, five readers (prices, the cell, the patrol's patience, the thief's odds, the tanks' rate). **BUILT**
 
 **Ten additions:**
-1. The war reaches the station: casualties off the front's real state, a klaxon and a Command order closing a deck, the briefing from the real map.
+1. The war reaches the station: casualties off the front's real state, a klaxon and a Command order closing a deck, the briefing from the real map. **BUILT** (`StationWar.js`; hole 4)
 2. A journal in the cabin: one line per system per day, read back as pages.
 3. Promotions at the muster in front of the company; a man with a bad fate refuses the next sortie.
 4. Two-player things: sabacc against your guest, a race bet against each other, a two-carrier cargo job. **BUILT** (`CoopGames.js`).
@@ -68,7 +68,7 @@ built in lanes, marked as they land.
 7. The walk-the-world gate (hole 1). **BUILT**
 8. The battlefields get patrols, wildlife, weather, a camp with people in it. **DROPPED** at the player's word; say "do the battlefields" to revive it.
 9. The station's cel look on the menus, settings and deck cards.
-10. Difficulty that changes the station: prices, the brig, the guards' patience, the pickpocket's odds.
+10. Difficulty that changes the station: prices, the brig, the guards' patience, the pickpocket's odds. **BUILT** (`StationDifficulty.js`; hole 10)
 
 ## 0. V18 — THE PLAYER'S THIRTY, AND TWO NEW SCREENS
 

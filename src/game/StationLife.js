@@ -82,6 +82,8 @@ import { disarmKinetic } from './Impact.js';
 import { beginStationEvents, calmStationEvents, stepStationEvents, blackoutDip } from './StationEvents.js';
 import { stepVigil } from './Vigil.js';
 import { stepPickpocket } from './Pickpocket.js';
+import { stepStationWar, undressStationWar } from './StationWar.js';
+import { stationDiff } from './StationDifficulty.js';
 /* THE ONE EXEMPTION FROM THE DAILY REROLL — see `occupant`. `Quests.js` holds
  * the ledger and answers in SEEDS, so this file still decides who stands where
  * and `StationCast.resident` still decides what a person looks like. */
@@ -2898,7 +2900,7 @@ function stepGuards(world, st, life, dt) {
    * player can see who has them.
    */
   life.guardHold = near <= GUARD_HOLD ? (life.guardHold || 0) + dt : 0;
-  if (near <= GUARD_GRAB || life.guardHold >= GUARD_HOLD_FOR) arrest(world, st, life);
+  if (near <= GUARD_GRAB || life.guardHold >= GUARD_HOLD_FOR * stationDiff(world).guardPatience) arrest(world, st, life); // V19 add 10
 }
 
 /** The patrol stands down and goes away again. */
@@ -3018,7 +3020,7 @@ function deliverToBrig(world, st, life) {
     const cx = cell.x + fr * Math.sin(a), cz = cell.z + fr * Math.cos(a);
     life.cellBox = phys.addStaticBox(new THREE.Vector3(cx, floorOf(cell) + cell.h / 2, cz),
       new THREE.Vector3(1.4, cell.h / 2, 0.2), new THREE.Quaternion().setFromAxisAngle(_UP, a), { friction: 0.6 }) || null;
-    life.cellHold = CELL_HOLD * (1 + 0.5 * Math.min(3, life.arrests | 0));
+    life.cellHold = CELL_HOLD * stationDiff(world).brigPatience * (1 + 0.5 * Math.min(3, life.arrests | 0)); // V19 add 10
     life.arrests = (life.arrests | 0) + 1;
   }
   world.notify?.('THE BRIG', 'you wake in the cell block — the field is up, and the counters are shut');
@@ -4277,17 +4279,18 @@ function startGuide(world, st, life) {
  * each one CHECKS IN on arrival — into a tank if one is free, else onto the
  * waiting list — which is what the room's own panel then shows.
  */
-function bringWounded(world, st, life) {
+export function bringWounded(world, st, life, P0 = null) {
   if (st.deck !== 48 || world.netMode === 'client') return 0;
   const c = companyOf();
-  if (!c) return 0;
-  const all = loadAllCompany();
+  /* V19: `StationWar` hands in a party off the front — men of no company. */
+  if (!c && !P0) return 0;
+  const all = c ? loadAllCompany() : null;
   /* Which roll this is, by its first man: `companyOf` hands back a fresh
    * load, so identity is not the test. */
-  const first = c.men?.[0]?.designation;
+  const first = c?.men?.[0]?.designation;
   const army = all ? Object.keys(all).find((k) => all[k]?.men?.[0]?.designation === first) : null;
-  const P = party(c);
-  const ward = wardOf(c);
+  const P = P0 || party(c);
+  const ward = c ? wardOf(c) : { tanks: [] };
   const dest = destFor(48, 43);
   if (!dest) return 0;
   const lobby = lobbyPoint(world, st);
@@ -4295,8 +4298,8 @@ function bringWounded(world, st, life) {
   let k = 0, n = 0;
   const drop = (w, b) => { removeBody(w, b); for (const [key, v] of life.live) if (v === b) life.live.delete(key); };
   const arrive = (m) => (b, w) => {
-    try { if (army) checkIn(army, m.designation); } catch {}
-    w.notify?.('MEDBAY', `${nameOfMan(m)} is in — ${inTank(companyOf(), m.designation) ? 'a tank' : 'the waiting list'}`);
+    try { if (army && !m.war) checkIn(army, m.designation); } catch {}
+    w.notify?.('MEDBAY', `${nameOfMan(m)} is in — ${m.war ? 'off the transport, into the ward' : inTank(companyOf(), m.designation) ? 'a tank' : 'the waiting list'}`);
     drop(w, b);
   };
   for (const m of P.walking) {
@@ -4326,7 +4329,7 @@ function bringWounded(world, st, life) {
       (life.litters || (life.litters = [])).push({ front, back, mesh: buildLitter(world, m), man: m });
     }
   }
-  if (n) world.notify?.('MEDBAY', `${n} of your wounded are on the ring, bound for the medbay`);
+  if (n) world.notify?.('MEDBAY', P0 ? `${n} wounded off the front are on the ring, bound for the medbay` : `${n} of your wounded are on the ring, bound for the medbay`);
   return n;
 }
 
@@ -4419,6 +4422,7 @@ export function stepStationLife(world, dt) {
   stepEvents(world, st, life, dt);
   stepVigil(world, st, life, dt, eventTools());
   stepPickpocket(world, st, life, dt, eventTools());
+  stepStationWar(world, st, life, dt, eventTools()); // V19 add 1: the war outside, on the station
   /* The reactor's dip, decaying once the surge is over — one number, and
    * `stepDip` below is the reader it did not have. */
   if (!life.event && life.dip > 0) life.dip = Math.max(0, life.dip - dt * 0.9);
@@ -4452,6 +4456,7 @@ export function stepStationLife(world, dt) {
 /** Everything the life made, put down. */
 export function undressStationLife(world) {
   undressTramCabin(world);
+  undressStationWar(world); // V19 add 1: the strips' colour and the CIC wall
   const life = world?._stationLife;
   if (!life) return;
   /* THE MODULE'S ROW GOES DOWN WITH THE WORLD. It is what `headcount`
