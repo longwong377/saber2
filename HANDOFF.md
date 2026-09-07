@@ -39,6 +39,52 @@ Playable two ways:
 
 ---
 
+## 0. HANDOFF — 7 Sep 2026, end of the V18/V19/V20 session
+
+**State.** Default branch `claude/lightsaber-combat-game-lxw391` at `a722ba9`,
+identical to the feature branch `claude/saber-game-review-f23c9s`. The play
+link is **https://longwong377.github.io/saber2/shark/** (`pages.yml` stages
+the site under `PLAY_PATH` with `index.play.html` as its index; the repo's
+`index.html` is the stood-down notice and the root link is deliberately
+dark). Build `/tmp/borz.html` 30.9 MB of the 34 MB bound — 3.1 MB of room
+left; the next lane that adds assets should watch it.
+
+**What this session built.** V18 (29/30 of the player's thirty), V19 (18/20:
+the battlefields dropped at the player's word), V20 (all seven lanes: light,
+motion and particles, gestures, voice and scoring, the stage, hands, the
+fight comes home) — see the three sections below, every item marked.
+
+**The three findings that matter more than any feature** (all fixed, all
+gated now): the doors were on the wrong side of every drum room; the sunken
+rooms were sealed basements under the deck plate; and the ground sheet was
+at 0 under decks 44 and 48 so everyone stood twelve metres under the floor.
+`station.mjs` walks every doorway, drops a body at every door and lobby,
+samples every well, and holds every outer room's sector — keep those green.
+
+**What is unverified.** V20's three visual lanes were stopped before their
+screenshots (the player's "SKIP"): the light moods, the doors and steam, and
+the abandoned quarter were seen once each in early shots but not after their
+last fixes. `tools/_lightshot.mjs`, `_motionshot.mjs`, `_stageshot.mjs` exist
+and take the render lock; shoot them first thing next session. The final
+gate after the V20 merge was run only partly (the player asked to merge):
+`station` 8/8 at the cut, `stationmotion`/`stationlight`/`verbs`/`duel`/
+`gestures`/`voice`/`music`/`stationlife`/`seated` each green on their own
+merge, the full pass not finished. Run `station` and those nine before
+touching anything.
+
+**Known small things.** `morning`'s "dome seat" clause is red on a clean tree
+(a promenade chair scaffold; the feature works through `sitKey`). The Sith's
+fight and the arena bout do not call `Music.setScore('fight')` yet (one line
+in `StationDuel.js`). The Underlift's rotated container sits inside the
+sector wall by `roomHalfW`; any new furniture along a side wall must do the
+same. Lanes run on Opus 5 through the Agent tool at its default effort; the
+effort cannot be raised from inside a session.
+
+**How the player works.** Plain and brief; answer questions directly the
+moment they are asked; "link"/"build" means pack and send; merging to the
+default branch is part of finishing; they will interrupt with "SKIP" or
+"MERGE" and mean it.
+
 ## 0. V20 — A LIVING, BREATHING STATION: LIGHT, MOTION, VOICE, THE STAGE, HANDS
 
 The player asked for an objective view and a "2.0" list, then said: *"can you
