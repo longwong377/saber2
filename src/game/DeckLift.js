@@ -165,6 +165,8 @@ export const RIDE = {
   ride: 5.5,
   /** How long the doors take to open or close. */
   doors: 1.1,
+  /** Seconds the car waits in the doorway after you step in or press the column. */
+  choose: 4.0,
   /** Seconds after the player is clear before the doors close behind him. */
   linger: 1.4,
   /** How long a called car takes to arrive. */
@@ -1995,6 +1997,7 @@ export function liftKey(world) {
     st.pick = (st.pick + 1) % FLOORS.length;
     /* From here the column decides where the car goes — see `floorTarget`. */
     st.chose = true;
+    if (st.state === STATE.WAIT) st.t = 0;                 // the count restarts on every press
     /* THROUGH `liftPick`, WHICH IS THE READOUT'S OWN READER. This line spelled
      * `FLOORS[st.pick]` itself, so the sentence the player is shown and the
      * plate over their head were two readings of one number — and `liftPick`,
@@ -2169,9 +2172,26 @@ export function stepDeckLift(world, dt) {
     }
     case STATE.WAIT: {
       if (inCar(world)) {
-        if (st.t >= 0.6) {
+        /**
+         * THE CAR WAITS FOR A CHOICE (7 Sep). It used to seal 0.6 s after you
+         * stepped in and ride to the menu — no time to press anything, and
+         * the player never found the station. With more than one floor it
+         * now holds the doors: the first moment inside says how to pick,
+         * every E press cycles the column (`liftKey`) and restarts the
+         * count, and the car seals `RIDE.choose` seconds after the last
+         * press — or after the same wait if you never press, to wherever
+         * the column stands. One floor, and it is the old 0.6 s ride out.
+         */
+        const many = FLOORS.length > 1;
+        if (many && !st.asked) {
+          st.asked = true;
+          const f = FLOORS[st.pick % FLOORS.length];
+          world.notify?.('PICK A FLOOR', `E cycles the column — ${String(f.label).toUpperCase()} is lit. Wait, and it goes there`);
+        }
+        if (st.t >= (many ? RIDE.choose : 0.6)) {
           st.state = STATE.SEAL; st.t = 0;
-          world.notify?.('TO THE BRIDGE', 'hold on');
+          const f = floorTarget(st);
+          world.notify?.(f && f.level ? `TO ${String(f.label).toUpperCase()}` : 'TO THE BRIDGE', 'hold on');
           audio.noise?.({ dur: RIDE.doors, gain: 0.07, type: 'bandpass', freq: 420, q: 1.2, pos });
         }
       } else st.t = 0;

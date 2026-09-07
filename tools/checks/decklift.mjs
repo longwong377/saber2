@@ -191,7 +191,9 @@ export async function run({ check, assert, THREE }) {
       world.onDeckLeave = () => { left++; };
       step(world, 3.0, walk(idle, -1));
       assert(p.position.z < LIFT.door - 0.2, `walking back put him at z=${p.position.z.toFixed(1)}, not in the car`);
-      step(world, 0.8 + RIDE.doors + 0.3, idle);
+      /* The car now waits `RIDE.choose` in the doorway for a floor to be
+       * picked (7 Sep) — nobody presses, so it goes where the column stands. */
+      step(world, (RIDE.choose ?? 0.6) + 0.2 + RIDE.doors + 0.3, idle);
       assert(liftState(world) === STATE.LEAVE || liftState(world) === STATE.GONE,
         `in the car the state is ${liftState(world)}, not leaving`);
       const n0 = st.readout.number;
