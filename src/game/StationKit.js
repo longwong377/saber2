@@ -807,6 +807,10 @@ function arcFront(kit, M, w, d, h, gap, mat, arc, dress) {
   const z0 = zAt(0);
   kit.slab(mat, gap, h - 2.6, t, 0, 2.6 + (h - 2.6) / 2, z0 - t / 2, { collide: true, bevel: 0 });
   kit.slab(M.strip, gap - 0.4, 0.1, 0.12, 0, 2.5, z0 - 0.1, { collide: false, bevel: 0 });
+  /* V20 lane 2: a sector's doorway, on the same terms as the flat one in
+   * `walls` below — `glass` is what tells `StationMotion` this is a SHOPFRONT
+   * and gets no leaves. */
+  kit.doorway = { gap, z: z0 - t / 2, t, head: 2.6, glass: !!arc.glass };
 }
 
 /**
@@ -889,6 +893,14 @@ function walls(kit, M, w, d, h, opts = {}) {
     /* The lintel over the opening, and the light in its reveal. */
     kit.slab(mat, gap, h - 2.6, t, 0, 2.6 + (h - 2.6) / 2, -d / 2 - t / 2, { collide: true, bevel: 0 });
     kit.slab(M.strip, gap - 0.4, 0.1, 0.12, 0, 2.5, -d / 2 - 0.1, { collide: false, bevel: 0 });
+    /* V20 lane 2: THE ONE PLACE IN THE TREE THAT KNOWS A DOORWAY WAS CUT.
+     * `StationMotion.dressStationMotion` hangs two sliding leaves in it, and
+     * it must not guess: the gap is `opts.doorW` on forty-four different
+     * builders, the reveal is at `-d/2 - t/2`, and the clear height is the
+     * 2.6 the lintel above starts at. A room with an open front, a glass
+     * `arcFront` or a platform never reaches this line and never gets a door,
+     * which is exactly the rule the lane was given. */
+    kit.doorway = { gap, z: -d / 2 - t / 2, t, head: 2.6 };
   }
 }
 
@@ -3878,6 +3890,7 @@ export function buildPlace(world, group, place, M, st) {
    * two rooms that sell over a plank and a stone floor are in — see
    * `counterHere` for what the key does there. */
   if (kit.counters?.length) (st.counters || (st.counters = new Map())).set(place.id, kit.counters);
+  if (kit.doorway) (st.doorways || (st.doorways = new Map())).set(place.id, kit.doorway); // V20 lane 2: see `walls`
   if (ctx.home) st.home = ctx.home;
   if (ctx.holo) st.holo = ctx.holo;
   if (ctx.obelisk) st.obelisk = { ...ctx.obelisk, group };
