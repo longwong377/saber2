@@ -48,8 +48,12 @@ import * as THREE from '../../vendor/three/three.module.js';
 import { Kit, propMaterials, makeCrate } from '../world/Props.js';
 import { deckMats, factionOf } from './DeckKit.js';
 import { loadRoom, materialKeyFor } from './StationMesh.js';
-import { PLACES, PLACE, DECK_Y, DRUM, CORRIDOR, SHAFTS, placesOn, floorOf, sectorAt, junctionsOn } from './StationPlan.js';
-import { buildPlace, SHAPES, buildWays, dressWayfinding, dressWallRun, sunkOf } from './StationKit.js';
+import { PLACES, PLACE, DECK_Y, DRUM, CORRIDOR, SHAFTS, placesOn, floorOf, sectorAt, junctionsOn,
+  DARK_ARC, inDarkArc } from './StationPlan.js';
+/* V20 lane 5: the abandoned quarter's flicker, its stash, and where the
+ * stage's own state lives on the station record. */
+import { stageOf, stepStage, stashKey } from './Stage.js';
+import { buildPlace, SHAPES, buildWays, dressWayfinding, dressWallRun, sunkOf, noteDress } from './StationKit.js';
 import { dressDeckLift, stepDeckLift, undressDeckLift, liftKey, liftFloors } from './DeckLift.js';
 import { dressStationLife, primeStationLife, stepStationLife, undressStationLife, dressTram,
   STOPS, headcount, servedHere } from './StationLife.js';
@@ -983,6 +987,30 @@ function buildRing(kit, M, deck) {
       }
       channel(kit, M, S, a, sx, sz, wide, y);
       coffer(kit, M, S, i, a, sx, sz, wide, y);
+      /**
+       * ── THE WORKERS' STREET (V20 lane 5) ────────────────────────────
+       *
+       * *"one deck the workers'."* The concourse ring is a market and a
+       * market's overflow is not stalls, it is what the stalls leave on the
+       * walk: an awning slung off the room line, a hand cart with its shafts
+       * down, and a chalked board propped against it. The cart is a LOOSE
+       * BODY — you can shove it — which is the difference between a street
+       * with things on it and a street with scenery on it.
+       */
+      if (i % 6 === 2) {
+        const ir = DRUM.ringR - DRUM.ringW / 2 + 0.4;
+        kit.slab(M.mark, wide * 1.6, 0.1, 2.0, (ir + 0.9) * sx, y + 3.0, (ir + 0.9) * sz, { ry: a, collide: false, bevel: 0.04, rx: -0.16 });
+        noteDress(kit, 'awning');
+        const cr = DRUM.ringR - 2.0;
+        kit.slab(M.deep, 1.7, 0.55, 1.0, cr * sx, y + 0.75, cr * sz, { ry: a, collide: true, bevel: 0.03 });
+        for (const sg of [-1, 1]) {
+          kit.post(M.dark, 0.28, 0.28, 0.14, (cr + sg * 0.45) * sx - 0.7 * Math.cos(a), y + 0.35, (cr + sg * 0.45) * sz + 0.7 * Math.sin(a), { radial: 10, rz: Math.PI / 2, ry: a });
+        }
+        kit.slab(M.wing, 0.08, 0.08, 1.5, (cr - 1.1) * sx, y + 0.3, (cr - 1.1) * sz, { ry: a, collide: false, bevel: 0, rx: 0.5 });
+        noteDress(kit, 'handcart');
+        kit.slab(M.dark, 1.0, 1.2, 0.08, (cr + 1.4) * sx, y + 0.62, (cr + 1.4) * sz, { ry: a, collide: false, bevel: 0, rx: 0.22 });
+        noteDress(kit, 'chalkboard');
+      }
     } else if (type === 'promenade') {
       /* DECK 44 — a continuous window wall outboard, doors inboard, and the
        * tram guideway visible through the glass. The skin is already glass on
@@ -995,10 +1023,58 @@ function buildRing(kit, M, deck) {
       }
       channel(kit, M, S, a, sx, sz, wide, y);
       coffer(kit, M, S, i, a, sx, sz, wide, y);
+      /**
+       * ── THE RICH DECK (V20 lane 5) ──────────────────────────────────
+       *
+       * *"one deck rich."* The promenade's own street furniture: a planted
+       * bed on a stone plinth every seventh bay, with a gilt kerb and a lit
+       * lip, standing off the window wall so the tram is seen THROUGH the
+       * planting. Nothing on this deck was ever green.
+       */
+      if (i % 7 === 3) {
+        const pr = DRUM.ringR - 1.6;
+        kit.slab(M.deep, wide * 1.5, 0.66, 1.9, pr * sx, y + 0.33, pr * sz, { ry: a, collide: true, bevel: 0.05 });
+        kit.slab(M.mark, wide * 1.55, 0.09, 2.0, pr * sx, y + 0.7, pr * sz, { ry: a, collide: false, bevel: 0.03 });
+        noteDress(kit, 'planter');
+        for (const dz of [-0.5, 0.15, 0.6]) {
+          const rr = pr + dz;
+          kit.slab(M.mark, 1.5, 0.4, 1.3, rr * sx, y + 1.25 + dz * 0.3, rr * sz, { ry: a + dz, collide: false, bevel: 0.14 });
+        }
+        kit.post(M.dark, 0.16, 0.12, 1.1, pr * sx, y + 1.05, pr * sz, { radial: 7 });
+        kit.slab(M.strip, wide * 1.3, 0.06, 0.08, (pr - 1.0) * sx, y + 0.06, (pr - 1.0) * sz, { ry: a, collide: false, bevel: 0 });
+        noteDress(kit, 'ribbon');
+      }
     } else {
       /* DECK 48 — the service way: grating underfoot, conduit overhead, and a
        * cutaway into machinery every few bays. */
       kit.slab(M.dark, wide, 0.08, DRUM.ringW * 0.9, DRUM.ringR * sx, y + 0.34, DRUM.ringR * sz, { ry: a, collide: false, bevel: 0 });
+      /**
+       * ══ AND FOR FORTY-EIGHT DEGREES OF IT, NONE OF THAT — V20 lane 5 ═══
+       *
+       * `StationPlan.DARK_ARC` is the abandoned quarter, and the ring in
+       * front of it is where the player reads the word "abandoned" before
+       * they have opened anything. So the bays inside it get NO lit floor
+       * channel, no coffered soffit and no status lamp — the three things
+       * that say "this deck is running" — and get instead the seam plates
+       * that have rusted through and the conduit that was cut and capped.
+       *
+       * The dressing is here rather than in a light because THE LIGHT IS
+       * ANOTHER LANE'S (see `DARK_ARC.k`, which is what it will read): a
+       * dark arc made only by turning lamps down is a lit arc at noon.
+       */
+      if (inDarkArc(deck, i * 360 / n)) {
+        /* Rusted seams across the grating, on the bay's own phase. */
+        if (i % 2 === 0) {
+          kit.slab(M.deep, wide * 0.9, 0.09, DRUM.ringW * 0.55, (DRUM.ringR - 0.4) * sx, y + 0.36, (DRUM.ringR - 0.4) * sz, { ry: a, collide: false, bevel: 0 });
+        }
+        /* The conduit, cut and capped where the quarter was isolated. */
+        if (rib) {
+          const dr = DRUM.ringR + 2.6;
+          kit.post(M.deep, 0.34, 0.34, wide * 0.44, dr * sx, y + DRUM.storey - 1.0, dr * sz, { radial: 6, ry: a, rz: Math.PI / 2 });
+          kit.slab(M.deep, 0.5, 0.5, 0.24, (DRUM.ringR - 1.5) * sx, y + DRUM.storey - 0.9, (DRUM.ringR - 1.5) * sz, { ry: a, collide: false, bevel: 0 });
+        }
+        continue;
+      }
       channel(kit, M, S, a, sx, sz, wide, y);
       coffer(kit, M, S, i, a, sx, sz, wide, y);
       if (rib) {
@@ -1517,6 +1593,21 @@ export function dressStation(world) {
    * crate's are both children of the scene root. Kept as the shell's own
    * draws so `station.mjs` can raster the drum without the crowd in it.
    */
+  /**
+   * ══ THE STAGE'S RECORD (V20 lane 5) ═══════════════════════════════════
+   *
+   * §5 of that lane: *"record `st.stage.darkArc` for deck 48's abandoned arc
+   * (another lane owns the lights and will read it); do not write lights
+   * beyond that."* This is the whole of the hand-off — a copy of the plan's
+   * own arc, so the light lane reads a number and not a file — plus the two
+   * things the dressing produced and something else has to find: what the
+   * walls actually put on themselves (`dressKinds`, merged from the shell
+   * here and from every room in `buildPlace`) and the flickering strips,
+   * which `stepStage` walks.
+   */
+  const stage = stageOf(st);
+  stage.darkArc = { ...DARK_ARC };
+  if (shell.dressKinds) for (const k of shell.dressKinds) stage.dressKinds.add(k);
   st.shell = shellOut.meshes;
   st.chandelier = shell.chandelier || null; // V20 lane 2: the rings, for `StationMotion` to turn
   st.shellDraws = shellOut.meshes.length;
@@ -3041,6 +3132,11 @@ export function stationKey(world) {
    * mean while you are standing in a moving box. See `stepTramRide`.
    */
   if (world._tramRide) { setDownFromTram(world, 'you step off'); return true; }
+  /* THE CRATE IN THE VALVE ROOM (V20 lane 5). Ahead of the place branch
+   * because the warren has no counter, no kiosk and no resident in it —
+   * nothing below this line could ever claim the press — and it answers
+   * false everywhere except within arm's reach of the crate. */
+  if (stashKey(world)) return true;
   const p = world.player?.position;
   if (!p) return false;
   const place = placeUnder(world, p.x, p.z);
@@ -5168,6 +5264,9 @@ export function stepStation(world, dt) {
   /* V18 cool 8 and 12: the morning's clock, and the window seat's camera. */
   stepMorning(world, st, dt);
   stepDomeSeat(world, dt);
+  /* V20 lane 5: the abandoned quarter's strips. One property read a frame on
+   * the two decks that have no derelict room on them. */
+  stepStage(world, st, dt);
   stepStationSound(world, st, dt); // V18 hole 7: crossfade the bed under the player
   stepMusic(world, st, dt); // V19 add 5: the band's set, the busker, the Drum's theme
   stepStationMotion(world, st, dt); // V20 lane 2: see StationMotion.js

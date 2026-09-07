@@ -1462,6 +1462,17 @@ export async function run({ check, assert, THREE }) {
      * its hatch at the side, and #56 the Standing has its obelisk plinth at
      * the exact centre, which is 3.25 m in through a door on a 11 m room and
      * the thing you are there to look at.
+     *
+     * ══ AND A SEALED ROOM IS WALKED THE OTHER WAY — V20 lane 5 ═══════════
+     *
+     * The abandoned quarter's two condemned rooms have a welded plate over
+     * the doorway. That is the FEATURE, so the walk down the centre line is
+     * turned round for them: the front must be blocked (a sealed room whose
+     * plate is missing is a bug this check would otherwise never see), and
+     * the walk is done from the CUT in the side wall the plan gives them —
+     * `cutLocal`, in the room's own frame — inward to the room's middle. A
+     * sealed room you cannot get into any way at all is a sealed room with no
+     * point, and the whole quarter is a route.
      */
     const { PLACES, DECK_Y: DYY } = await import('../../src/game/StationPlan.js');
     const { stationMats } = await import('../../src/game/Station.js');
@@ -1502,6 +1513,30 @@ export async function run({ check, assert, THREE }) {
           }
           if (hit) break;
         }
+      }
+      if (p.sealed) {
+        /* The plate is meant to be there, and the way in is the cut. */
+        if (!hit) bad.push(`#${p.id} ${p.name}: is sealed in the plan and its doorway is open — no plate over it`);
+        if (!p.cutLocal) { bad.push(`#${p.id} ${p.name}: is sealed and declares no cut, so there is no way in at all`); continue; }
+        const [cx, cz] = p.cutLocal;
+        const len = Math.hypot(cx, cz) || 1;
+        let inside = null;
+        for (let t = 0; t <= 3.5 && !inside; t += 0.25) {
+          const x = cx - (cx / len) * t, z = cz - (cz / len) * t;
+          for (const y of [y0 + 0.5, y0 + 1.4]) {
+            for (const b of boxes) {
+              v.set(x - b.c.x, y - b.c.y, z - b.c.z);
+              if (b.q) { q.copy(b.q).invert(); v.applyQuaternion(q); }
+              if (Math.abs(v.x) <= b.h.x + 0.3 && Math.abs(v.y) <= b.h.y && Math.abs(v.z) <= b.h.z + 0.3) {
+                inside = `${t.toFixed(2)} m in from the cut, a ${(b.h.x * 2).toFixed(1)}x${(b.h.y * 2).toFixed(1)}x${(b.h.z * 2).toFixed(1)} box at ${b.c.x.toFixed(1)},${b.c.y.toFixed(1)},${b.c.z.toFixed(1)}`;
+                break;
+              }
+            }
+            if (inside) break;
+          }
+        }
+        if (inside) bad.push(`#${p.id} ${p.name} [${p.shape}]: the side cut is blocked ${inside}`);
+        continue;
       }
       if (hit && !BY_DESIGN.has(p.id)) bad.push(`#${p.id} ${p.name} [${p.shape}]: blocked ${hit}`);
       if (!hit && BY_DESIGN.has(p.id)) bad.push(`#${p.id} ${p.name}: is listed as blocked by design but its doorway is clear — take it off the list`);
@@ -1797,6 +1832,12 @@ export async function run({ check, assert, THREE }) {
         };
         for (const p of placesOn(deck)) {
           if (p.external || !p.door || !p.w) continue;
+          /* A SEALED ROOM IS ENTERED AT ITS CUT (V20 lane 5). Its plan door
+           * is a welded plate, so a body dropped a step inside it is a body
+           * dropped in the wall; `entry` is the point 0.9 m inboard of the
+           * cut in the side wall, derived in `StationPlan` off the same
+           * `cuts` row the builder cuts the wall from. */
+          if (p.sealed && p.entry) { drop(`#${p.id} ${p.name} cut`, p.entry[0], p.entry[1]); continue; }
           /* a step inside the door, toward the room's centre */
           const dx = p.x - p.door[0], dz = p.z - p.door[1], d = Math.hypot(dx, dz) || 1;
           drop(`#${p.id} ${p.name} door`, p.door[0] + dx / d * 1.2, p.door[1] + dz / d * 1.2);
@@ -4840,6 +4881,269 @@ export async function run({ check, assert, THREE }) {
         + `${rode.toFixed(0)} s, set down ${off.toFixed(1)} m from ${next.name}; `
         + 'an empty platform hands the press to the board';
     } finally { a.world.dispose?.(); }
+  });
+
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+  /*  V20 LANE 5 — THE STAGE                                                  */
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * The player: *"A stage, not a station. Drop the drum's symmetry: one deck
+   * badly lit and half abandoned, one deck rich, one deck the workers'. Rooms
+   * that are big, rooms that are tiny, a hallway you can get lost in."*
+   *
+   * Five checks, one per sentence, and every one of them measures the built
+   * world rather than the table that asked for it — a `derelict: true` on a
+   * row is a claim, a room with no plate over its door is the defect.
+   */
+
+  check('station: the abandoned quarter is abandoned — sealed doors, nobody, and a strip that stutters', async () => {
+    const { PLACES, DARK_ARC, inDarkArc } = await import('../../src/game/StationPlan.js');
+    const quarter = PLACES.filter((p) => p.derelict);
+    assert(quarter.length >= 2, `${quarter.length} derelict rooms; the quarter wants at least two`);
+    for (const p of quarter) {
+      assert(p.deck === 48, `#${p.id} ${p.name} is derelict and on deck ${p.deck}, not the working deck`);
+      assert((p.heads || 0) === 0, `#${p.id} ${p.name} is derelict and has ${p.heads} residents in it`);
+      assert(inDarkArc(p.deck, p.at), `#${p.id} ${p.name} at ${p.at}° is outside the dark arc ${DARK_ARC.a0}..${DARK_ARC.a1}`);
+      assert(p.cuts && p.cuts.length, `#${p.id} ${p.name} has no cut, so it is a room with no way into it`);
+    }
+    const sealed = quarter.filter((p) => p.sealed);
+    assert(sealed.length >= 2, `${sealed.length} of the quarter's rooms are sealed; the brief wants sealed doors`);
+
+    /* AND THE PLATE IS REALLY OVER THE DOOR. Built alone, a sealed room has a
+     * collider across the doorway line at chest height and the room next to it
+     * — the one that was cut open — does not. */
+    for (const p of quarter) {
+      const { boxes } = await roomAlone(p);
+      const over = boxes.filter((b) => Math.abs(b.c.x) < 1.0 && b.c.z < -p.d / 2 + 1.2
+        && b.c.y > 0.6 && b.c.y < 2.2 && b.h.x * 2 > 2.5);
+      if (p.sealed) assert(over.length >= 1, `#${p.id} ${p.name} is sealed and has no plate across its doorway`);
+      else assert(over.length === 0, `#${p.id} ${p.name} is the way in and something is across its doorway`);
+    }
+
+    /* AND THE STRIP STUTTERS. Not "a strip exists": stepped for four seconds
+     * of station time, every derelict room's own material must have been both
+     * lit and dark, and no two of them may be in step. */
+    const { world } = await station(48);
+    try {
+      const st = world._station;
+      const { stepStage } = await import('../../src/game/Stage.js');
+      const flick = st.stage?.flickers || [];
+      assert(flick.length >= quarter.length,
+        `${flick.length} flickering strips for ${quarter.length} derelict rooms`);
+      const mats = new Set(flick.map((f) => f.mat));
+      assert(mats.size === flick.length, 'two derelict rooms share one strip material — one room would flicker the other');
+      for (const f of flick) {
+        assert(/^station-\d+-flicker/.test(f.mat.name), `a flicker material is named '${f.mat.name}'`);
+        assert(!f.mat.userData?.saberNoInk, `${f.mat.name} is uninked — §9.1 allows nothing of the sort inside a room`);
+      }
+      const hi = flick.map(() => 0), lo = flick.map(() => 0);
+      const trace = flick.map(() => '');
+      for (let t = 0; t < 260; t++) {
+        stepStage(world, st, 1 / 60);
+        flick.forEach((f, i) => {
+          const on = f.mat.emissiveIntensity > f.base * 0.5;
+          if (on) hi[i]++; else lo[i]++;
+          trace[i] += on ? '1' : '0';
+        });
+      }
+      flick.forEach((f, i) => {
+        assert(hi[i] > 10 && lo[i] > 10,
+          `#${f.id}'s strip was lit ${hi[i]} frames and dark ${lo[i]} of 260 — that is a lamp, not a flicker`);
+      });
+      for (let i = 0; i < trace.length; i++) {
+        for (let j = i + 1; j < trace.length; j++) {
+          assert(trace[i] !== trace[j], `#${flick[i].id} and #${flick[j].id} stutter in lock step`);
+        }
+      }
+      /* AND THE RING IN FRONT OF IT IS DEAD: the plan's arc is recorded for
+       * the light lane, and the two fixtures on it are the dead ones. */
+      const arc = st.stage?.darkArc;
+      assert(arc && arc.k > 0 && arc.k < 1 && arc.a1 > arc.a0,
+        `st.stage.darkArc is ${JSON.stringify(arc)} — the light lane reads this`);
+      const dead = st.ways.filter((w) => w.dead);
+      assert(dead.length >= 2, `${dead.length} dead fixtures on the arc; the brief names a stripped kiosk and a barricade`);
+      const kinds = new Set(dead.map((w) => w.kind));
+      assert(kinds.size === dead.length, 'the dead fixtures are the same fixture twice');
+      for (const w of dead) {
+        assert(inDarkArc(48, w.at), `${w.name} at ${w.at}° is a dead fixture outside the dark arc`);
+      }
+      return `${quarter.length} rooms (${sealed.length} welded shut), ${flick.length} strips stuttering, `
+        + `${arc.a1 - arc.a0}° of dark ring at k=${arc.k}`;
+    } finally { world.dispose?.(); }
+  });
+
+  check('station: the warren is a maze — real dead ends, both exits on the same graph, and a stash that opens once', async () => {
+    const { maze, N, E, S, W } = await import('../../src/game/Stage.js');
+    const m = maze({ cols: 7, rows: 9, seed: 4821 });
+    const n = m.cols * m.rows;
+    assert(n >= 40, `${n} cells — a warren under forty cells is a corridor with a bend in it`);
+    assert(m.deadEnds.length >= 5, `${m.deadEnds.length} dead ends; a maze you can get lost in wants five`);
+
+    /* THE FLOOD, on the generator's own graph. Every cell reachable from the
+     * spine exit, and the ring exit's cell among them — a maze with an island
+     * in it is two mazes and one of them has the stash. */
+    const at = (i, j) => i + j * m.cols;
+    const seen = new Uint8Array(n);
+    const q = [[m.spineI, 0]];
+    seen[at(m.spineI, 0)] = 1;
+    while (q.length) {
+      const [i, j] = q.pop();
+      const b = m.cells[at(i, j)];
+      if ((b & N) && j + 1 < m.rows && !seen[at(i, j + 1)]) { seen[at(i, j + 1)] = 1; q.push([i, j + 1]); }
+      if ((b & S) && j > 0 && !seen[at(i, j - 1)]) { seen[at(i, j - 1)] = 1; q.push([i, j - 1]); }
+      if ((b & E) && i + 1 < m.cols && !seen[at(i + 1, j)]) { seen[at(i + 1, j)] = 1; q.push([i + 1, j]); }
+      if ((b & W) && i > 0 && !seen[at(i - 1, j)]) { seen[at(i - 1, j)] = 1; q.push([i - 1, j]); }
+    }
+    let reached = 0;
+    for (let k = 0; k < n; k++) if (seen[k]) reached++;
+    assert(reached === n, `${reached} of ${n} cells reachable from the spine exit`);
+    assert(seen[at(m.ringI, m.rows - 1)], 'the ring exit is not on the same graph as the spine exit');
+    assert(m.cells[at(m.spineI, 0)] & S, 'the spine exit is not cut');
+    assert(m.cells[at(m.ringI, m.rows - 1)] & N, 'the ring exit is not cut');
+    /* And it is the SAME maze every time, or the walls a check walked are not
+     * the walls a player walks. */
+    const again = maze({ cols: 7, rows: 9, seed: 4821 });
+    assert(String(again.cells) === String(m.cells), 'two calls with one seed carve two different mazes');
+
+    /* AND THE WALLS ARE REALLY THERE. Built alone, the warren stands a
+     * collider for every closed edge of the plan: counted against the plan,
+     * not against a number typed here. */
+    const { PLACE } = await import('../../src/game/StationPlan.js');
+    const warren = PLACE.get(65);
+    assert(warren, 'the gazetteer has no #65');
+    const { boxes } = await roomAlone(warren);
+    let closed = 0;
+    for (let j = 0; j <= m.rows; j++) {
+      for (let i = 0; i < m.cols; i++) {
+        const openHere = j > 0 && j < m.rows ? !!(m.cells[at(i, j - 1)] & N)
+          : j === 0 ? !!(m.cells[at(i, 0)] & S) : !!(m.cells[at(i, m.rows - 1)] & N);
+        if (!openHere) closed++;
+      }
+    }
+    for (let i = 0; i <= m.cols; i++) {
+      for (let j = 0; j < m.rows; j++) if (!(i > 0 && i < m.cols && (m.cells[at(i - 1, j)] & E))) closed++;
+    }
+    const posts = (m.cols + 1) * (m.rows + 1);
+    const tall = boxes.filter((b) => Math.abs(b.h.y * 2 - warren.h) < 0.01);
+    assert(tall.length >= closed + posts,
+      `${tall.length} full-height colliders for ${posts} blocks and ${closed} closed walls — a wall you can walk through is not a maze`);
+
+    /* THE STASH, and it opens ONCE. Driven through the real key with the
+     * player standing at the crate, twice. */
+    const { world } = await station(48);
+    try {
+      const { clearStation, stashState } = await import('../../src/game/StationSave.js');
+      const { clearCredits, purse } = await import('../../src/game/Credits.js');
+      const { stationKey } = await import('../../src/game/Station.js');
+      clearStation(); clearCredits();
+      const at2 = world._station.stage?.stash;
+      assert(at2, 'the warren recorded no stash');
+      world.player.position.set(at2.x, at2.y ?? 0, at2.z);
+      const before = purse();
+      assert(stationKey(world) === true, 'the key at the crate was not answered');
+      const after = purse();
+      assert(after > before, `the crate paid ${after - before}`);
+      assert(stashState()?.opened === true, 'the fold does not say the crate is open');
+      assert(stationKey(world) === true, 'the second press at an open crate was not answered');
+      assert(purse() === after, `the crate paid twice — ${purse() - after} the second time`);
+      /* And nowhere near it, the key falls through to the rest of the world. */
+      const { stashKey } = await import('../../src/game/Stage.js');
+      world.player.position.set(at2.x + 20, at2.y ?? 0, at2.z);
+      assert(stashKey(world) === false, 'the stash claims the key from twenty metres away');
+      clearStation(); clearCredits();
+      return `${n} cells, ${m.deadEnds.length} dead ends, ${tall.length} standing walls, `
+        + `${after - before} credits in the crate and nothing on the second press`;
+    } finally { world.dispose?.(); }
+  });
+
+  check('station: there is a tiny room on every deck, and you can get into all three', async () => {
+    const { PLACES } = await import('../../src/game/StationPlan.js');
+    const tiny = PLACES.filter((p) => p.tiny);
+    const decks = new Set(tiny.map((p) => p.deck));
+    for (const d of [40, 44, 48]) assert(decks.has(d), `deck ${d} has no tiny room on it`);
+    const q = new THREE.Quaternion(), v = new THREE.Vector3();
+    const lines = [];
+    for (const p of tiny) {
+      assert(p.w <= 5 && p.d <= 5 && p.h <= 3.0,
+        `#${p.id} ${p.name} is ${p.w}x${p.d}x${p.h} — that is not a tiny room`);
+      const { boxes } = await roomAlone(p);
+      /* A floor under the middle of it, and the way in clear at eye height
+       * for a body 1.4 m tall — the same walk the doorway check does, at the
+       * heights a 2.6 m room actually has. */
+      const under = boxes.filter((b) => Math.abs(b.c.x) < p.w / 2 && Math.abs(b.c.z) < p.d / 2
+        && b.c.y + b.h.y > -0.5 && b.c.y + b.h.y <= 0.05);
+      assert(under.length >= 1, `#${p.id} ${p.name} has no floor under it`);
+      let hit = null;
+      for (let t = -1.2; t <= 1.4 && !hit; t += 0.2) {
+        for (const y of [0.5, 1.4]) {
+          for (const b of boxes) {
+            v.set(-b.c.x, y - b.c.y, -p.d / 2 + 1.5 + t - b.c.z);
+            if (b.q) { q.copy(b.q).invert(); v.applyQuaternion(q); }
+            if (Math.abs(v.x) <= b.h.x + 0.25 && Math.abs(v.y) <= b.h.y && Math.abs(v.z) <= b.h.z + 0.25) {
+              hit = `${(1.5 + t).toFixed(1)} m in at ${y} m`;
+              break;
+            }
+          }
+          if (hit) break;
+        }
+      }
+      assert(!hit, `#${p.id} ${p.name}: you cannot walk into it — blocked ${hit}`);
+      lines.push(`#${p.id} ${p.name} (deck ${p.deck}, ${p.w}x${p.d}x${p.h})`);
+    }
+    return lines.join('; ');
+  });
+
+  check('station: the huge rooms are huge — the reactor hall and Arrivals are over twelve metres', async () => {
+    const { PLACE, PLACES, DRUM } = await import('../../src/game/StationPlan.js');
+    for (const id of [48, 7]) {
+      const p = PLACE.get(id);
+      assert(p.h >= 12, `#${id} ${p.name} is ${p.h} m to its soffit`);
+      assert(p.h <= DRUM.pitch || p.deck === 48 || id === 23,
+        `#${id} ${p.name} at ${p.h} m stands through the deck above it`);
+    }
+    /* AND THE TALLEST IS TALLER THAN THE SHORTEST BY AN ORDER. A station whose
+     * rooms are all one height has no scale, which is the sentence this lane
+     * exists for; measured over every room in the drum. */
+    const drum = PLACES.filter((p) => !p.external && p.band !== 'ring' && p.h);
+    const hs = drum.map((p) => p.h).sort((a, b) => a - b);
+    assert(hs[0] <= 3.0, `the lowest room in the drum is ${hs[0]} m — nothing here is tight`);
+    assert(hs[hs.length - 1] / hs[0] >= 8, `tallest/shortest is ${(hs[hs.length - 1] / hs[0]).toFixed(1)}`);
+    /* And the reactor hall really is BUILT to it — the plan can say anything. */
+    const { boxes } = await roomAlone(PLACE.get(48));
+    const top = boxes.reduce((m2, b) => Math.max(m2, b.c.y + b.h.y), -Infinity);
+    assert(top >= 24, `the reactor hall's highest collider is at ${top.toFixed(1)} m on a 30 m room`);
+    return `#48 ${PLACE.get(48).h} m (built to ${top.toFixed(1)}), #7 ${PLACE.get(7).h} m, `
+      + `the drum runs ${hs[0]}–${hs[hs.length - 1]} m`;
+  });
+
+  check("station: the rich deck and the workers' deck are dressed differently, and it is measured", async () => {
+    /**
+     * *"one deck rich, one deck the workers'."* Two decks that differ only in
+     * palette differ in nothing a player can name. `StationKit.noteDress`
+     * records every kind of thing the dressing actually laid, per deck, as it
+     * lays it — so this is a measurement of the geometry and not of a table
+     * saying what the geometry ought to be.
+     */
+    const sets = new Map();
+    for (const deck of [40, 44, 48]) {
+      const { world } = await station(deck);
+      try {
+        const kinds = world._station.stage?.dressKinds;
+        assert(kinds instanceof Set && kinds.size >= 3,
+          `deck ${deck} recorded ${kinds ? kinds.size : 0} dressing kinds`);
+        sets.set(deck, new Set(kinds));
+      } finally { world.dispose?.(); }
+    }
+    const only = (a, b) => [...sets.get(a)].filter((k) => !sets.get(b).has(k));
+    const rich = only(44, 40), work = only(40, 44);
+    assert(rich.length >= 2, `deck 44 carries only ${rich.length} kind(s) deck 40 does not: ${rich.join(', ')}`);
+    assert(work.length >= 2, `deck 40 carries only ${work.length} kind(s) deck 44 does not: ${work.join(', ')}`);
+    /* And the working deck's dead quarter has its own, which neither has. */
+    const dead = [...sets.get(48)].filter((k) => !sets.get(40).has(k) && !sets.get(44).has(k));
+    assert(dead.length >= 2, `deck 48 carries only ${dead.length} kind(s) neither other deck has: ${dead.join(', ')}`);
+    return `44 only: ${rich.join(', ')} · 40 only: ${work.join(', ')} · 48 only: ${dead.join(', ')}`;
   });
 
 }

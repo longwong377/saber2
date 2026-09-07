@@ -232,6 +232,14 @@ function blank() {
      * six kept, oldest dropped. They stand on the cabin's desk (`Home.js`).
      */
     trophies: [],
+    /**
+     * V20 lane 5: THE WARREN'S STASH, `{ opened, paid }` or null. The crate in
+     * the valve room at the middle of `#65 The warren` opens ONCE, ever —
+     * which is the whole of what makes finding it worth the walk, and which
+     * only a fold can promise: a lift ride rebuilds the station and a run
+     * does not survive at all. `Stage.stashKey` owns the shape.
+     */
+    stash: null,
   };
 }
 
@@ -459,6 +467,11 @@ export function markFuneral(designation, bunk, day = 0) {
   }
   return s.funerals;
 }
+
+/** The warren's stash (V20 lane 5) — `{ opened, paid }`, or null until it is
+ * opened. See `Stage.stashKey`, which is the only reader and the only writer. */
+export function stashState() { const s = read().stash; return s && typeof s === 'object' ? s : null; }
+export function setStashState(v) { const s = read(); s.stash = v; return write(s).stash; }
 
 /** The journal fold — see `Journal.js`. Null until a line is written. */
 export function journalState() { const j = read().journal; return j && typeof j === 'object' ? j : null; }
