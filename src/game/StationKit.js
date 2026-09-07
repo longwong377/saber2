@@ -47,6 +47,9 @@ import { Kit, makeCrate, makeBarrel, Prop, slabGeo, cylGeo } from '../world/Prop
  * exists. */
 import * as Food from './Food.js';
 import { PLACE, DECK_Y, DRUM, floorOf, waysOn, junctionsOn } from './StationPlan.js';
+/* V20 lane 5: the warren's plan, and the bits its cells carry. `Stage.js`
+ * imports nothing from here, so the two are acyclic. */
+import { maze, addFlicker, stageOf, N as MZ_N, E as MZ_E, S as MZ_S } from './Stage.js';
 /**
  * ── THE WHEEL'S SEGMENT COUNT COMES OFF THE RULES, NOT OFF A RULER ───────
  *
@@ -292,6 +295,43 @@ function keptOutBox(kit, x, z, hx, hz) {
 function dressN(kit) { return (kit._dressN = (kit._dressN || 0) + 1); }
 
 /**
+ * ══ WHAT THIS DECK'S DRESSING ACTUALLY PUT ON THE WALL — V20 lane 5 ═══════
+ *
+ * *"one deck rich, one deck the workers'."* Two decks that differ only in
+ * colour differ in nothing a player can name, so the rich deck and the
+ * workers' deck get things the other one has not got — gilt, banners and
+ * ribbon on 44; awnings, chalk boards and stacked crates on 40 — and every
+ * piece names itself here as it is laid.
+ *
+ * IT IS RECORDED RATHER THAN LISTED because a table of what a deck ought to
+ * carry is a second copy of the code that carries it: `station.mjs` asserts
+ * that 44 has at least two kinds 40 has not and the other way about, and the
+ * only way this set is wrong is if the geometry is missing, which is the
+ * thing being asked about. `Station.dressStation` merges the shell's set with
+ * every room's onto `st.stage.dressKinds`.
+ */
+/**
+ * ── ONE ROOM'S OWN STRIP (V20 lane 5) ────────────────────────────────────
+ *
+ * A clone of the deck's `strip`, named for the room. The deck's material is
+ * on every lit surface on the deck — the reactor core, the ring's channel,
+ * every lintel — so a flicker written onto it would be the whole deck
+ * blinking. A clone is its own bin in the kit's merge, so it is one extra
+ * draw call in that room and nothing anywhere else, and `Stage.stepStage` has
+ * something it can write `emissiveIntensity` on without asking permission.
+ */
+function flickerMat(M, place) {
+  const m = M.strip.clone();
+  m.name = `station-${M.deck}-flicker${place.id}`;
+  return m;
+}
+
+export function noteDress(kit, kind) {
+  (kit.dressKinds || (kit.dressKinds = new Set())).add(kind);
+  return kind;
+}
+
+/**
  * Dress one straight wall face. `len` along local X, `h` tall, room at −Z.
  * `opts.sparse` is the arc-wall and corridor form: bays and trim, fewer
  * fixtures, because a chord is short and a corridor is long.
@@ -299,6 +339,30 @@ function dressN(kit) { return (kit._dressN = (kit._dressN || 0) + 1); }
 export function dressWallRun(kit, M, len, h, cx, cy, cz, ry, opts = {}) {
   if (len < 1.2 || h < 2.2) return;
   const style = dressStyle(M);
+  /**
+   * ── AND ON TOP OF IT, WHAT KIND OF PLACE THIS IS (V20 lane 5) ─────────
+   *
+   * `dead` is the abandoned quarter — set on the KIT (`kit.dressDead`) by the
+   * three derelict builders rather than passed down through `walls`, which
+   * would mean threading a flag through four call sites for three rooms.
+   * `rich` is the living deck and `workers` the concourse deck; both are read
+   * off `M.deck`, so every wall on those decks gets them and no room has to
+   * ask. Nothing here changes what the deck's CHARACTER is — the brass dado
+   * and the timber battens below are untouched — it adds what a deck of that
+   * kind has that the other has not.
+   */
+  const dead = !!(opts.dead || kit.dressDead);
+  /**
+   * AND THEY ARE STREET DRESSING, WHICH IS WHY THIS IS GATED. An awning and a
+   * chalk board are things a WALK has; hung in the chapel or the morgue they
+   * are the "one generic kit repeated" this whole file is written against.
+   * `kit.dressStreet` is set in `buildPlace` — true for a public outer room
+   * and for the Concourse, false for everything private — and is undefined on
+   * the shell kit, which is the ring and the four spines, and is the street.
+   */
+  const street = kit.dressStreet !== false;
+  const rich = !dead && street && M.deck === 44;
+  const workers = !dead && street && M.deck === 40;
   const R = dressRng(kit, (opts.salt ?? 0) + dressN(kit) * 7 + Math.round(len * 13) + Math.round(h * 3));
   const sparse = !!opts.sparse;
   const F = { collide: false, bevel: 0 };
@@ -422,6 +486,18 @@ export function dressWallRun(kit, M, len, h, cx, cy, cz, ry, opts = {}) {
   /* 5. THE LAMPS on the wall, and the pilasters between them. */
   const pitch = sparse ? R.range(4.5, 6.5) : R.range(3.2, 4.6);
   for (let lx = X0 + pitch * R.range(0.3, 0.7); lx < X1 - 0.4; lx += pitch) {
+    if (dead) {
+      /* THE LAMP IS THERE AND IT IS OUT. A wall with no fitting at all reads
+       * as a wall nobody ever lit; a dead fitting reads as a wall somebody
+       * stopped paying for, which is the sentence this quarter is. */
+      slab(M.dark, 0.36, 0.2, 0.14, lx, 2.5, -0.07, F);
+      slab(M.deep, 0.3, 0.12, 0.11, lx, 2.5, -0.1, F);
+      noteDress(kit, 'deadlamp');
+      /* And the rust that runs down out of it. */
+      slab(M.deep, R.range(0.1, 0.26), R.range(0.9, 2.0), 0.02, lx + R.range(-0.1, 0.1), 1.6, -0.015, F);
+      noteDress(kit, 'rust');
+      continue;
+    }
     if (style === 'warm') {
       slab(M.dark, 0.2, 0.12, 0.16, lx, 2.05, -0.08, F);
       slab(M.strip, 0.14, 0.44, 0.08, lx, 2.35, -0.09, F);
@@ -439,6 +515,63 @@ export function dressWallRun(kit, M, len, h, cx, cy, cz, ry, opts = {}) {
     } else {
       slab(M.strip, 0.5, 0.08, 0.06, lx, 2.3, -0.06, F);
     }
+  }
+  /* ── 6. AND WHAT KIND OF PLACE THIS IS. See `noteDress`. ─────────────── */
+  if (rich) {
+    /* GILT: a bead over the dado and another under the cornice. The living
+     * deck was white panels and timber battens and read as CLEAN; it is
+     * meant to read as money. */
+    slab(M.mark, len, 0.07, 0.14, 0, dado + 0.19, -0.07, F);
+    slab(M.mark, len, 0.05, 0.12, 0, top + 0.1, -0.07, F);
+    noteDress(kit, 'gilt');
+    /* BANNERS hung off the cornice, long enough to break the wall's line. */
+    const bp = R.range(4.4, 6.2);
+    for (let bx = X0 + bp * R.range(0.4, 0.8); bx < X1 - 0.7; bx += bp) {
+      const bh = Math.min(2.4, Math.max(0.8, top - 0.6));
+      slab(M.mark, 0.86, bh, 0.05, bx, top - bh / 2 + 0.1, -0.12, F);
+      slab(M.dark, 0.98, 0.09, 0.1, bx, top + 0.16, -0.13, F);
+      slab(M.strip, 0.5, 0.05, 0.03, bx, top - 0.35, -0.155, F);
+      noteDress(kit, 'banner');
+    }
+    /* RIBBON: a second lit line under the cable tray, the whole run. */
+    slab(M.strip, len - 0.6, 0.05, 0.05, 0, trayY - 0.16, -0.14, F);
+    noteDress(kit, 'ribbon');
+  } else if (workers) {
+    /* AWNING: cloth on a frame out over the walk, the length of the run.
+     * The concourse deck is a market and a market has things sticking out. */
+    slab(M.mark, len - 0.5, 0.09, 1.15, 0, 3.05, -0.62, { collide: false, bevel: 0.04, rx: -0.14 });
+    for (let ax = X0 + 1.2; ax < X1 - 0.6; ax += R.range(2.6, 3.8)) {
+      post(M.dark, 0.05, 0.05, 1.25, ax, 3.28, -0.6, { radial: 5, rx: 0.6 });
+    }
+    noteDress(kit, 'awning');
+    /* A CHALK BOARD — the price of the day, written by hand. */
+    const cx = X0 + (X1 - X0) * R.range(0.25, 0.7);
+    slab(M.dark, 1.55, 1.15, 0.07, cx, 1.72, -0.06, F);
+    slab(M.deep, 1.35, 0.95, 0.04, cx, 1.72, -0.1, F);
+    for (let k = 0; k < 4; k++) slab(M.mark, R.range(0.4, 1.0), 0.05, 0.02, cx - 0.3, 2.06 - k * 0.24, -0.125, F);
+    noteDress(kit, 'chalkboard');
+    /* AND CRATES STACKED AGAINST IT, because nobody clears the walk.
+     * NOT COLLIDERS, and inset a metre from each end of the run: everything
+     * this function lays stands proud of its own surface and nothing else,
+     * which is the rule in this file's header and the one `station.mjs`'s
+     * wedge check holds it to — a 0.7 m box at the end of a front wall is a
+     * box through the side wall on a room 12 m wide at the ring. */
+    const sx = Math.min(X1 - 1.1, Math.max(X0 + 1.1, X0 + (X1 - X0) * R.range(0.1, 0.85)));
+    for (let k = 0; k < 3; k++) {
+      slab(M.deep, 0.66, 0.58, 0.52, sx + (k === 2 ? 0.16 : 0), 0.29 + (k === 2 ? 0.58 : 0), -0.32 - (k % 2) * 0.5, { collide: false, bevel: 0.03 });
+    }
+    noteDress(kit, 'cratestack');
+  } else if (dead) {
+    /* A DEAD WALL: the seams have rusted through and a ceiling panel that
+     * came down years ago is leaning where it fell. */
+    for (let k = 0; k < 3; k++) {
+      const rx2 = X0 + (X1 - X0) * R();
+      slab(M.deep, R.range(0.06, 0.14), Math.max(0.8, h - R.range(0.6, 2.4)), 0.02, rx2, h / 2, -0.012, F);
+    }
+    noteDress(kit, 'seam');
+    const px = Math.min(X1 - 1.1, Math.max(X0 + 1.1, X0 + (X1 - X0) * R.range(0.15, 0.8)));
+    slab(M.wing, R.range(0.9, 1.4), 0.06, 1.3, px, 0.62, -0.42, { collide: false, bevel: 0, rx: R.range(0.95, 1.15) });
+    noteDress(kit, 'droppedpanel');
   }
   kit.pop();
 }
@@ -744,7 +877,7 @@ function dressRadial(kit, M, S, s, r0, r1, h, salt) {
  * larger radius. `mat` null lays glass from waist to head instead (a
  * builder that opens its back and glazes it, see `walls`).
  */
-function arcBack(kit, M, S, h, mat, dress) {
+function arcBack(kit, M, S, h, mat, dress, cut = null) {
   const t = 0.4, Ri = S.Ri, th = S.th;
   const n = Math.max(2, Math.ceil((2 * Ri * th) / 2.4));
   const wide = 2 * (Ri - t / 2) * Math.tan(th / n) * 1.04;
@@ -752,6 +885,27 @@ function arcBack(kit, M, S, h, mat, dress) {
     const a = -th + 2 * th * ((i + 0.5) / n);
     const rc = Ri - t / 2;
     const x = rc * Math.sin(a), z = S.c - rc * Math.cos(a);
+    /**
+     * ── A CUT THROUGH THE BACK (V20 lane 5) ──────────────────────────────
+     *
+     * `#64 The fallen soffit` is welded shut at the front and the warren
+     * comes up behind it, so one chord of its back arc is taken out from the
+     * floor to head height and the rest of that chord left standing over the
+     * hole. A doorway and not a missing wall: the head is a real lintel and
+     * the two chords beside it are untouched, which is what keeps the sector
+     * check's "the back is chords at the inner circle" true.
+     */
+    if (cut && Math.abs(x - cut.x) < wide * 0.75) {
+      const head = 2.3;
+      kit.slab(mat || M.hull, wide, h - head, t, x, head + (h - head) / 2, z, { ry: -a, collide: true, bevel: 0 });
+      kit.slab(M.dark, wide, 0.16, t + 0.12, x, head, z, { ry: -a, collide: false, bevel: 0 });
+      /* The torn edge, both jambs — a cut plate is not a moulded reveal. */
+      for (const sg of [-1, 1]) {
+        kit.slab(M.wing, 0.14, head, t + 0.1, x + sg * (wide / 2 - 0.07) * Math.cos(a), head / 2,
+          z + sg * (wide / 2 - 0.07) * Math.sin(a), { ry: -a, collide: false, bevel: 0 });
+      }
+      continue;
+    }
     if (mat) {
       kit.slab(mat, wide, h, t, x, h / 2, z, { ry: -a, collide: true, bevel: 0 });
       if (dress) dressWallRun(kit, M, wide - 0.1, h, Ri * Math.sin(a), 0, S.c - Ri * Math.cos(a), -a, { salt: 1 + i, sparse: true });
@@ -775,7 +929,7 @@ function arcBack(kit, M, S, h, mat, dress) {
  * ring's traffic — §3.1 rule 5 delivered as a window rather than a wall.
  * The floor stays rectangular: its corners are flush with the deck plate.
  */
-function arcFront(kit, M, w, d, h, gap, mat, arc, dress) {
+function arcFront(kit, M, w, d, h, gap, mat, arc, dress, sealed = false) {
   const R = arc.R, c = arc.c;
   const t = 0.4;
   const zAt = (x) => c - Math.sqrt(Math.max(0, R * R - x * x));
@@ -805,8 +959,32 @@ function arcFront(kit, M, w, d, h, gap, mat, arc, dress) {
   /* The lintel over the opening, and the light in its reveal — flat, at the
    * tangent, where the door is. */
   const z0 = zAt(0);
-  kit.slab(mat, gap, h - 2.6, t, 0, 2.6 + (h - 2.6) / 2, z0 - t / 2, { collide: true, bevel: 0 });
+  if (h - 2.6 > 0.05) kit.slab(mat, gap, h - 2.6, t, 0, 2.6 + (h - 2.6) / 2, z0 - t / 2, { collide: true, bevel: 0 });
   kit.slab(M.strip, gap - 0.4, 0.1, 0.12, 0, 2.5, z0 - 0.1, { collide: false, bevel: 0 });
+  /**
+   * ── AND A SEALED ROOM GETS A PLATE OVER IT (V20 lane 5) ────────────────
+   *
+   * `sealed` is the gazetteer's own flag on the two condemned rooms of the
+   * abandoned quarter. What goes over the doorway is what a yard actually
+   * does to a door it never wants opened again: one plate a little bigger
+   * than the hole, tacked on the outside, with the weld run proud of it all
+   * the way round and a stencilled notice on it. It COLLIDES — that is the
+   * whole point of it — so `station.mjs`'s doorway walk finds this room
+   * blocked at the front by design and walks the side cut instead.
+   */
+  if (sealed) {
+    const pz = z0 - t - 0.11;
+    kit.slab(mat, gap + 0.7, 2.72, 0.16, 0, 1.36, pz, { collide: true, bevel: 0 });
+    for (const sg of [-1, 1]) {
+      kit.slab(M.wing, 0.11, 2.72, 0.1, sg * (gap + 0.7) / 2, 1.36, pz - 0.09, { collide: false, bevel: 0 });
+      kit.slab(M.wing, gap + 0.7, 0.11, 0.1, 0, 1.36 + sg * 1.36, pz - 0.09, { collide: false, bevel: 0 });
+    }
+    /* Two braces welded across it on the diagonal, and the notice. */
+    for (const sg of [-1, 1]) {
+      kit.slab(M.deep, gap + 0.42, 0.22, 0.09, 0, 1.36, pz - 0.13, { collide: false, bevel: 0, rz: sg * 0.72 });
+    }
+    kit.slab(M.mark, 0.9, 0.62, 0.05, gap / 2 - 0.6, 1.9, pz - 0.16, { collide: false, bevel: 0 });
+  }
 }
 
 /**
@@ -821,8 +999,33 @@ function arcFront(kit, M, w, d, h, gap, mat, arc, dress) {
  * PAIR in `buildPlace`, so both rooms' panes stand at the same radius and
  * look straight at each other across the plate between them.
  */
-function radialSide(kit, M, S, s, h, mat, dress) {
+function radialSide(kit, M, S, s, h, mat, dress, cut = null) {
   const t = 0.4, R = S.R + t, Ri = S.Ri - t;
+  /**
+   * ── AND A CUT IS A PANE WITH THE SILL TAKEN OUT (V20 lane 5) ───────────
+   *
+   * The abandoned quarter's three rooms are chained to each other through
+   * holes somebody cut in the walls between them: 2.2 m of wall from the
+   * floor to 2.3 m up, the head left standing, and the two jambs left as
+   * torn plate rather than a frame. Same three radial slabs the pane below
+   * is made of, minus the one under the sill — which is what makes it a way
+   * through rather than a window.
+   */
+  if (cut) {
+    const r1 = cut.r + 1.1, r0 = cut.r - 1.1, head = 2.3;
+    radialSlab(kit, S, mat, s, R, Ri, head, h, t, t / 2, { collide: true });
+    radialSlab(kit, S, mat, s, R, r1, 0, head, t, t / 2, { collide: true });
+    radialSlab(kit, S, mat, s, r0, Ri, 0, head, t, t / 2, { collide: true });
+    radialSlab(kit, S, M.dark, s, r1, r0, head - 0.08, head + 0.08, t + 0.14, t / 2, { collide: false });
+    for (const rr of [r1, r0]) {
+      radialSlab(kit, S, M.wing, s, rr, rr + (rr === r1 ? -0.12 : 0.12), 0, head, t + 0.1, t / 2, { collide: false });
+    }
+    if (dress) {
+      dressRadial(kit, M, S, s, S.R, r1 + 0.1, h, 2 + s);
+      dressRadial(kit, M, S, s, r0 - 0.1, S.Ri, h, 22 + s);
+    }
+    return;
+  }
   const pane = (S.panes || []).find((p) => p.s === s);
   if (!pane || h < 3.0) {
     radialSlab(kit, S, mat, s, R, Ri, 0, h, t, t / 2, { collide: true });
@@ -859,8 +1062,9 @@ function walls(kit, M, w, d, h, opts = {}) {
   const dress = opts.dress !== false;
   const S = sectorOf(kit);
   /* +Z, the back — an arc of the inner circle in a sector. */
+  const cuts = opts.cuts || null;
   if (!open.has('back')) {
-    if (S) arcBack(kit, M, S, h, mat, dress);
+    if (S) arcBack(kit, M, S, h, mat, dress, opts.cutBack || null);
     else {
       kit.slab(mat, w + t * 2, h, t, 0, h / 2, d / 2 + t / 2, { collide: true, bevel: 0 });
       if (dress) dressWallRun(kit, M, w, h, 0, 0, d / 2, 0, { salt: 1 });
@@ -873,22 +1077,25 @@ function walls(kit, M, w, d, h, opts = {}) {
    * turns a quarter one way and the −X wall the other. */
   for (const s of [-1, 1]) {
     if (open.has(s < 0 ? 'left' : 'right')) continue;
-    if (S) { radialSide(kit, M, S, s, h, mat, dress); continue; }
+    if (S) { radialSide(kit, M, S, s, h, mat, dress, cuts ? cuts.find((c) => c.s === s) || null : null); continue; }
     kit.slab(mat, t, h, d, s * (w / 2 + t / 2), h / 2, 0, { collide: true, bevel: 0 });
     if (dress) dressWallRun(kit, M, d, h, s * w / 2, 0, 0, s * Math.PI / 2, { salt: 2 + s });
   }
   /* −Z, the front, with the doorway cut out of it. */
   if (!open.has('front') && kit.arc) {
-    arcFront(kit, M, w, d, h, gap, mat, kit.arc, dress);
+    arcFront(kit, M, w, d, h, gap, mat, kit.arc, dress, !!opts.sealed);
   } else if (!open.has('front')) {
     const side = (w - gap) / 2;
     for (const s of [-1, 1]) {
       kit.slab(mat, side, h, t, s * (gap + side) / 2, h / 2, -d / 2 - t / 2, { collide: true, bevel: 0 });
       if (dress) dressWallRun(kit, M, side, h, s * (gap + side) / 2, 0, -d / 2, Math.PI, { salt: 5 + s });
     }
-    /* The lintel over the opening, and the light in its reveal. */
-    kit.slab(mat, gap, h - 2.6, t, 0, 2.6 + (h - 2.6) / 2, -d / 2 - t / 2, { collide: true, bevel: 0 });
-    kit.slab(M.strip, gap - 0.4, 0.1, 0.12, 0, 2.5, -d / 2 - 0.1, { collide: false, bevel: 0 });
+    /* The lintel over the opening, and the light in its reveal. A room 2.6 m
+     * to the soffit (the three tiny ones) has no lintel to lay: the doorway
+     * IS the wall's whole height, and a zero-height slab is a collider with
+     * no thickness in the middle of a doorway. */
+    if (h - 2.6 > 0.05) kit.slab(mat, gap, h - 2.6, t, 0, 2.6 + (h - 2.6) / 2, -d / 2 - t / 2, { collide: true, bevel: 0 });
+    kit.slab(M.strip, gap - 0.4, 0.1, 0.12, 0, Math.min(2.5, h - 0.14), -d / 2 - 0.1, { collide: false, bevel: 0 });
   }
 }
 
@@ -1536,6 +1743,24 @@ export const SHAPES = {
     floor(kit, M, w, d);
     walls(kit, M, w, d, h, { open: ['back'], glaze: true, doorW: 6 });
     ceiling(kit, M, w, d, h, { ribs: 9 });
+    /**
+     * ── THE MEZZANINE (V20 lane 5, §4) ──────────────────────────────────
+     *
+     * The room went from 6.4 m to 12 — one metre under the deck's whole
+     * pitch — and height with nothing in it is not scale, it is a gap. So
+     * the concourse side of the hall carries a gallery at 4.4 m, with the
+     * stair up at its −X end and a rail along its lip: from the door you see
+     * the queue below you and the people looking down at it, which is what
+     * makes twelve metres read as twelve metres. Only on a hall tall enough
+     * to stand under one, so the fallback #9 vault is unaffected.
+     */
+    if (h >= 9) {
+      mezzanine(kit, M, w - 6, d, 4.4, { depth: d / 3.2, z: -d / 2 + d / 6.4 + 0.4, stairW: 2.6 });
+      for (let i = 0; i * 5.2 < w - 8; i++) {
+        kit.post(M.wing, 0.3, 0.3, 4.4, -w / 2 + 4 + i * 5.2, 2.2, -d / 2 + d / 3.2, { radial: 8, collide: true });
+      }
+      kit.slab(M.strip, w - 8, 0.09, 0.14, 0, 4.28, -d / 2 + d / 3.2 - 0.2, { collide: false, bevel: 0 });
+    }
     /* The customs line: three gates, each an arch with a lit threshold. */
     for (let i = -1; i <= 1; i++) {
       const x = i * (w / 4);
@@ -3280,13 +3505,41 @@ export const SHAPES = {
     /* The core: a column of glass with a strip inside it, floor to soffit. */
     kit.post(M.glass, 3.0, 3.0, h - 1, 0, (h - 1) / 2, 0, { radial: 16, collide: true });
     kit.post(M.strip, 2.2, 2.2, h - 3, 0, (h - 3) / 2 + 1, 0, { radial: 12 });
-    for (let i = 0; i < 6; i++) ringOf(kit, M, M.wing, 3.4, 0.6, 16, i * (h / 6), { rad: 0.3 });
-    /* The spiral: eight catwalk segments climbing a full turn and a half. */
-    for (let i = 0; i < 12; i++) {
-      const a = TAU * ((i + 0.5) / 8), y = 3 + i * (h - 8) / 12; /* half a step round: none on the door line (V18) */
+    for (let i = 0; i < 9; i++) ringOf(kit, M, M.wing, 3.4, 0.6, 16, i * (h / 9), { rad: 0.3 });
+    /**
+     * ── SCALED UP (V20 lane 5, §4) ────────────────────────────────────
+     *
+     * *"one HUGE room per deck."* This was already the tallest room on the
+     * station and it did not READ as one: twelve catwalk segments up thirty
+     * metres is a landing every two and a half, and beyond about fifteen the
+     * shaft was empty — height nothing was measured against. So the spiral
+     * runs eighteen segments the whole way up, every third one is a WIDE
+     * platform with a rail you stop on, and a second ring of columns stands
+     * off the core at half its radius carrying the containment hoops. What
+     * the room costs is another 60-odd boxes in a merge that already had 400.
+     */
+    for (let i = 0; i < 18; i++) {
+      const a = TAU * ((i + 0.5) / 8), y = 3 + i * (h - 6) / 18;
       const rr = r - 3.5;
-      catwalk(kit, M, 2 * rr * Math.tan(Math.PI / 8) * 1.06, 2.4, y, rr * Math.sin(a), rr * Math.cos(a), a + Math.PI / 2);
+      const wide = i % 3 === 1;
+      catwalk(kit, M, 2 * rr * Math.tan(Math.PI / 8) * 1.06 * (wide ? 1.0 : 1.0), wide ? 4.2 : 2.4, y,
+        rr * Math.sin(a), rr * Math.cos(a), a + Math.PI / 2);
       kit.post(M.dark, 0.2, 0.2, y, rr * Math.sin(a), y / 2, rr * Math.cos(a), { radial: 6, collide: true });
+      /* The lit nose of every landing, so the climb is read from the floor. */
+      if (wide) {
+        kit.slab(M.strip, 2 * rr * Math.tan(Math.PI / 8), 0.08, 0.12, rr * Math.sin(a), y + 0.14, rr * Math.cos(a),
+          { ry: a + Math.PI / 2, collide: false, bevel: 0 });
+      }
+    }
+    /* THE INNER COLONNADE: six columns off the core, floor to soffit, with a
+     * hoop at every third of their height. The core had nothing between it
+     * and the wall and the eye had nothing to measure the drum against. */
+    for (let i = 0; i < 6; i++) {
+      const a = TAU * (i / 6) + 0.26, rr = r * 0.45;
+      kit.post(M.hull, 0.55, 0.42, h - 1.2, rr * Math.sin(a), (h - 1.2) / 2, rr * Math.cos(a), { radial: 8, collide: true });
+      for (let k = 1; k < 4; k++) {
+        kit.post(M.wing, 0.78, 0.78, 0.34, rr * Math.sin(a), k * (h - 1.2) / 4, rr * Math.cos(a), { radial: 10, open: true });
+      }
     }
     stair(kit, M, 2.0, 3, -r + 2.4, r - 5);
     for (let i = 0; i < 6; i++) loose(kit, (i - 2.5) * 2.2, 0, -r + 3, (world, q) => makeBarrel(world, q));
@@ -3669,6 +3922,291 @@ export const SHAPES = {
       kit.slab(M.dark, 1.2, 0.9, 1.2, -w / 2 + 3 + i * ((w - 6) / 3), 0.45, -d / 2 + 2.4, { collide: true, bevel: 0 });
     }
   },
+
+  /* ══════════════════════════════════════════════════════════════════════
+   *  V20 LANE 5 — THE ABANDONED QUARTER, THE WARREN, AND THE THREE CLOSETS
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * Seven builders and no two of them share a plan, which is rule 4 and is
+   * measured. What they DO share is `kit.dressDead`, which takes the strips
+   * off every wall run in the room and puts rust and a dropped panel there
+   * instead — see `dressWallRun`'s section 6. A dead room is not an unlit
+   * room: it is a room somebody stopped paying for.
+   *
+   * THE FLICKER is one cloned material per room. The deck's `strip` is shared
+   * by every lit surface on deck 48 and dimming it would put the reactor hall
+   * on this room's rhythm; a clone is its own mesh in the merge (the kit bins
+   * by material) and costs one draw call. `Stage.addFlicker` registers it and
+   * `Stage.stepStage` steps it.
+   */
+
+  /** #62 The old fitters — DERELICT: the one front on the arc that opens,
+   * because somebody cut the welded plate and folded it back into the ring.
+   * Bare stud frames where the partitions were, a drift of dropped ceiling
+   * panels, empty conduit, and one strip over the back wall that catches. */
+  derelict(kit, M, p, ctx) {
+    const { w, d, h } = p;
+    kit.dressDead = true;
+    floor(kit, M, w, d, 0, M.deep);
+    walls(kit, M, w, d, h, { doorW: 3.2, cuts: p.cuts });
+    ceiling(kit, M, w, d, h, { ribs: 4, strips: false });
+    /* THE PLATE, CUT AND FOLDED BACK — inward, not out into the walk, which
+     * is where it was first put and is the one place it may not be: the
+     * wedge check holds every collider in the room INSIDE the room, and a
+     * plate hinged into the ring straddles the front arc by design. Hinged on
+     * the −X jamb and swung back against the inside of the front wall, with
+     * the torch line still down its edge. */
+    const fz = roomFrontZ(kit, d, -3.2);
+    kit.slab(M.hull, 3.4, 2.7, 0.16, -3.2, 1.35, fz + 1.4, { collide: true, bevel: 0, ry: -0.7 });
+    kit.slab(M.wing, 3.5, 0.09, 0.09, -3.2, 2.7, fz + 1.35, { collide: false, bevel: 0, ry: -0.7 });
+    kit.slab(M.wing, 0.09, 2.7, 0.09, -3.2 + 1.28, 1.35, fz + 0.3, { collide: false, bevel: 0, ry: -0.7 });
+    /* THE STUD FRAMES: the partitions taken out to their uprights. Two runs
+     * of bare studs across the room, which is what a stripped shop is. */
+    for (const row of [-2.2, 2.6]) {
+      const hw = roomHalfW(kit, w, row) - 1.0;
+      for (let x = -hw; x <= hw + 0.01; x += 1.1) {
+        kit.post(M.wing, 0.06, 0.06, h - 0.5, x, (h - 0.5) / 2, row, { radial: 4 });
+      }
+      kit.slab(M.wing, hw * 2, 0.1, 0.1, 0, h - 0.5, row, { collide: false, bevel: 0 });
+      kit.slab(M.wing, hw * 2, 0.1, 0.1, 0, 0.05, row, { collide: false, bevel: 0 });
+    }
+    /* THE DRIFT of dropped ceiling panels, banked against the back wall. */
+    const bz = d / 2 - 1.6;
+    for (let i = 0; i < 7; i++) {
+      const hw = roomHalfW(kit, w, bz) - 1.2;
+      const x = -hw + (2 * hw) * (i / 6);
+      kit.slab(M.wing, 1.15, 0.05, 1.15, x, 0.06 + (i % 3) * 0.05, bz - (i % 2) * 0.6,
+        { collide: true, bevel: 0, ry: i * 0.7, rx: (i % 2) * 0.12 });
+    }
+    /* EMPTY CONDUIT: the trays are there, the cable is gone. */
+    for (const dy of [2.8, 3.1]) {
+      kit.post(M.dark, 0.05, 0.05, roomHalfW(kit, w, 0) * 1.7, 0, dy, d / 2 - 0.7, { radial: 5, rz: Math.PI / 2 });
+    }
+    /* THE STRIP THAT CATCHES — the room's own material, stepped by `Stage`. */
+    const fm = flickerMat(M, p);
+    kit.slab(fm, roomHalfW(kit, w, bz) * 1.1, 0.11, 0.17, 0, h - 0.55, bz, { collide: false, bevel: 0 });
+    ctx.flicker = fm;
+    loose(kit, 1.4, 0, -0.6, (world, q) => makeBarrel(world, q));
+    loose(kit, -1.6, 0, 1.1, (world, q) => makeCrate(world, q, 0.6));
+  },
+
+  /** #63 The sealed mess — a welded plate across the whole doorway; inside, a
+   * servery ripped out to its brackets, bench frames with no tops, and a
+   * stack of soffit panels leaning on the side wall. */
+  strippedbay(kit, M, p, ctx) {
+    const { w, d, h } = p;
+    kit.dressDead = true;
+    floor(kit, M, w, d, 0, M.deep);
+    walls(kit, M, w, d, h, { doorW: 3.0, sealed: true, cuts: p.cuts });
+    ceiling(kit, M, w, d, h, { ribs: 5, strips: false });
+    /* THE SERVERY LINE, taken out to its brackets and its drain. */
+    const sz = d / 2 - 2.4;
+    const hw = roomHalfW(kit, w, sz) - 0.8;
+    for (let x = -hw; x <= hw + 0.01; x += 1.4) {
+      kit.slab(M.wing, 0.1, 0.3, 0.55, x, 0.95, sz + 0.2, { collide: false, bevel: 0 });
+      kit.slab(M.wing, 0.1, 0.55, 0.1, x, 0.7, sz + 0.45, { collide: false, bevel: 0 });
+    }
+    kit.slab(M.dark, hw * 2, 0.09, 0.3, 0, 0.03, sz - 0.4, { collide: false, bevel: 0 });
+    /* BENCH FRAMES with no tops — four of them, in the room's two aisles. */
+    for (const [bx, bzz] of [[-2.6, -1.6], [2.6, -1.6], [-2.6, 1.4], [2.6, 1.4]]) {
+      for (const sx of [-1, 1]) for (const sz2 of [-1, 1]) {
+        kit.post(M.wing, 0.05, 0.05, 0.74, bx + sx * 0.7, 0.37, bzz + sz2 * 0.42, { radial: 4 });
+      }
+      kit.slab(M.wing, 1.5, 0.06, 0.06, bx, 0.72, bzz - 0.42, { collide: false, bevel: 0 });
+      kit.slab(M.wing, 1.5, 0.06, 0.06, bx, 0.72, bzz + 0.42, { collide: false, bevel: 0 });
+    }
+    /* THE STACK of dropped soffit panels, leaning on the −X wall. */
+    for (let i = 0; i < 5; i++) {
+      kit.slab(M.wing, 1.6, 0.05, 1.9, -roomHalfW(kit, w, -3.4) + 1.1 + i * 0.09, 0.95 - i * 0.02, -3.4,
+        { collide: i === 0, bevel: 0, rz: 1.24 + i * 0.02 });
+    }
+    /* AND THE STRIP OVER THE SERVERY, which will not settle. */
+    const fm = flickerMat(M, p);
+    kit.slab(fm, hw * 1.5, 0.1, 0.15, 0, h - 0.6, sz, { collide: false, bevel: 0 });
+    ctx.flicker = fm;
+    loose(kit, 0.9, 0, -4.2, (world, q) => makeCrate(world, q, 0.55));
+  },
+
+  /** #64 The fallen soffit — sealed, and half its ceiling is on the floor:
+   * one slab came down whole and leans on the back wall at forty degrees, a
+   * burst coolant pipe drips through the hole it left, and the warren comes
+   * up behind through a cut in the back arc. */
+  fallensoffit(kit, M, p, ctx) {
+    const { w, d, h } = p;
+    kit.dressDead = true;
+    floor(kit, M, w, d, 0, M.deep);
+    /* The cut in the BACK is where the warren arrives; `cutBack.x` is the
+     * local x of the chord to take out, and the warren's own ring exit is
+     * built on the same side of the block. */
+    walls(kit, M, w, d, h, { doorW: 3.0, sealed: true, cuts: p.cuts, cutBack: { x: 2.6 } });
+    ceiling(kit, M, w, d, h, { ribs: 5, strips: false });
+    /* THE SLAB. Four metres of soffit, leaning, and it is a collider — you
+     * squeeze past it, which is the room's verb. */
+    kit.slab(M.hull, 4.2, 0.34, 5.4, 1.4, 1.75, d / 2 - 3.0, { collide: true, bevel: 0, rx: -0.72 });
+    kit.slab(M.wing, 3.6, 0.08, 0.4, 1.4, 3.35, d / 2 - 4.6, { collide: false, bevel: 0 });
+    /* THE HOLE IT LEFT, and the pipe that came down with it. */
+    kit.slab(M.deep, 4.4, 0.2, 5.0, 1.4, h - 0.34, d / 2 - 3.4, { collide: false, bevel: 0 });
+    kit.post(M.wing, 0.16, 0.16, 2.1, 2.2, h - 1.3, d / 2 - 4.2, { radial: 7 });
+    kit.post(M.wing, 0.13, 0.13, 1.5, 2.2, h - 2.1, d / 2 - 3.5, { radial: 6, rx: 1.1 });
+    /* THE WATER, in the low corner: a thin sheet with the light in it. */
+    kit.slab(M.glass, 4.6, 0.04, 3.4, 1.0, 0.03, d / 2 - 5.4, { collide: false, bevel: 0 });
+    kit.slab(M.deep, 5.4, 0.03, 4.2, 1.0, 0.015, d / 2 - 5.4, { collide: false, bevel: 0 });
+    /* THE STRIP in the slab's shadow. */
+    const fm = flickerMat(M, p);
+    kit.slab(fm, roomHalfW(kit, w, -2.0) * 1.2, 0.1, 0.15, 0, h - 0.55, -2.0, { collide: false, bevel: 0 });
+    ctx.flicker = fm;
+    /* And what was in here when they shut it. */
+    for (let i = 0; i < 3; i++) loose(kit, -2.6 + i * 1.1, 0, -4.6 + (i % 2) * 1.2, (world, q) => makeCrate(world, q, 0.5 + i * 0.08));
+  },
+
+  /**
+   * ── #65 THE WARREN ────────────────────────────────────────────────────
+   *
+   * *"a hallway you can get lost in."* `Stage.maze` carves the plan — a
+   * seeded depth-first grid, its valve room and its two exits — and this
+   * stands it up: a block of service plant 1.8 m square at every grid
+   * intersection, a 1.8 m fill between two of them wherever the plan says
+   * the wall is closed, and 2.2 m of corridor everywhere it does not.
+   *
+   * EVERY WALL COLLIDES. A maze you can walk through is a floor with pillars
+   * on it; the whole of getting lost is that the wrong turn STOPS you.
+   *
+   * `floorAt` is untouched: the block stands ON the deck at deck height and
+   * sinks nothing, so nothing has to be added to `StationKit.SUNK` and the
+   * plate under it is the plate.
+   */
+  warren(kit, M, p, ctx) {
+    const { w, d, h } = p;
+    const m = maze({ cols: 7, rows: 9, seed: 4821 });
+    const px = w / m.cols, pz = d / m.rows;
+    const POST = 1.8;
+    const X = (i) => -w / 2 + i * px;
+    const Z = (j) => -d / 2 + j * pz;
+    const at = (i, j) => i + j * m.cols;
+    floor(kit, M, w, d, 0, M.dark);
+    /* The blocks at the intersections, and the pipe bank up one face of each. */
+    for (let j = 0; j <= m.rows; j++) {
+      for (let i = 0; i <= m.cols; i++) {
+        kit.slab(M.hull, POST, h, POST, X(i), h / 2, Z(j), { collide: true, bevel: 0 });
+        if ((i + j) % 3 === 0) {
+          for (const dx of [-0.5, -0.2, 0.1]) {
+            kit.post(M.wing, 0.09, 0.09, h - 0.5, X(i) + dx, (h - 0.5) / 2, Z(j) + POST / 2 + 0.09, { radial: 5 });
+          }
+        }
+        if ((i * 5 + j * 3) % 4 === 0) {
+          kit.slab(M.dark, POST - 0.3, 0.07, 0.3, X(i), h - 0.55, Z(j) - POST / 2 - 0.14, { collide: false, bevel: 0 });
+          for (let k = 0; k < 3; k++) kit.slab(M.deep, 0.05, 0.05, 0.26, X(i) - 0.5 + k * 0.5, h - 0.49, Z(j) - POST / 2 - 0.14, { collide: false, bevel: 0 });
+        }
+      }
+    }
+    /* The fills. A wall is closed unless the plan opened it. */
+    const gapW = px - POST, gapD = pz - POST;
+    for (let j = 0; j <= m.rows; j++) {
+      for (let i = 0; i < m.cols; i++) {
+        const openHere = j > 0 && j < m.rows ? !!(m.cells[at(i, j - 1)] & MZ_N)
+          : j === 0 ? !!(m.cells[at(i, 0)] & MZ_S) : !!(m.cells[at(i, m.rows - 1)] & MZ_N);
+        if (openHere) continue;
+        kit.slab(M.hull, gapW, h, POST, X(i) + px / 2, h / 2, Z(j), { collide: true, bevel: 0 });
+        kit.slab(M.deep, gapW - 0.2, 0.5, 0.12, X(i) + px / 2, 1.1, Z(j) - POST / 2 - 0.06, { collide: false, bevel: 0 });
+      }
+    }
+    for (let i = 0; i <= m.cols; i++) {
+      for (let j = 0; j < m.rows; j++) {
+        const openHere = i > 0 && i < m.cols ? !!(m.cells[at(i - 1, j)] & MZ_E) : false;
+        if (openHere) continue;
+        kit.slab(M.hull, POST, h, gapD, X(i), h / 2, Z(j) + pz / 2, { collide: true, bevel: 0 });
+        kit.post(M.wing, 0.11, 0.11, gapD - 0.2, X(i) + POST / 2 + 0.07, h - 0.9, Z(j) + pz / 2, { radial: 5, rx: Math.PI / 2 });
+      }
+    }
+    /* A caged lamp at every fourth crossing — the only light in here. */
+    for (let j = 0; j < m.rows; j++) {
+      for (let i = 0; i < m.cols; i++) {
+        if ((i * 3 + j * 7) % 5) continue;
+        kit.slab(M.dark, 0.34, 0.16, 0.24, X(i) + px / 2, h - 0.3, Z(j) + pz / 2, { collide: false, bevel: 0 });
+        kit.slab(M.strip, 0.26, 0.09, 0.18, X(i) + px / 2, h - 0.4, Z(j) + pz / 2, { collide: false, bevel: 0 });
+        kit.light(X(i) + px / 2, h - 0.5, Z(j) + pz / 2, { intensity: 4, distance: 7 });
+      }
+    }
+    /* THE VALVE ROOM at the middle, and the stash in it. */
+    const vx = X(m.valve.i + 1), vz = Z(m.valve.j + 1);
+    for (const [dx, dz] of [[-1.5, -1.5], [1.5, -1.5], [-1.5, 1.5], [1.5, 1.5]]) {
+      kit.post(M.wing, 0.24, 0.24, h - 0.4, vx + dx, (h - 0.4) / 2, vz + dz, { radial: 8, collide: true });
+      kit.post(M.dark, 0.5, 0.5, 0.14, vx + dx, 1.5, vz + dz, { radial: 12, rx: Math.PI / 2 });
+    }
+    kit.slab(M.deep, 2.6, 0.12, 2.6, vx, 0.06, vz, { collide: false, bevel: 0 });
+    kit.slab(M.strip, 1.6, 0.06, 0.1, vx, 0.13, vz - 1.1, { collide: false, bevel: 0 });
+    ctx.stash = { x: vx, z: vz };
+    loose(kit, vx, 0.45, vz, (world, q) => makeCrate(world, q, 0.8));
+    loose(kit, vx + 1.2, 0.4, vz - 0.9, (world, q) => makeBarrel(world, q));
+    /* The lid. Low, and it is what makes the corridors read as corridors. */
+    kit.slab(M.dark, w + 0.8, 0.4, d + 0.8, 0, h + 0.2, 0, { collide: true, bevel: 0 });
+  },
+
+  /** #66 Maintenance closet 48-9 — TINY. Four metres square, 2.6 to the
+   * soffit, a rack of spares, a mop, and a ladder to a crawlspace hatch. */
+  closet(kit, M, p, ctx) {
+    const { w, d, h } = p;
+    kit.dressDead = true;
+    floor(kit, M, w, d, 0, M.dark);
+    walls(kit, M, w, d, h, { doorW: 1.4 });
+    ceiling(kit, M, w, d, h, { ribs: 2, strips: false, dress: false });
+    /* The rack, on the −X wall only, so the middle of the floor is floor. */
+    rack(kit, M, 3.2, 2.1, -w / 2 + 0.35, 0, Math.PI / 2, 4);
+    /* THE LADDER, on the back wall at +X, and the hatch it goes to. */
+    for (let i = 0; i < 6; i++) {
+      kit.slab(M.wing, 0.42, 0.05, 0.05, 1.35, 0.35 + i * 0.4, d / 2 - 0.3, { collide: false, bevel: 0 });
+    }
+    for (const sx of [-1, 1]) kit.post(M.wing, 0.04, 0.04, 2.4, 1.35 + sx * 0.21, 1.2, d / 2 - 0.3, { radial: 4 });
+    kit.slab(M.dark, 0.9, 0.12, 0.9, 1.3, h - 0.14, d / 2 - 0.8, { collide: false, bevel: 0, rx: 0.5 });
+    kit.slab(M.deep, 0.86, 0.06, 0.86, 1.3, h - 0.02, d / 2 - 0.8, { collide: false, bevel: 0 });
+    /* One caged lamp, a mop and a bucket. */
+    kit.slab(M.dark, 0.3, 0.14, 0.2, 0, h - 0.3, -d / 2 + 0.5, { collide: false, bevel: 0 });
+    kit.slab(M.strip, 0.22, 0.08, 0.15, 0, h - 0.39, -d / 2 + 0.5, { collide: false, bevel: 0 });
+    kit.post(M.wing, 0.03, 0.03, 1.5, -1.5, 0.75, 1.4, { radial: 4, rz: 0.2 });
+    loose(kit, -1.4, 0.2, 1.4, (world, q) => makeBarrel(world, q));
+  },
+
+  /** #67 The shrine niche — TINY. A stone shelf, fourteen little lamps in a
+   * rack for fourteen peoples, and a kneeling step. */
+  shrineniche(kit, M, p, ctx) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.mark);
+    walls(kit, M, w, d, h, { doorW: 1.5 });
+    ceiling(kit, M, w, d, h, { ribs: 2, strips: false, dress: false });
+    /* The shelf, across the back, and the lamps in a rack over it. */
+    kit.slab(M.deep, 3.0, 0.16, 0.5, 0, 1.02, d / 2 - 0.35, { collide: true, bevel: 0.03 });
+    for (let i = 0; i < 14; i++) {
+      const x = -1.3 + (i % 7) * 0.43, y = 1.28 + Math.floor(i / 7) * 0.36;
+      kit.post(M.dark, 0.07, 0.07, 0.12, x, y, d / 2 - 0.42, { radial: 6 });
+      kit.post(M.strip, 0.05, 0.05, 0.09, x, y + 0.1, d / 2 - 0.42, { radial: 6 });
+    }
+    kit.slab(M.mark, 3.1, 0.06, 0.1, 0, 2.05, d / 2 - 0.5, { collide: false, bevel: 0 });
+    /* The kneeling step, off to one side of the door line. */
+    kit.slab(M.wing, 1.1, 0.14, 0.55, -1.0, 0.07, 0.3, { collide: true, bevel: 0.03 });
+    kit.light(0, 1.6, d / 2 - 0.6, { color: 0xffcf94, intensity: 5, distance: 6 });
+  },
+
+  /** #68 The ticket booth — TINY. A glazed hatch at chest height, a stool
+   * behind it, a fare board and a shelf of paper. */
+  ticketbooth(kit, M, p, ctx) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.deep);
+    walls(kit, M, w, d, h, { doorW: 1.4 });
+    ceiling(kit, M, w, d, h, { ribs: 2, strips: false, dress: false });
+    /* The counter runs along +X so the doorway's centre line is clear. It is
+     * built here rather than with `counter()`: that records a DESK on the
+     * kit, and a desk in a room no vendor sits in would put `counterHere` in
+     * the way of the ticket clerk's own verb. */
+    kit.slab(M.wing, 0.6, 1.06, 2.6, w / 2 - 0.45, 0.53, 0, { collide: true, bevel: 0.03 });
+    kit.slab(M.mark, 0.72, 0.08, 2.7, w / 2 - 0.45, 1.1, 0, { collide: false, bevel: 0.02 });
+    kit.slab(M.glass, 2.4, 0.9, 0.06, w / 2 - 0.45, 1.75, 0, { collide: false, bevel: 0, ry: Math.PI / 2 });
+    kit.slab(M.dark, 2.5, 0.08, 0.12, w / 2 - 0.45, 2.22, 0, { collide: false, bevel: 0, ry: Math.PI / 2 });
+    /* The fare board on the back wall, and the paper under it. */
+    board(kit, M, 1.7, 0.9, 0, 1.85, d / 2 - 0.25);
+    kit.slab(M.mark, 1.5, 0.1, 0.35, 0, 0.9, d / 2 - 0.3, { collide: true, bevel: 0.02 });
+    kit.slab(M.strip, 1.2, 0.07, 0.1, 0, h - 0.3, d / 2 - 0.5, { collide: false, bevel: 0 });
+    loose(kit, -1.2, 0, 1.1, (world, q) => boxBody(world, q, M, 0.4, 0.66, 0.4, M.deep, 6, 'stool'));
+  },
 };
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -3769,9 +4307,15 @@ export const BOX_SHAPES = new Set(['vault', 'daispit', 'curvedhall', 'alcoveshop
   'cutthrough', 'noticewall', 'obelisk', 'twinroom', 'mezzanine', 'bunkhall', 'lightwell', 'stonelow', 'giltcourt',
   'fightingpit', 'walkwaypools', 'capsulewall', 'steamrows', 'chainpit', 'containerrow', 'triagehall', 'tankrow',
   'namewall', 'cagerange', 'wetgrating', 'machineshop', 'chargingrows', 'canyon', 'compactor', 'latticecell',
-  'lowroom', 'deeppit', 'cellar']);
+  'lowroom', 'deeppit', 'cellar',
+  /* V20 lane 5 — the abandoned quarter's three and the three tiny rooms. The
+   * warren is not here: it stands its own maze walls and never calls `walls`. */
+  'derelict', 'strippedbay', 'fallensoffit', 'closet', 'shrineniche', 'ticketbooth']);
 /** Rooms that keep a wall to the ring and to their neighbours. */
-const PRIVATE = /brig|morgue|armoury|reactor|coolant|waste|cargo|droid|comms|command|quarter|cabin|residential|methane|vorlon|underlift|barracks|officers|laundry|fabric|maint|rack|cobra|tower|ready|chapel/i;
+/* V20 lane 5 adds the condemned quarter and the two tiny service rooms:
+ * a dead room glazed to the ring would be a shop window onto a ruin, and
+ * `sectorOfPlace` hangs both the glass and the between-room panes off this. */
+const PRIVATE = /brig|morgue|armoury|reactor|coolant|waste|cargo|droid|comms|command|quarter|cabin|residential|methane|vorlon|underlift|barracks|officers|laundry|fabric|maint|rack|cobra|tower|ready|chapel|fitters|sealed|soffit|closet|booth|warren/i;
 const D2R = Math.PI / 180;
 /** An outer room that is a sector: box-walled, on the outer band, 8 m or wider. */
 function isSectorRoom(p) { return p.band === 'outer' && !p.room && !p.arc && !p.external && p.w >= 8 && BOX_SHAPES.has(p.shape); }
@@ -3830,6 +4374,9 @@ export function buildPlace(world, group, place, M, st) {
    * public rooms get glass beside the door; anything private, secure or
    * industrial keeps a wall. */
   kit.arc = sectorOfPlace(place);
+  /* V20 lane 5: whether this room's walls are a STREET's walls — see the note
+   * in `dressWallRun` over `street`. */
+  kit.dressStreet = isPublicOuter(place) || place.band === 'radial' || place.band === 'concourse';
   const ctx = {
     sunk: [],
     trees: [],
@@ -3851,6 +4398,10 @@ export function buildPlace(world, group, place, M, st) {
     holo: null,
     /** The screen a room with a card on has in it — see `dressFeeds`. */
     feed: null,
+    /** V20 lane 5: the derelict room's own strip material, and where the
+     * warren's stash crate ended up in the builder's own frame. */
+    flicker: null,
+    stash: null,
   };
   fn(kit, M, place, ctx, world);
   furnish(kit, M, place, ctx);
@@ -3904,6 +4455,22 @@ export function buildPlace(world, group, place, M, st) {
     (st.tvs || (st.tvs = [])).push({ ...tv, id: `${place.id}-${(st.tvs || []).length}`, place: place.id, group, x: place.x, y, z: place.z, yaw: place.yaw, mesh: null });
   }
   if (ctx.trees.length) (st.trees ||= []).push({ place, spec: ctx.trees[0] });
+  /* ── THE STAGE'S THREE HAND-BACKS (V20 lane 5) ──────────────────────────
+   *
+   * The flickering strip is registered rather than stepped from here — one
+   * list on the station beats a per-room update — and the stash is turned
+   * into WORLD coordinates on the way out, exactly as `ctx.sunk` is and for
+   * the same reason: `Stage.stashKey` measures a distance from the player,
+   * who is not in this room's frame. */
+  if (ctx.flicker) addFlicker(st, place, ctx.flicker);
+  if (ctx.stash) {
+    const c = Math.cos(place.yaw), sn = Math.sin(place.yaw);
+    stageOf(st).stash = {
+      x: place.x + ctx.stash.x * c + ctx.stash.z * sn,
+      z: place.z - ctx.stash.x * sn + ctx.stash.z * c, y, id: place.id,
+    };
+  }
+  if (kit.dressKinds) { const g = stageOf(st).dressKinds; for (const k of kit.dressKinds) g.add(k); }
   return { draws: out.meshes.length, triangles: out.triangles, boxes: out.boxes?.length || 0 };
 }
 
@@ -4254,6 +4821,62 @@ export const FIXTURES = {
     }
     rack(kit, M, 2.4, 2.2, -1.9, -RIN + 0.5);
     return 'market';
+  },
+
+  /**
+   * ── THE TWO DEAD FIXTURES (V20 lane 5) ────────────────────────────────
+   *
+   * The abandoned quarter's stretch of ring still has to have things ON it —
+   * an empty arc reads as unbuilt, not as abandoned. What is there is what
+   * was there when they closed it, in the state twenty years leaves it.
+   */
+
+  /** A STRIPPED KIOSK: the island `kiosk` is, with the screens gone, the cap
+   * hanging off one corner, the frame bare and nothing lit. The one fixture
+   * the walk splits at, so the dead arc still has a thing to walk round. */
+  deadkiosk(kit, M, f) {
+    kit.post(M.dark, 1.35, 1.5, 1.15, 0, 0.57, 0, { radial: 6, collide: true });
+    /* The three screen apertures, empty, with their fixings left. */
+    for (let i = 0; i < 3; i++) {
+      const a = -Math.PI / 2 + i * (Math.PI * 2 / 6);
+      kit.slab(M.deep, 1.15, 1.1, 0.06, 1.42 * Math.sin(a), 1.6, 1.42 * Math.cos(a), { ry: a, collide: false, bevel: 0 });
+      for (const sx of [-1, 1]) {
+        kit.post(M.wing, 0.05, 0.05, 1.3, (1.42 + 0.03) * Math.sin(a) + sx * 0.5 * Math.cos(a), 1.6,
+          (1.42 + 0.03) * Math.cos(a) - sx * 0.5 * Math.sin(a), { radial: 4 });
+      }
+    }
+    /* The uprights the body used to hang on, and the cap, off its corner. */
+    for (const sx of [-1, 1]) kit.post(M.wing, 0.07, 0.07, 2.4, sx * 1.15, 1.2, 0.4, { radial: 5, collide: true });
+    kit.slab(M.dark, 1.9, 0.18, 1.7, 0.35, 2.35, -0.2, { collide: false, bevel: 0, rz: 0.3, rx: 0.16 });
+    /* And the rust that has run down out of it onto the plate. */
+    kit.slab(M.deep, 2.2, 0.02, 2.2, 0, 0.02, 0, { collide: false, bevel: 0 });
+    return 'deadkiosk';
+  },
+
+  /** A BARRICADE: what CLOSED the arc — two trestles, a chain slung between
+   * them, a hazard board and a drum with a dead lamp on it, standing against
+   * the inboard side so the walk past it is still a walk. */
+  barricade(kit, M, f) {
+    const z = -RIN + 2.2;
+    for (const sx of [-1, 1]) {
+      /* A trestle: two splayed legs and a rail. */
+      for (const sl of [-1, 1]) {
+        kit.post(M.wing, 0.06, 0.06, 1.15, sx * 2.4 + sl * 0.35, 0.55, z + sl * 0.3, { radial: 5, rx: sl * 0.28 });
+      }
+      kit.slab(M.mark, 1.7, 0.2, 0.09, sx * 2.4, 1.02, z, { collide: true, bevel: 0 });
+      for (let k = 0; k < 3; k++) kit.slab(M.dark, 0.22, 0.21, 0.11, sx * 2.4 - 0.5 + k * 0.5, 1.02, z - 0.02, { collide: false, bevel: 0, rz: 0.7 });
+    }
+    /* The chain between them, three sags. */
+    for (let k = 0; k < 3; k++) {
+      kit.slab(M.dark, 1.7, 0.05, 0.05, -1.7 + k * 1.7, 0.86 - (k === 1 ? 0.14 : 0), z, { collide: false, bevel: 0, rz: (k - 1) * 0.09 });
+    }
+    /* The board that says why, hung on the chain. */
+    kit.slab(M.dark, 1.5, 0.85, 0.06, 0, 0.5, z - 0.06, { collide: false, bevel: 0 });
+    kit.slab(M.mark, 1.3, 0.66, 0.03, 0, 0.5, z - 0.1, { collide: false, bevel: 0 });
+    /* And the drum with the lamp on it that stopped working first. */
+    kit.post(M.deep, 0.42, 0.42, 0.9, 3.6, 0.45, z + 0.9, { radial: 10, collide: true });
+    kit.post(M.dark, 0.16, 0.16, 0.34, 3.6, 1.07, z + 0.9, { radial: 8 });
+    return 'barricade';
   },
 };
 

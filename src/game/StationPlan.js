@@ -188,7 +188,18 @@ export const PLACES = [
     who: '20 movements an hour, 2 customs officers, a guard',
     idle: 'shuttles dock; new residents walk in with bags; a queue forms and clears',
     verb: 'read the departures board',
-    band: 'outer', at: 176, w: 46, d: 20, h: 6.4, peak: 11, heads: 24,
+    /**
+     * ── THE HUGE ROOM ON DECK 40 (V20 lane 5, §4) ──────────────────────
+     *
+     * *"rooms that are big, rooms that are tiny."* 6.4 m was a room the same
+     * height as the food court next door; the first hall a traveller walks
+     * into off a shuttle should be the tallest thing they have stood under
+     * all week. 12 m is one metre under the deck's own pitch (12.5), which
+     * is the whole of the headroom this deck has, and `curvedhall` hangs a
+     * MEZZANINE round its back at 4.4 m so the height is read as two levels
+     * of people rather than as empty air.
+     */
+    band: 'outer', at: 176, w: 46, d: 20, h: 12, peak: 11, heads: 24,
   },
   {
     id: 8, deck: 40, name: 'Docking throat', shape: 'collar',
@@ -796,7 +807,33 @@ export const PLACES = [
     id: 47, deck: 48, name: 'The Brig', shape: 'cellring',
     look: 'a curved cell block round a guard desk, force-field doors',
     who: '2 guards, 6 prisoners', idle: 'meals; a transfer', verb: 'wake here after a crime',
-    band: 'outer', at: -40, w: 22, d: 20, h: 4.2, peak: 12, heads: 8,
+    /**
+     * ── IT MOVED, AND THE MOVE IS WHAT MADE THE ABANDONED QUARTER (V20) ──
+     *
+     * The Brig stood at −40°, in the middle of the only stretch of deck 48's
+     * ring long enough to abandon. Every gap on this deck was measured
+     * (`tools/_stagefit.mjs`): from `#48 Reactor hall`'s edge at −11.4° round
+     * to `#46 Armoury`'s at −59.3° there are 47.9 degrees and one room in
+     * them, and nowhere else on the deck has half of that. So the cell block
+     * moved and the quarter behind it went dark — see `DARK_ARC`.
+     *
+     * WHERE IT WENT, AND WHY IT IS NOT ON THE RING ANY MORE. Deck 48's ring
+     * has three gaps left and this room does not fit in any of them: measured
+     * with `tools/_stagefit.mjs`, a 22 × 20 block at 78° stands 3.6 m inside
+     * `#50 Fabrication`, at 122° it stands inside `#52 The cargo hold`, and
+     * every narrower cut of it still does — a deep room is WIDER at the back
+     * than at its front (it is a sector of the drum), and both neighbours are
+     * deep.
+     *
+     * So it went to the BALCONY, at 137°, between the two rim fixtures at
+     * 110° and 140°, where nothing has ever stood: `inner` is a box on the
+     * void's edge and the block keeps its 22 × 20 whole. It also reads better
+     * than it did — the guard desk now looks out over the atrium and the
+     * cells face away from it, which is what a cell block on a balcony is.
+     * `The fab bench` moved to 211° all the same, so the arc it was lighting
+     * is not lit by a bench in front of a dead room.
+     */
+    band: 'inner', at: 137, w: 22, d: 20, h: 4.2, peak: 12, heads: 8,
   },
   {
     id: 48, deck: 48, name: 'Reactor hall', shape: 'cathedral',
@@ -893,6 +930,156 @@ export const PLACES = [
     idle: 'the room runs the last program it was given, empty, so the walls are never the same twice',
     verb: 'program the room — the lessons, and a room of your own',
     band: 'inner', at: 45, w: 16, d: 14, h: 8.2, peak: 21, heads: 3,
+  },
+
+  /**
+   * ══════════════════════════════════════════════════════════════════════
+   *  V20 LANE 5 — THE ABANDONED QUARTER, AND THE WARREN BEHIND IT
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * The player, on the 2.0 list, item 10: *"A stage, not a station. Drop the
+   * drum's symmetry: one deck badly lit and half abandoned, one deck rich,
+   * one deck the workers'. Rooms that are big, rooms that are tiny, a hallway
+   * you can get lost in."*
+   *
+   * ── WHY IT IS HERE AND NOT SOMEWHERE PRETTIER ─────────────────────────
+   *
+   * A quarter reads as abandoned only if the walk to it is long and the walk
+   * PAST it is longer, which is a fact about the ring's own arithmetic rather
+   * than about dressing. `DARK_ARC` below is the measured answer: 48 degrees
+   * of deck 48's ring — 68 metres of walk — with three dead rooms and one
+   * closet on it and no lit strip anywhere along it. The Brig moved to make
+   * it (see #47), and it is the only stretch on the station that could be
+   * made without moving a second room.
+   *
+   * ── THE THREE ROOMS ARE ONE ROUTE, WHICH IS THE POINT ─────────────────
+   *
+   * Two of them are SEALED: a welded plate over the doorway, laid across the
+   * opening the plan still says is a door, so the ring shows you two rooms
+   * you cannot get into. You get in the other way — `#65 The warren` comes up
+   * behind `The fallen soffit` through a cut in its back, and the three rooms
+   * are chained to each other through cuts in their side walls, out to
+   * `The old fitters`, whose plate somebody took a torch to years ago. So the
+   * quarter is a LOOP: down the dark ring, in through the one open front,
+   * along three dead rooms, into the maze, and out onto the balcony.
+   *
+   * `sealed: true` is read by `StationKit`'s builders (they lay the plate),
+   * by `tools/checks/station.mjs`'s doorway walk (which expects the front
+   * blocked and walks the cut instead) and by the walk-the-world drop gate
+   * (which drops a body at `entry` rather than at the door).
+   */
+  {
+    id: 62, deck: 48, name: 'The old fitters', shape: 'derelict',
+    look: 'a stripped shop with the welded plate over its front CUT OPEN and folded back into '
+      + 'the ring: bare stud frames where the partitions were, ceiling panels dropped on the '
+      + 'floor in a drift, empty conduit runs, and one strip left alive over the back wall that '
+      + 'stutters and catches',
+    who: 'nobody — the last tenant left when the quarter was condemned',
+    idle: 'the strip flickers on its own broken rhythm; dust hangs where the plate was cut',
+    verb: 'walk in — the only front on this arc that opens',
+    band: 'outer', at: -24, w: 12, d: 15, h: 4.6, peak: 3, heads: 0,
+    derelict: true, cuts: [{ s: 1, r: 73 }],
+  },
+  {
+    id: 63, deck: 48, name: 'The sealed mess', shape: 'strippedbay',
+    look: 'a welded plate across the whole doorway, beads still proud of it; inside, a long room '
+      + 'with the servery ripped out to its brackets, bench frames with no tops, a stack of '
+      + 'dropped soffit panels leaning on the wall, and a strip over the servery line that will '
+      + 'not settle',
+    who: 'nobody', idle: 'the strip stutters; the room is exactly as it was left',
+    verb: 'read the notice welded to the plate',
+    band: 'outer', at: -35, w: 12, d: 15, h: 4.6, peak: 3, heads: 0,
+    derelict: true, sealed: true, cuts: [{ s: 1, r: 73 }, { s: -1, r: 73 }],
+  },
+  {
+    id: 64, deck: 48, name: 'The fallen soffit', shape: 'fallensoffit',
+    look: 'sealed like its neighbour, and half its ceiling is on the floor: one soffit slab came '
+      + 'down whole and stands leaning against the back wall at forty degrees, a burst coolant '
+      + 'pipe drips through the hole it left, and the water has found the low corner',
+    who: 'nobody', idle: 'the pipe drips; the strip in the slab’s shadow flickers',
+    verb: 'squeeze past the slab — the warren is through the back',
+    band: 'outer', at: -46, w: 13, d: 15, h: 4.6, peak: 3, heads: 0,
+    derelict: true, sealed: true, cuts: [{ s: -1, r: 73 }],
+  },
+  /**
+   * ── #65 THE WARREN — *"a hallway you can get lost in"* ────────────────
+   *
+   * A seeded depth-first maze, 7 cells by 9 on a four-metre grid, corridors
+   * 2.2 m wide between 1.8 m blocks of service plant — 63 cells, real dead
+   * ends, and a valve room in the middle of it with a stash in the valve
+   * room. `StationKit.warren` builds it off `Stage.maze`, which is the ONE
+   * generator: the check floods the same graph rather than a second copy of
+   * it.
+   *
+   * ── THE BAND IS NEW AND IT IS THE HONEST ONE ──────────────────────────
+   *
+   * `spine`: a block of plate standing between the balcony and the rooms, on
+   * a bearing, its door at the balcony end. Every other band on the drum
+   * hangs off the ring or off the void's lip; this is the space BETWEEN them,
+   * which no place has ever occupied and which is the only place a maze the
+   * size of a room block could go.
+   *
+   * `r0: 28` and not 26: the balcony's rim carries its own fixtures (a shrine
+   * stands 1.45 m out from the lip) and the plan's door is on the walk at
+   * r = 26.6, with three metres of open plate between the rim and the mouth
+   * — which is what a service door off a balcony looks like.
+   *
+   * ITS OTHER END stops a metre short of `#64 The fallen soffit`'s back wall,
+   * which is what the cut in that wall goes through.
+   */
+  {
+    id: 65, deck: 48, name: 'The warren', shape: 'warren',
+    look: 'a maze of 2.2 m service corridors on a four-metre grid: pipe banks and cable trays on '
+      + 'every wall, caged lamps at the crossings, no signage of any kind, real dead ends, and a '
+      + 'valve room at the middle of it with a crate somebody has been keeping there',
+    who: 'nobody, most days',
+    idle: 'the trays hum; a valve knocks somewhere you cannot place',
+    verb: 'find the valve room — and open what is in it',
+    band: 'spine', at: -52, r0: 28, w: 28, d: 36, h: 3.2, peak: 4, heads: 0,
+  },
+  /**
+   * ── THE TINY ROOMS, ONE PER DECK (V20 lane 5, §4) ─────────────────────
+   *
+   * 4 × 4 × 2.6. Every room on the station is between 6 and 34 metres across
+   * and between 3 and 30 tall; the drum has no SMALL spaces at all, and a
+   * place with no small spaces has no scale — a 30 m reactor hall is only
+   * tall if you were in a broom cupboard an hour ago. Three of them, one on
+   * each drum deck, each its own builder (rule 4 is measured on every pair,
+   * so three closets cannot be one closet built three times).
+   *
+   * THE BEARINGS ARE MEASURED, like every other row here: a 4 m front
+   * subtends 2.8° at the ring and the door-clearance rule wants that plus
+   * half a fixture's span clear either side, so each of the three sits in a
+   * gap that had nothing in it — 196° on 40 (between Arrivals and the
+   * arboretum), 82° on 44 (between the human block and the Narn quarter),
+   * and −52.5° on 48, which is the armoury end of the abandoned quarter and
+   * the last door on the arc before the lit deck starts again.
+   */
+  {
+    id: 66, deck: 48, name: 'Maintenance closet 48-9', shape: 'closet',
+    look: 'four metres square and 2.6 to the soffit: a rack of spares, a mop and a bucket, a '
+      + 'ladder bolted to the back wall running up to a crawlspace hatch in the ceiling, and one '
+      + 'caged lamp',
+    who: 'nobody since the quarter was condemned', idle: 'the hatch is unlatched and swings',
+    verb: 'climb the ladder to the hatch',
+    band: 'outer', at: -52.5, w: 4, d: 4, h: 2.6, peak: 9, heads: 0, tiny: true,
+  },
+  {
+    id: 67, deck: 44, name: 'The shrine niche', shape: 'shrineniche',
+    look: 'a niche off the promenade barely wider than the door: a stone shelf, fourteen little '
+      + 'lamps in a rack for fourteen peoples, a kneeling step, and the ceiling low enough to '
+      + 'touch',
+    who: 'one at a time, and never two', idle: 'a lamp is lit and another burns out',
+    verb: 'light a lamp',
+    band: 'outer', at: 82, w: 4, d: 4, h: 2.6, peak: 19, heads: 1, tiny: true,
+  },
+  {
+    id: 68, deck: 40, name: 'The ticket booth', shape: 'ticketbooth',
+    look: 'a booth the size of a lift car at the arboretum end of the concourse ring: a glazed '
+      + 'hatch at chest height, a stool behind it, a fare board, and a shelf of paper',
+    who: 'one clerk on the shuttle hours', idle: 'the fare board turns over',
+    verb: 'buy a fare',
+    band: 'outer', at: 196, w: 4, d: 4, h: 2.6, peak: 11, heads: 1, tiny: true,
   },
 
   /* ══ DECK 60 — ABOVE THE DRUM ═══════════════════════════════════════════ */
@@ -1003,6 +1190,30 @@ function layout(p) {
       p.rIn = r0; p.rOut = r0 + p.d;
       return p;
     }
+    /**
+     * ── `spine`: THE PLATE BETWEEN THE BALCONY AND THE ROOMS (V20) ──────
+     *
+     * `#65 The warren` is the only place on this band and the band exists
+     * because nothing else could hold it: it is a block of deck standing in
+     * the annulus the four spines cross, `r0` metres out from the axis and
+     * `d` deep, with its mouth at the balcony end. Local −Z faces inward, at
+     * the walk, exactly as the `inner` band's does.
+     *
+     * THE DOOR IS ON THE BALCONY AND NOT ON THE BLOCK'S OWN FACE. The rim
+     * carries fixtures that stand up to 1.5 m out from the lip, so a block
+     * that started at `DRUM.balcony` would be built through a shrine; it
+     * starts at `r0` and the door is the service door on the walk, with the
+     * open plate between them. `station.mjs`'s reachability walk measures the
+     * DOOR's radius, which is the balcony's, which is where you walk from.
+     */
+    case 'spine': {
+      const r0 = p.r0 ?? DRUM.balcony;
+      [p.x, p.z] = polar(r0 + p.d / 2);
+      p.yaw = a;
+      p.door = polar(DRUM.balcony + 0.6);
+      p.rIn = r0; p.rOut = r0 + p.d;
+      return p;
+    }
     case 'concourse': {
       /* The Concourse runs down +Z from `r0`. An alcove opens through its side
        * wall at `along` metres from the inner end, on `side` ±1 (−1 is −X). */
@@ -1060,6 +1271,56 @@ function layout(p) {
 const PLACE_DRAFT = new Map(PLACES.map((p) => [p.id, p]));
 for (const p of PLACES) if (p.band !== 'concourse') layout(p);
 for (const p of PLACES) if (p.band === 'concourse') layout(p);
+
+/**
+ * ══ WHERE YOU GET INTO A SEALED ROOM (V20 lane 5) ═════════════════════════
+ *
+ * A derelict room's `cuts` name SIDE walls (`s`, ±1 in the room's own frame,
+ * where +X is toward the LOWER bearing) and the radius each cut is centred
+ * on. The first is the way IN — the one the drop gate drops a body at and the
+ * one the doorway walk starts from; the rest are the ways on. An outer
+ * room is a sector, so that wall is the ray at `±th` from the axis and the
+ * point on it at radius `r` is one sine and one cosine; 0.9 m inboard of the
+ * wall's face is a point INSIDE the room, which is what a body dropped at a
+ * cut has to land on and what the doorway walk starts from.
+ *
+ * Derived here rather than in `StationKit` for the reason the whole file
+ * exists: the builder cuts the wall, the drop gate drops a body at it and the
+ * doorway walk starts at it, and three copies of one number is §2.3's defect.
+ */
+for (const p of PLACES) {
+  if (!p.cuts || !p.cuts.length || p.band !== 'outer') continue;
+  const cut = p.cuts[0];
+  const th = Math.asin(Math.min(1, (p.w / 2) / DRUM.roomR));
+  const c = DRUM.roomR - p.d / 2;
+  const lx = cut.s * (cut.r * Math.sin(th) - 0.9 * Math.cos(th));
+  const lz = c - cut.r * Math.cos(th) - 0.9 * Math.sin(th);
+  p.cutLocal = [lx, lz];
+  const cs = Math.cos(p.yaw), sn = Math.sin(p.yaw);
+  p.entry = [p.x + lx * cs + lz * sn, p.z - lx * sn + lz * cs];
+}
+
+/**
+ * ══ THE ABANDONED QUARTER'S ARC, AND WHO READS IT ═════════════════════════
+ *
+ * V20 lane 5, §5: the lane that owns the station's lights is a different lane,
+ * and two lanes writing the same lamp is the defect `StationPlan`'s header is
+ * about. So THE STAGE records the arc and writes no light: `a0` and `a1` are
+ * bearings in degrees (a0 < a1, both negative here), `k` is how much of the
+ * deck's normal light this stretch is allowed — a third, which is dark enough
+ * to need the strip in your hand and light enough to walk.
+ *
+ * `Station.dressStation` copies it onto `st.stage.darkArc` and dresses the
+ * ring's own bays from it; nothing else in this tree touches a lamp for it.
+ */
+export const DARK_ARC = Object.freeze({ deck: 48, a0: -60, a1: -12, k: 0.34 });
+
+/** True where a bearing on a deck is inside the abandoned quarter's arc. */
+export function inDarkArc(deck, deg) {
+  if (deck !== DARK_ARC.deck) return false;
+  const a = ((deg % 360) + 540) % 360 - 180;
+  return a >= DARK_ARC.a0 && a <= DARK_ARC.a1;
+}
 
 /** By id, for the four readers. Ids are numbers and `40.2` is a real one. */
 export const PLACE = new Map(PLACES.map((p) => [p.id, p]));
@@ -1174,7 +1435,9 @@ export const WAYS = [
    *    conduit, a swap table, and one window nobody meant to be beautiful. ─ */
   { deck: 48, at: 20, kind: 'service', name: 'Reactor hatch 20', span: 4 },
   { deck: 48, at: 48, kind: 'kiosk', name: 'Plant control kiosk', span: 4 },
-  { deck: 48, at: 77, kind: 'bench', name: 'The fab bench', span: 5 },
+  /* Moved off the Brig's new door at 78° (V20 lane 5) — the same bench, on
+   * the only other stretch of this deck with eleven clear degrees in it. */
+  { deck: 48, at: 211, kind: 'bench', name: 'The comms bench', span: 5 },
   { deck: 48, at: 122, kind: 'service', name: 'Cargo hatch 122', span: 4 },
   { deck: 48, at: 150, kind: 'stair', name: 'The grating step', span: 9 },
   { deck: 48, at: 176, kind: 'alcove', name: 'Smoke alcove', span: 6 },
@@ -1182,8 +1445,15 @@ export const WAYS = [
   { deck: 48, at: 190, kind: 'planter', name: 'The CIC planter', span: 5 },
   { deck: 48, at: 238.5, kind: 'service', name: 'Medbay service hatch', span: 3 },
   { deck: 48, at: 275.5, kind: 'bay', name: 'The morgue window', span: 4 },
-  { deck: 48, at: 306, kind: 'shopfront', name: 'Parts window', span: 8 },
-  { deck: 48, at: 338, kind: 'market', name: 'Swap stalls', span: 10 },
+  /* ── THE DEAD STRETCH (V20 lane 5). The parts window and the swap stalls
+   *    stood at 306 and 338, which is the middle of what is now the abandoned
+   *    quarter — a lit shopfront in front of a welded door. What is there
+   *    instead is what a condemned arc has on it: the kiosk that served it,
+   *    stripped to its frame, and the barricade that closed it. `dead: true`
+   *    is what `Station.buildRing` reads to take the strips out of the bays
+   *    round them. */
+  { deck: 48, at: 303.7, kind: 'deadkiosk', name: 'The stripped kiosk', span: 3, dead: true },
+  { deck: 48, at: 343.4, kind: 'barricade', name: 'The quarter barricade', span: 4, dead: true },
 
   /* ── THE FOUR SPINES, WHICH WERE ONE CORRIDOR BUILT FOUR TIMES ─────────
    *

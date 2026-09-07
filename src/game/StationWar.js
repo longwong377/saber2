@@ -76,8 +76,18 @@ export const WALL_W = 512, WALL_H = 300;
 /** How near the player must be for the wall to repaint. */
 export const WALL_NEAR = 45;
 /** Rooms Command never closes: the ring, your cabin, the barracks, the CIC,
- *  the two wards, the brig, the reactor, the tram. */
-export const NEVER_CLOSED = Object.freeze(new Set([26, 27, 29, 40, 41, 43, 44, 47, 48]));
+ *  the two wards, the brig, the reactor, the tram.
+ *
+ *  AND V20 LANE 5's SEVEN. A room Command "closes for ten minutes" is a room
+ *  it takes people out of and posts a watch on, and none of these is that:
+ *  #62–#64 are the abandoned quarter, condemned years ago and two of them
+ *  welded shut — an order closing a welded door is an order with nothing to
+ *  do — #65 is the warren, which has no door to stand at, and #66–#68 are
+ *  four metres square, which is a cupboard with two guards in it. Leaving
+ *  them out of the list also keeps the order's own seeded choice the same
+ *  room it was before those seven places existed. */
+export const NEVER_CLOSED = Object.freeze(new Set([26, 27, 29, 40, 41, 43, 44, 47, 48,
+  62, 63, 64, 65, 66, 67, 68]));
 
 const NAMES = ['Rehn', 'Task', 'Vell', 'Oda', 'Brakk', 'Dunn', 'Sable', 'Trask', 'Kell', 'Mott', 'Iss', 'Pell'];
 const KLAXON_VOICE = Object.freeze({ f0: 112, cadence: 1.05 });
