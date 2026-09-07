@@ -39,6 +39,24 @@ Playable two ways:
 
 ---
 
+## 0. THE STATION IS SWITCHED OFF — 7 Sep 2026
+
+The player played it, landed on the working deck (medbay, reactor, brig, the
+abandoned quarter) and called it "0.5/10 … complete shit. Remove the station
+from the game entirely, maybe I'll go back to it at some point." So
+`STATION_ENABLED = false` in `Levels.js` — the kill switch §9.2 designed for
+exactly this: no station level, the hangar lift has one floor (the menu),
+nothing else in the game changes, `station.mjs`'s "the switch is real" clause
+proves it, and `decklift.mjs` stands its column clauses down. Every station
+file, check and asset stays in the tree; one flag puts it back. The interact
+key (E), the sandbox on the menu and the lift's floor-pick wait are kept.
+
+**If the station comes back, what the player saw first must not be what he
+sees first:** arrive on the Concourse (deck 40) at a busy hour, never the
+working deck, and the abandoned quarter and the warren want a reason to exist
+before they are shown. Their judgement of it stands on this handoff's own
+"unverified" list: the three visual lanes were never re-shot.
+
 ## 0. HANDOFF — 7 Sep 2026, end of the V18/V19/V20 session
 
 **State.** Default branch `claude/lightsaber-combat-game-lxw391` at `a722ba9`,

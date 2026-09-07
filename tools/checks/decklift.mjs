@@ -178,7 +178,9 @@ export async function run({ check, assert, THREE }) {
        * expectation is DERIVED from the same list the button column cycles,
        * which is what stops it going stale the next time a floor is added.
        */
-      assert(st.readout.caption === String(liftPick(world).label).toUpperCase(),
+      /* With the station switched off the column is one row and the readout
+       * names the deck; the two only have to agree when there is a column. */
+      if (liftFloors().length > 1) assert(st.readout.caption === String(liftPick(world).label).toUpperCase(),
         `a waiting car reads "${st.readout.caption}" and the column is on `
         + `"${liftPick(world).label}" — the readout and the button disagree`);
       /* AND IT IS ACTUALLY HERE, which is the clause's real subject: the car
@@ -200,7 +202,7 @@ export async function run({ check, assert, THREE }) {
       step(world, RIDE.settle + RIDE.ride, idle);
       assert(left === 1, `onDeckLeave fired ${left} times`);
       assert(liftState(world) === STATE.GONE, `after the ride out the car is ${liftState(world)}`);
-      assert(st.readout.number !== n0, 'the readout did not count on the way out');
+      if (liftFloors().length > 1) assert(st.readout.number !== n0, 'the readout did not count on the way out');
       return `called, arrived in ${RIDE.arrive}s, stepped in, rode out, onDeckLeave once`;
     } finally { world.unload(); }
   });
@@ -222,14 +224,15 @@ export async function run({ check, assert, THREE }) {
    * one and a pixel assertion here would measure a stub.
    */
   check('lift: the readout caption fits the plate at NAME_MAX, on every floor', async () => {
-    const { liftFloors, readoutLines, READOUT, READOUT_COLS } = await import('../../src/game/DeckLift.js');
+    const { liftFloors: floorsNow, readoutLines, READOUT, READOUT_COLS } = await import('../../src/game/DeckLift.js');
+    if (floorsNow().length < 2) return 'the station is switched off (STATION_ENABLED false): one floor, nothing to cycle';
     const S = await import('../../src/game/StationSave.js');
     const was = S.stationName();
     try {
       /* The worst name there is: `NAME_MAX` characters, all of them wide. */
       const worst = 'W'.repeat(S.NAME_MAX);
       S.setStationName(worst);
-      const rows = liftFloors();
+      const rows = floorsNow();
       assert(rows.length >= 2, `the lift has ${rows.length} floor, so nothing here is being measured`);
       const over = [];
       let longest = 0;
@@ -535,6 +538,7 @@ export async function run({ check, assert, THREE }) {
     } finally { world.unload(); }
   });
   check('lift: the column names the floor it picked, in the words on the plate', async () => {
+    if (liftFloors().length < 2) return 'the station is switched off (STATION_ENABLED false): one floor, nothing to cycle';
     /**
      * ══ TWO READINGS OF ONE NUMBER, ONE OF THEM IN FRONT OF THE PLAYER ═══
      *

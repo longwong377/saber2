@@ -5043,7 +5043,7 @@ LEVELS.hangar = HANGAR_LEVEL;
  * Killing it for good is: delete the new files, delete `assets/station/`,
  * revert these seams. One commit; nothing else in the game moves.
  */
-export const STATION_ENABLED = true;
+export const STATION_ENABLED = false;
 
 if (STATION_ENABLED) {
   /* The registration points the same way the deck's does and for the same

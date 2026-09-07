@@ -20,7 +20,9 @@ that in one line instead of burying it.
 
 ## The play link
 
-The play link is **https://longwong377.github.io/saber2/shark/**. That
+The play link is **https://longwong377.github.io/saber2/shark/**. The
+station is switched off (`STATION_ENABLED = false`); do not switch it on
+unless the player says so. That
 is the only one. No artifacts, no clones, no second copy anywhere. The old
 root link (`/saber2/`) is deliberately dark: `pages.yml` stages the site under
 `PLAY_PATH` (with `index.play.html` as its index — the repo's `index.html` is
