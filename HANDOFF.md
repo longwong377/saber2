@@ -51,6 +51,15 @@ proves it, and `decklift.mjs` stands its column clauses down. Every station
 file, check and asset stays in the tree; one flag puts it back. The interact
 key (E), the sandbox on the menu and the lift's floor-pick wait are kept.
 
+**The player saw the rest afterwards** — thirteen shots from the doors of
+the feed, the Wheelhouse, the cabin, the cantina, the arena, the concourse,
+the arboretum, the food court, the holo-theatre, the promenade, a tram
+station and the atrium — and said "looks like shit". That is the verdict on
+the whole of V15–V20's station, not on one deck: flat colour, thin dressing,
+rooms that read as kit. Do not re-open it with more lanes; if it ever comes
+back it is a hand-built, art-first job on two or three rooms, judged by
+pictures before a single check is written.
+
 **If the station comes back, what the player saw first must not be what he
 sees first:** arrive on the Concourse (deck 40) at a busy hour, never the
 working deck, and the abandoned quarter and the warren want a reason to exist
@@ -97,6 +106,11 @@ in `StationDuel.js`). The Underlift's rotated container sits inside the
 sector wall by `roomHalfW`; any new furniture along a side wall must do the
 same. Lanes run on Opus 5 through the Agent tool at its default effort; the
 effort cannot be raised from inside a session.
+
+**State at close.** Default branch = feature branch, station off, E is the
+interact key, the sandbox is on the menu, the lift waits for a floor pick
+(one floor now, so it rides to the menu after the wait). Build 30.9 MB.
+Nothing running.
 
 **How the player works.** Plain and brief; answer questions directly the
 moment they are asked; "link"/"build" means pack and send; merging to the
