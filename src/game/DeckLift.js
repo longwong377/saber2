@@ -2137,7 +2137,7 @@ export function stepDeckLift(world, dt) {
        * player could not find it (7 Sep): it is 100 m aft of the ramp. */
       if (!st.hinted && st.t > 4) {
         st.hinted = true;
-        world.notify?.('THE LIFT', 'aft, at the back wall under the lamp: E at its doors calls the car, E inside picks the station');
+        world.notify?.('THE LIFT', 'turn round — the doors are right behind you. E calls the car, E inside picks the station floor');
       }
       /* Tell him once how to leave, when he first comes back to the doors. */
       if (!st.told && atTheDoors(world)) {
