@@ -131,7 +131,16 @@ export async function run({ check, assert }) {
       drive(world, W.ALERT_FOR + 1, idle);
       assert(!war.order, 'the order did not lift');
       assert(!life.live.has('war:guard:0') && !life.live.has('war:guard:1'), 'the pair did not stand down');
-      assert(M.strip.emissive.getHex() === strip0, 'the strips did not go back');
+      /* NOT `strip0`, AND THAT IS A SECOND OWNER RATHER THAN A LOOSENING.
+       * `StationLight` (V20 lane 1) tints the strips per room and per hour, so
+       * the hex a world booted with is only what the strips are while the
+       * player stands where he booted. `redden` saves the tint it FOUND and
+       * puts that back; the light then writes the mood the player is standing
+       * in now — which is the behaviour, and it is why the question this line
+       * asks is the one it was always really asking: is the red off, and has
+       * the alert let go. */
+      assert(M.strip.emissive.getHex() !== 0xff2a1a, 'the strips are still red');
+      assert(war.strip0 === null, 'the alert still holds the strips');
       assert(notes.some((n) => /open again/.test(n)), 'no reopening line');
 
       /* (c) THE WALL. */

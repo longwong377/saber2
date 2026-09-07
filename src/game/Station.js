@@ -120,6 +120,8 @@ import { dressFormBoards, stepFormBoards, undressFormBoards, printedTicket } fro
 import { sitKey, releaseSeat } from './StationSit.js';
 import { dressMorning, stepMorning, undressMorning } from './Morning.js';
 import { dressStationMotion, stepStationMotion, undressStationMotion } from './StationMotion.js'; // V20 lane 2
+/* V20 lane 1: the moods, the key's shadows, the emissives that light the floor. */
+import { dressStationLight, stepStationLight, undressStationLight } from './StationLight.js';
 import { stepSleep, endSleep } from './Sleep.js';
 import { stepDomeSeat } from './DomeSeat.js';
 import { dressShuttle, stepShuttle, shuttleKey, undressShuttle } from './Shuttle.js';
@@ -1670,6 +1672,9 @@ export function dressStation(world) {
   dressFormBoards(world, st); // V18 hole 10: the reading room's form odds, under every feed screen
   dressStationSound(world, st); // V18 hole 7: per-place beds and the PA
   dressMusic(world, st); // V19 add 5: the band's dais, the busker's spot
+  /* V20 lane 1: LAST of the dress, because the fixtures are found by walking
+   * what every place above has just built — see `StationLight.js`. */
+  dressStationLight(world, st);
 
   /* ── AND THE PEOPLE BEHIND THE COUNTERS (V16 Lane B) ───────────────────
    *
@@ -1855,6 +1860,7 @@ export function undressStation(world) {
   undressHealing(world); undressMusic(world); undressStationSound(world); undressFormBoards(world); // V18 holes 5, 7, 10; V19 add 5
   undressDuel(world); // V20 lane 7: the plaque, the duellist and the acolyte go with the deck
   undressStationMotion(world); // V20 lane 2
+  undressStationLight(world); // V20 lane 1: the engine's sun and cascades go back
   for (const rec of st.places.values()) {
     rec.group.parent?.remove(rec.group);
     rec.group.traverse((o) => { if (o.isMesh) o.geometry?.dispose?.(); });
@@ -5165,6 +5171,7 @@ export function stepStation(world, dt) {
   stepStationSound(world, st, dt); // V18 hole 7: crossfade the bed under the player
   stepMusic(world, st, dt); // V19 add 5: the band's set, the busker, the Drum's theme
   stepStationMotion(world, st, dt); // V20 lane 2: see StationMotion.js
+  stepStationLight(world, st, dt); // V20 lane 1: the mood, the lamps, the caster sweep
 
   stepShuttle(world, dt); stepGreetings(world, world._stationLife, dt); stepRemoteTest(world, dt);
   stepVerbs(world, st, dt); // V20 lane 6: the ten verbs, after the bodies — see `Verbs.js`
