@@ -717,6 +717,8 @@ function ringBell(world, V) {
     if (!b || b.dead || b.stationPlace !== VERB_PLACE.bell || b.wayR) continue;
     b.standFace = Math.atan2(B.at.x - b.position.x, B.at.z - b.position.z);
     b.standIn = Math.max(b.standIn || 0, 4);
+    b.attendUntil = (world.time ?? 0) + 4;               // `Gestures.eligible` honours it
+    if (b.__gesture?.g) { b.__gesture.g = null; b.__gesture.wait = 4; }
     turned++;
   }
   B.turned = turned;

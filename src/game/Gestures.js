@@ -545,6 +545,9 @@ function eligible(body) {
   if (body.seat) return false;                          // Rig.poseSeated's
   if (body.__stationTouched || body.stationGuard) return false;
   if (body.stationSpecies === 'vorlon') return false;   // §3.3: he does not fidget
+  /* Something in the room has everyone's attention (the chapel bell,
+   * `Verbs.js` writes `attend`): no gesture writes the facing until it fades. */
+  if (body.attendUntil && (body.world?.time ?? 0) < body.attendUntil) return false;
   return true;
 }
 
