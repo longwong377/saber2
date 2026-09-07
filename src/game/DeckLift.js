@@ -2133,10 +2133,16 @@ export function stepDeckLift(world, dt) {
       /* The shaft keeps moving for a while behind the doors, then rests. */
       st.v = st.t < 2.6 ? st.dir * RIDE.speed * smoothstep(0, 0.6, st.t) * (1 - smoothstep(1.8, 2.6, st.t)) : 0;
       st.scroll -= st.v * dt;
+      /* Say where the lift IS, once, a few seconds after the deck is up — the
+       * player could not find it (7 Sep): it is 100 m aft of the ramp. */
+      if (!st.hinted && st.t > 4) {
+        st.hinted = true;
+        world.notify?.('THE LIFT', 'aft, at the back wall under the lamp: E at its doors calls the car, E inside picks the station');
+      }
       /* Tell him once how to leave, when he first comes back to the doors. */
       if (!st.told && atTheDoors(world)) {
         st.told = true;
-        world.notify?.('THE LIFT', 'inspect key at the doors calls the car — it takes you to the bridge');
+        world.notify?.('THE LIFT', 'E at the doors calls the car; E inside picks a floor — the station is up the column');
       }
       break;
     }

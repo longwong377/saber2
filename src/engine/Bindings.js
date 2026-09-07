@@ -285,7 +285,8 @@ export const ACTIONS = [
    */
   { id: 'attackSpin', group: 'Blade',    label: 'Spinning attack',   keys: ['Mouse4'], pad: 'PadBack+PadB' },
   { id: 'rollL',      group: 'Blade',    label: 'Roll wrist left',   keys: ['KeyQ'],       hold: true, pad: 'PadLeft' },
-  { id: 'rollR',      group: 'Blade',    label: 'Roll wrist right',  keys: ['KeyE'],       hold: true, pad: 'PadRight' },
+  /* E went to `interact` (7 Sep); the right roll goes to Home (every letter on the board is taken). */
+  { id: 'rollR',      group: 'Blade',    label: 'Roll wrist right',  keys: ['Home'],       hold: true, pad: 'PadRight' },
   { id: 'ignite',     group: 'Blade',    label: 'Ignite / retract',  keys: ['KeyX'], pad: 'PadX' },
   /* Backquote, vacated by `walk` — see the note there for why the left hand's
    * holds were reshuffled at all. A one-handed grip is a STANCE you settle
@@ -353,6 +354,11 @@ export const ACTIONS = [
    * a mouse with no wheel click, and it was the only left-hand letter left in
    * a table where every key within reach of WASD is spoken for. Note #18 asks
    * for six order keys to become one, and the one has to be somewhere. */
+  /* THE INTERACT KEY (7 Sep): the player could not find it. It was Focus's
+   * middle click, which nothing on screen names. E — the wrist roll only means
+   * anything with a blade lit, and every door, panel and seat is where the
+   * blade is down, so the two share a key without ever both mattering. */
+  { id: 'interact',   group: 'Force',    label: 'Interact (use / talk / sit)', keys: ['KeyE'], hold: true, pad: 'PadRB+PadA' },
   { id: 'focus',      group: 'Force',    label: 'Focus (slow time)', keys: ['Mouse3'], hold: true, pad: 'PadLT' },
   { id: 'push',       group: 'Force',    label: 'Force push',        keys: ['KeyF'], pad: 'PadLB+PadA' },
   { id: 'pull',       group: 'Force',    label: 'Force pull',        keys: ['KeyR'], pad: 'PadLB+PadB' },

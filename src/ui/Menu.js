@@ -2189,6 +2189,10 @@ export const CODEX = [
   { keys: ['freecam'],
     text: () => '<b>Free camera</b> — the view comes off your body and the game '
       + 'STOPS while it is off. Fly it with the movement keys; press again to put it back.' },
+  { keys: ['interact'],
+    text: () => '<b>Interact</b> — the one key for everything you can use: the lift\'s doors and its '
+      + 'floor column, a counter, a kiosk, a seat, a person in front of you, the crate, the lever, the bell. '
+      + 'Focus (middle click) still works for it too.' },
   { keys: ['perf'],
     text: () => '<b>Frame-time box</b> — frame ms, draw calls, the station\'s own step, the tier '
       + 'in use and your GPU, top-left. It logs a copy line you can paste. Press again to hide.' },

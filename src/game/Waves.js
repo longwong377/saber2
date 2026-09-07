@@ -363,7 +363,9 @@ export const MODES = {
      * still holds this blurb's word "ten" to `LESSONS.length`, and
      * `Progress.RECORDED` still refuses both. What changed is the door.
      */
-    hidden: true,
+    /* BACK ON THE MENU (7 Sep): the player asked for it where it was. The
+     * holodeck's door still works; this one is the front door. */
+    hidden: false,
   },
   /**
    * TRAINING WAS PINNED TO ONE ROOM.

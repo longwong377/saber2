@@ -4413,7 +4413,7 @@ export class Player {
      * hundred and eighty. `Verbs.stepVerbs` is the only reader; one property
      * write a frame, and only on the station.
      */
-    if (this.world?._station) this.world._verbHold = input.act('focus');
+    if (this.world?._station) this.world._verbHold = input.act('focus') || input.act('interact');
     /**
      * A MAN AT THE CONTROLS OF A TANK HAS BOTH HANDS ON THEM.
      *
@@ -4471,7 +4471,7 @@ export class Player {
       if (input.actHit('view')) { this.camera.firstPerson = !this.camera.firstPerson; this._applyViewMode(); }
       if (this.seat.state === 'sit') {
         const axis = input.moveAxis(_axis);
-        if (Math.abs(axis.x) + Math.abs(axis.y) > 0.2 || input.actHit('jump') || input.actHit('focus')) this.standUp();
+        if (Math.abs(axis.x) + Math.abs(axis.y) > 0.2 || input.actHit('jump') || input.actHit('focus') || input.actHit('interact')) this.standUp();
       }
       return;
     }
@@ -4621,7 +4621,7 @@ export class Player {
         if (input.actHit('rend')) deckCommitName(this.world);
         return;
       }
-      if (input.actHit('focus')) deckFocus(this.world);
+      if (input.actHit('focus') || input.actHit('interact')) deckFocus(this.world);
       if (input.actHit('rend') && deckBeginNaming(this.world)) return;
       if (deckWheel(this.world, this._wheel)) this._wheel = 0;
       /* AND THE SEVEN THAT ARE NOT WELCOME SAY SO. `_refuse` carries its own
@@ -4666,7 +4666,7 @@ export class Player {
      */
     if (this.world?._station) {
       if (namingStation(this.world)) return;
-      if (input.actHit('focus')) stationKey(this.world);
+      if (input.actHit('focus') || input.actHit('interact')) stationKey(this.world);
     }
 
     // ── the wheel belongs to whatever is actually being held.
