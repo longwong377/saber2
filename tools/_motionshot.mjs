@@ -102,29 +102,48 @@ async function enter(deck) {
   return info;
 }
 
-/** Stand somewhere, spend `secs` of world there, then shoot. `hold` names a
- *  door to keep open (its own state machine runs; only the request is faked). */
+/**
+ * Stand somewhere, spend `secs` of world there, then shoot. `hold` names a
+ * door to keep open (its own state machine runs; only the request is faked).
+ *
+ * ── THE WORLD IS STEPPED BY HAND AND NOT BY `requestAnimationFrame` ──────
+ *
+ * Measured on this box with three headless Chromiums on one four-core
+ * container: rAF ran at about a tenth of a second per frame, so the thirty
+ * seconds of world the litter plate needs would have been an hour of wall
+ * clock. `world.update` is the same step the page's own loop calls; driving
+ * it here costs one call per simulated frame and no compositing at all, and
+ * the four rAFs at the end are what actually put the frame on the screen —
+ * which is `_stationshot.mjs`'s own rule about a picture of where the camera
+ * WAS, unchanged.
+ */
 async function shot(name, at) {
   const ok = await page.evaluate(async (a) => {
     const raf = () => new Promise((r) => requestAnimationFrame(r));
-    const w = window.SABER?.world, p = w?.player;
+    const S = window.SABER;
+    const w = S?.world, p = w?.player;
     if (!p) return false;
     const mo = w._station.motion;
     const secs = a.secs || 0.3;
-    const n = Math.max(3, Math.round(secs * 60));
-    for (let i = 0; i < n; i++) {
+    const n = Math.max(1, Math.round(secs * 60));
+    const input = S.input?.state || S.idleInput || null;
+    const pin = () => {
       p.position.set(a.x, a.y, a.z);
       p.body?.position?.set?.(a.x, a.y, a.z);
       p.velocity?.set?.(0, 0, 0);
       if (p.camera) { p.camera.yaw = a.yaw; p.camera.pitch = a.pitch || 0; }
-      /* A door held open while the camera stands back: the request is set,
-       * the leaves and the collider still run their own state machine. */
       if (a.hold !== undefined) {
         const d = mo.doors.find((q) => q.id === a.hold);
         if (d) d.hold = 5;
       }
-      await raf();
+    };
+    for (let i = 0; i < n; i++) {
+      pin();
+      try { w.update(1 / 60, input); } catch { /* the page's own loop is enough */ }
+      /* Yield now and then so the tab is not declared unresponsive. */
+      if ((i & 63) === 63) await raf();
     }
+    for (let i = 0; i < 4; i++) { pin(); await raf(); }
     return true;
   }, at);
   if (!ok) { say(`shot ${name}: no player`); return; }
