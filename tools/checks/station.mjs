@@ -3922,7 +3922,8 @@ export async function run({ check, assert, THREE }) {
           const at = st.place(LIFT.x, 0, LIFT.z);
           world.player.position.set(at.x, at.y + 1.0, at.z);
           world.player.body?.setTransform?.(world.player.position, null);
-          step(world, 1.4 + RIDE.doors + RIDE.settle + RIDE.ride, idle);
+          /* the car waits `RIDE.choose` in the doorway for a floor (7 Sep) */
+          step(world, (RIDE.choose ?? 0.6) + 1.0 + RIDE.doors + RIDE.settle + RIDE.ride, idle);
           assert(st.state === STATE.GONE, `deck ${deck}: after the ride the car is ${st.state}`);
           assert(left === 1 && !lifted,
             `deck ${deck}: an untouched car rode to ${lifted ? `"${lifted.label}"` : 'nowhere'} and `
