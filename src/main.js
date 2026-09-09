@@ -5699,7 +5699,11 @@ function myCompanion(s = settings) {
   const want = s?.companion;
   if (!want || want === 'none' || !COMPANION_KINDS[want]) return null;
   const k = loadKennel();
-  return (k.live && k.live.kind === want) ? k.live : adoptCompanion(want);
+  /* A NEW ANIMAL WEARS THE PAINT YOU CHOSE FOR ITS KIND ON THE SELECT SCREEN —
+   * `settings.companionLook[kind]`, the swatches' store before there is a
+   * record to write into. */
+  return (k.live && k.live.kind === want) ? k.live
+    : adoptCompanion(want, null, s?.companionLook?.[want] || {});
 }
 
 /** It is standing beside you, and this is the one line that says so. */

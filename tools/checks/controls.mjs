@@ -2044,7 +2044,12 @@ export async function run({ check, assert }) {
        * with a real NONE row at its head, in the same `_cardRow` shape as the
        * robe cut and the saber set. `this.s.companion` is written at the
        * control site, which is what the regex below is asking for. */
-      'companion'];
+      'companion',
+      /* THE PAINT FOR A KIND NOT YET TAKEN OUT — the companion swatch row
+       * under the card row, the same swatches that write the kennel record
+       * once there is one. `this.s.companionLook` is written at the control
+       * site (`_wireCompanionDress`), keyed by kind. */
+      'companionLook'];
     /**
      * The settings that are TYPED — a text box rather than a slider, a
      * checkbox or a row of cards. One so far: the co-op name, which is the

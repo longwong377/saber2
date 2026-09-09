@@ -12,7 +12,8 @@ import { canFullscreen, toggleFullscreen } from '../engine/Wholescreen.js';
 import { SABER_COLORS, HILT_STYLES, HILT_SPECS, Saber } from '../game/Saber.js';
 import { ROBE_COLORS, buildPlayerBody, SPECIES, FACE_PRESETS, speciesOf,
          HAIR_STYLES, BEARD_STYLES, HOOD_CUTS, attachHood, bodyOptsFor, wearableFor,
-         KIT_FIELDS, PAINT_SLOTS, PAINTS, paintById, kitOptsFrom, ARMOUR_KITS, TOP_CUTS } from '../game/Bodies.js';
+         KIT_FIELDS, PAINT_SLOTS, PAINTS, paintById, kitOptsFrom, ARMOUR_KITS, TOP_CUTS,
+         companionOptsFrom } from '../game/Bodies.js';
 import { BipedAnimator, limbScale, MEDITATION_POSES, poseMeditation } from '../game/Rig.js';
 // Player.js imports SKIN_TONES and HAIR_COLORS from this file, so this edge
 // closes a cycle. It is safe and it is checked: nothing here reads a Player
@@ -1004,6 +1005,15 @@ export const DEFAULT_SETTINGS = {
    */
   companion: 'none',
   /**
+   * THE COLOURS YOU PICKED FOR A KIND YOU HAVE NOT TAKEN OUT YET, keyed by
+   * kind. The kennel record is created at deploy (`fieldFromKennel`), so
+   * before the first run there was a swatch row with nothing to write into,
+   * and the screen said "once you have taken it out once" instead of letting
+   * you paint. This holds the paint until `adopt` runs and seeds the record
+   * from it; after that the record is the one writer and this is ignored.
+   */
+  companionLook: {},
+  /**
    * THE MINIMAP, on by default and switchable off.
    *
    * On because a fight against 25 bodies with no idea where the other 24 are is
@@ -1281,6 +1291,7 @@ export const SETTING_READERS = {
    * one reader — deploy, the co-op handshake and the joining player's own
    * adoption all ask it rather than reading the key a second time. */
   companion:       ['main.js', 'const want = s?.companion'],
+  companionLook:   ['main.js', 's?.companionLook?.[want]'],
   minimap:         ['ui/HUD.js', 'settings.minimap !== false'],
   minimapSense:    ['ui/HUD.js', 'settings.minimapSense !== false'],
   reticleShape:    ['ui/HUD.js', 'shapeAt(s.reticleShape)'],
@@ -5585,10 +5596,23 @@ export class Menu {
      * databank, the roster — and this is the one surface that wants the other
      * spelling.
      */
+    /* AND EACH CARD SAYS WHAT THE KIND CAN DO FOR YOU: whether you can ride
+     * it (the same E that boards a walker — `ARCHETYPES[..].mount`, the one
+     * flag Driving.js reads) and the one order on its ring that is its own.
+     * Twelve one-sentence blurbs never said either, so a player picked a
+     * massiff hoping for a saddle and found out on the field. */
+    const cardBlurb = (K) => {
+      const A = ARCHETYPES[K.archetype];
+      const tags = [];
+      if (A?.mount && crewOf(K.archetype) > 0) tags.push('RIDEABLE — E to mount');
+      if (K.verb?.label) tags.push(`order: ${K.verb.label}`);
+      return (tags.length ? tags.join(' · ') + '. ' : '') + (K.blurb || '');
+    };
     this._cardRow('companion-list', 'h-companion', 'companion',
       [{ id: 'none', name: 'None', blurb: 'You go in alone, as you always have.' },
-        ...COMPANION_ORDER.map((id) => ({ ...COMPANION_KINDS[id], name: COMPANION_KINDS[id].label }))],
-      () => { this._syncKennel(); this._wireCompanionDress(); });
+        ...COMPANION_ORDER.map((id) => ({ ...COMPANION_KINDS[id], name: COMPANION_KINDS[id].label,
+          blurb: cardBlurb(COMPANION_KINDS[id]) }))],
+      () => { this._syncKennel(); this._wireCompanionDress(); this._refreshPreview(true); });
     /**
      * THE MEDITATION POSE, and the preview SITS IN IT while you are choosing.
      *
@@ -6150,23 +6174,29 @@ export class Menu {
     if (!host) return;
     const k = loadKennel();
     const kind = (k.live && k.live.kind) || (this.s.companion !== 'none' ? this.s.companion : null);
-    if (!kind || !k.live || k.live.kind !== kind) {
-      /* NOTHING TO DRESS UNTIL THERE IS AN ANIMAL. The record is created at
-       * deploy — see `fieldFromKennel` — so before the first run there is a
-       * kind chosen and no body to paint, and saying so is better than a row
-       * of swatches that write into nothing. */
-      host.innerHTML = kind
-        ? '<div class="note">Its colours are yours to set once you have taken it out once.</div>'
-        : '';
-      return;
-    }
-    host.innerHTML = this._companionDressHtml(kind, k.live.look || {});
-    const write = (field, hue) => {
-      const look = { ...(loadKennel().live?.look || {}) };
-      if (hue) look[field] = hue; else delete look[field];
-      dressCompanion(k.live.id, { look });
+    if (!kind) { host.innerHTML = ''; return; }
+    /* BEFORE THE FIRST RUN THERE IS NO RECORD, AND YOU CAN STILL PAINT IT. The
+     * kennel record is created at deploy (`fieldFromKennel`), so the swatches
+     * write to `settings.companionLook[kind]` until then and `adopt` seeds the
+     * record from it. Once the animal exists, the record is the one writer. */
+    const live = k.live && k.live.kind === kind ? k.live : null;
+    const pending = () => (this.s.companionLook && this.s.companionLook[kind]) || {};
+    const current = () => (live ? (loadKennel().live?.look || {}) : pending());
+    const put = (look) => {
+      if (live) dressCompanion(live.id, { look });
+      else {
+        this.s.companionLook = { ...(this.s.companionLook || {}), [kind]: look };
+        saveSettings(this.s);
+      }
       this._wireCompanionDress();
       this._syncKennel();
+      this._refreshPreview(true);
+    };
+    host.innerHTML = this._companionDressHtml(kind, current());
+    const write = (field, hue) => {
+      const look = { ...current() };
+      if (hue) look[field] = hue; else delete look[field];
+      put(look);
     };
     for (const el of host.querySelectorAll('.swatch')) {
       this._activate(el, () => {
@@ -6185,9 +6215,7 @@ export class Menu {
         for (const el of host.querySelectorAll('.swatch.sel')) {
           if (el.dataset.hue) look[el.dataset.cmp] = el.dataset.hue;
         }
-        dressCompanion(k.live.id, { look });
-        this._wireCompanionDress();
-        this._syncKennel();
+        put(look);
       });
     }
   }
@@ -7034,6 +7062,7 @@ export class Menu {
         if (a.lekku) for (const l of a.lekku.parts) p.cloth.push(l);
         if (a.hairTail) for (const l of a.hairTail.parts) p.cloth.push(l);
         p.content = a.content;
+        this._previewCompanion(p);
         // the drag turns about the middle of the shot — see the pivot
         p.pivot.position.y = -(p.content.y0 + p.content.y1) / 2;
         p.pivot.updateMatrixWorld(true);
@@ -7091,7 +7120,7 @@ export class Menu {
     const len = Math.min(this.s.bladeLength ?? 1.15, BLADE_CAP);
     pts.push(p.saber.root.localToWorld(new THREE.Vector3(0, len, 0)));
     pts.push(p.saber.root.localToWorld(new THREE.Vector3(0, -0.16, 0)));
-    p.content = previewContent([p.figure.rig.root], pts);
+    p.content = previewContent([p.figure.rig.root, ...(p.companion ? [p.companion] : [])], pts);
     p.pivot.position.y = -(p.content.y0 + p.content.y1) / 2;
     p.pivot.updateMatrixWorld(true);
     p.group.rotation.copy(spin);
@@ -7111,7 +7140,47 @@ export class Menu {
     p.cloth.length = 0;
     p.pivot.clear();
     p.figure = null;
+    p.companion = null;
     p.content = null;
+  }
+
+  /**
+   * THE ANIMAL YOU PICKED, STANDING BESIDE YOU IN THE PREVIEW — the same body
+   * the field builds (`ARCHETYPES[kind].build`, the archetype's kit, the
+   * paint off the record or off `settings.companionLook`), so the card row is
+   * no longer twelve names you had to deploy to see. Nothing is shown for
+   * NONE, and a builder that throws leaves the preview as it was.
+   */
+  _previewCompanion(p) {
+    const kind = this.s.companion;
+    const K = kind && kind !== 'none' ? COMPANION_KINDS[kind] : null;
+    const A = K && ARCHETYPES[K.archetype];
+    if (!A?.build || !p.content) return;
+    const k = loadKennel();
+    const look = (k.live && k.live.kind === kind ? k.live.look : this.s.companionLook?.[kind]) || {};
+    let built;
+    try {
+      built = A.build({
+        scale: A.scale ?? 1,
+        ...(bodyOptsFor(K.archetype) || {}),
+        ...companionOptsFrom(look),
+      });
+    } catch { return; }
+    const root = built?.rig?.root ?? built?.group ?? null;
+    if (!root) return;
+    p.pivot.add(root);
+    /* Off the figure's left, clear of the blade and the cloak: each body's own
+     * footprint plus a gap, measured rather than guessed. */
+    const own = previewContent([root]);
+    root.position.set(-(p.content.radius + own.radius + 0.25), 0, 0.15);
+    root.rotation.y = 0.35;
+    root.updateMatrixWorld(true);
+    p.companion = root;
+    const c = previewContent([root]);
+    p.content = {
+      y0: Math.min(p.content.y0, c.y0), y1: Math.max(p.content.y1, c.y1),
+      radius: Math.max(p.content.radius, c.radius),
+    };
   }
 
   /* ── training ────────────────────────────────────────────────────── */

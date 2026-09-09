@@ -1579,6 +1579,7 @@ export const LOCAL_KEYS = {
    * about you that other machines need travels on the roster.
    */
   companion: 'which animal you bring; it crosses per peer on the roster instead',
+  companionLook: 'the paint you chose for a kind you have not taken out yet; the record carries it after',
   /**
    * WHAT YOU OWN, AND IT IS NOT THE HOST'S TO SAY — V16's keepsakes.
    *

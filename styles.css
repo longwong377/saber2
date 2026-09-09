@@ -1807,10 +1807,10 @@ button{font-family:inherit}
    screen, and the reticle is 44 px. The slots are placed from emoteAngle() in
    JS, so nothing here knows how many there are: add a ninth and the ring
    re-spaces itself. */
-#emote-wheel,#order-wheel{position:absolute;left:50%;top:50%;width:440px;height:440px;
+#emote-wheel,#order-wheel,#companion-wheel{position:absolute;left:50%;top:50%;width:440px;height:440px;
   transform:translate(-50%,-50%);pointer-events:none;
   animation:emoteIn .13s cubic-bezier(.22,1,.36,1) both}
-#emote-wheel.hidden,#order-wheel.hidden{display:none}
+#emote-wheel.hidden,#order-wheel.hidden,#companion-wheel.hidden{display:none}
 /* The dim disc under it, and it has to reach PAST the slots.
    A wheel over a firefight is unreadable without one — measured against a real
    Mustafar sunset, eight labels in the HUD's dim grey over a 90%-white sky were
@@ -1819,7 +1819,7 @@ button{font-family:inherit}
    stopping at 22% where it lit nothing but the middle. This is the only moment
    in the game where taking contrast AWAY from the fight is right: you have
    already decided not to be fighting. */
-#emote-wheel::before,#order-wheel::before{content:"";position:absolute;inset:-9%;border-radius:50%;
+#emote-wheel::before,#order-wheel::before,#companion-wheel::before{content:"";position:absolute;inset:-9%;border-radius:50%;
   background:radial-gradient(circle at 50% 50%,rgba(5,7,12,.86) 20%,rgba(5,7,12,.74) 48%,
     rgba(5,7,12,.34) 70%,transparent 86%)}
 .em{position:absolute;transform:translate(-50%,-50%);width:118px;text-align:center;
@@ -3327,9 +3327,11 @@ body:has(#touch.on) .powers .pw{touch-action:none}
 #hud.deck > *{display:none !important}
 #hud.deck > #order-wheel,
 #hud.deck > #emote-wheel,
+#hud.deck > #companion-wheel,
 #hud.deck > #hud-center-msg{display:block !important}
 #hud.deck > #order-wheel.hidden,
-#hud.deck > #emote-wheel.hidden{display:none !important}
+#hud.deck > #emote-wheel.hidden,
+#hud.deck > #companion-wheel.hidden{display:none !important}
 
 /* ══ THE COMPANION PLATE ══════════════════════════════════════════════════
  *

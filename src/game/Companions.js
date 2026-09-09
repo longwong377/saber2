@@ -667,7 +667,7 @@ function heelStation(e, out) {
    * last rung's second half from one row of a different table.
    */
   if (p.alive === false || p.dead) return out.copy(p.position);
-  const yaw = p.aimDir ? Math.atan2(p.aimDir.x, p.aimDir.z) : (p.facing || 0);
+  const yaw = heelYaw(e, p);
   /* AWAY PUTS IT BEHIND YOU AND NOT BESIDE YOU. The side offset is what keeps
    * an ordinary heel out from under your feet; a companion told to break off
    * is a companion you want between you and nothing at all. */
@@ -682,6 +682,60 @@ function heelStation(e, out) {
     p.position.z - Math.cos(yaw) * back + Math.sin(yaw) * side,
   );
 }
+
+/**
+ * WHICH WAY IS "BEHIND YOU" — and it is the way you are WALKING, not the way
+ * you are looking.
+ *
+ * The station used to be solved off `aimDir` every frame. Turn round on the
+ * spot to look at something and the point 3.4 m off your back flips to 3.4 m
+ * off your front: the animal, which was exactly where it should be, is now
+ * seven metres from its station, so it trots THROUGH you and plants itself
+ * dead centre of the reticle you just turned to use. Measured on a stock
+ * deploy: massiff at 2.7 m behind, one 180° flick, massiff at 2.6 m in front
+ * and in the crosshair. Every mouse movement moved the station, so the thing
+ * that was meant to be predictable hunted round you all fight.
+ *
+ * A heading that only changes when you MOVE fixes both halves. Standing still
+ * and looking round leaves the station where it is, so the animal stays put;
+ * walking somewhere writes the heading from your velocity, so it falls in
+ * behind the direction you are actually going, which is the one direction you
+ * are never looking at. `MOVING` is well above a standing body's drift and
+ * below a walk, so a nudge does not swing it.
+ *
+ * FALLS BACK TO AIM the first frame and for any owner that reports no
+ * velocity (a stub in a check, a peer's snapshot), which is what keeps the
+ * geometry every check measures against unchanged: a stationary fixture with
+ * `facing: 0` gets the same point it always did.
+ */
+const MOVING = 1.2;
+function heelYaw(e, p) {
+  const aim = p.aimDir ? Math.atan2(p.aimDir.x, p.aimDir.z) : (p.facing || 0);
+  const v = p.velocity;
+  if (v && Math.hypot(v.x, v.z) > MOVING) {
+    /* BACKING UP IS THE EXCEPTION: "behind the way you are moving" is then in
+     * front of your face, between you and whatever you are backing away from.
+     * A retreat keeps the station behind where you are LOOKING. */
+    const ahead = p.aimDir ? (v.x * p.aimDir.x + v.z * p.aimDir.z) : 1;
+    e._cmpHeelYaw = ahead >= 0 ? Math.atan2(v.x, v.z) : aim;
+  }
+  if (e._cmpHeelYaw == null) e._cmpHeelYaw = aim;
+  /* AND NEVER IN YOUR CROSSHAIR. A station that stays put while you turn is
+   * a station you can turn to face: a tauntaun 3.4 m behind you is a
+   * tauntaun filling the screen the moment you look over your shoulder.
+   * When the station lands inside the cone you are aiming down, it slides
+   * round to the nearer flank — 77° off your aim, at the edge of the view —
+   * and stays there until you walk. */
+  const stationDir = e._cmpHeelYaw + Math.PI;
+  let off = stationDir - aim;
+  off = Math.atan2(Math.sin(off), Math.cos(off));
+  if (Math.abs(off) < CONE) {
+    const sign = off !== 0 ? Math.sign(off) : (e._cmpSide ?? 1);
+    e._cmpHeelYaw = aim + sign * FLANK - Math.PI;
+  }
+  return e._cmpHeelYaw;
+}
+const CONE = 0.9, FLANK = 1.35;
 
 /**
  * ── THE FOUR THINGS EVERYBODY ASKS ABOUT A COMPANION ──────────────────────

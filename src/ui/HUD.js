@@ -714,6 +714,13 @@ export class RadialWheel {
     this.sel = -1;
     this.slots = [];
     this._build();
+    /* CLOSED UNTIL HELD. `close()` is the only writer of `hidden` and it
+     * returns early when the wheel was never open — so a host that arrived
+     * without the class was painted over the whole HUD, slot captions and all,
+     * until the first time the key was held and let go. The companion ring
+     * shipped exactly that way: six labels and "Nothing of yours is out"
+     * spread across the screen from the deploy frame on. */
+    this.host?.classList?.add('hidden');
   }
 
   /** The caption for slot `i`. Overridden by a subclass that has a live one. */
@@ -1047,6 +1054,11 @@ export class CompanionWheel extends RadialWheel {
     /* The live body, set by whoever ticks the HUD. Null in every mode where
      * nothing of yours is out, which is most of them. */
     this.body = null;
+    /* THE CAPTIONS ARE READ WHEN THE RING OPENS, not when it was built. It is
+     * built once, before any animal is out, so every slot was baked with
+     * "Nothing of yours is out" and kept saying it to a player whose massiff
+     * was standing at their heel. */
+    this.onOpen = () => this.refresh();
   }
 
   /** The verb slot wears the live animal's own name. */
