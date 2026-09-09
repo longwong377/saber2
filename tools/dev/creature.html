@@ -32,3 +32,6 @@ window.__show = (kind, az = 0.7, el = 0.22) => {
 };
 window.__ready = true;
 </script>
+<script type="module">
+window.__probe = async () => { const B = await import('/src/game/Bodies.js'); return Object.keys(B).filter(k=>/hull|surface/i.test(k)); };
+</script>

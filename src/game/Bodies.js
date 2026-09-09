@@ -10226,7 +10226,7 @@ export const CREATURE_PLANS = {
      * belly in this file is: it is the surface you see from below, which on a
      * mount is the surface you never see, and on a climbing animal on a cliff
      * above you is the only surface you DO. */
-    hide: 0x5f7f46, plate: 0x86a057, belly: 0xd8cf9a, eye: 0xe8a03a,
+    hide: 0x4d7a3e, plate: 0x6f9a4e, belly: 0xcfd39c, eye: 0xe8a03a, crest: 0x2aa58f,
     /* LOW AND LONG: hip 0.92 on a 1.30 trunk, against the acklay's 1.62 on
      * 1.06. The acklay is taller than it is long and this is the inverse,
      * which is the first read at any distance. */
@@ -10238,11 +10238,12 @@ export const CREATURE_PLANS = {
     /* A LONG NECK, three segments and the longest curl in the file: the head
      * has to be able to reach past the rock the front feet are on, and a mount
      * whose head is up where the rider can see it is a mount you steer by. */
-    headAt: [0.10, 1.02], neck: [3, 0.26, 0.17, -0.22, -0.14], head: 'horned-ape',
+    headAt: [0.10, 1.02], neck: [3, 0.26, 0.17, -0.22, -0.14], head: 'crested',
     /* SCUTES AND NOT A RIDGE: a plated back rather than a spine of spikes,
      * because a rider sits on this one and a row of spikes down the seat is a
      * silhouette that contradicts the saddle. */
     back: 'scutes', tail: [4, 2.60, 0.12, 0.10, -0.16],
+    plume: { from: 0.55, n: 10, len: 0.34, w: 0.07 },
     /* THE BLANKET, and this row is the one that needed `lift` to be a plan
      * number. The scutes above are seated by `hull` sunk 0.038·S and stand
      * 0.095·S along the normal, so about 0.057·S of bone is proud of the hide
@@ -10277,7 +10278,7 @@ export const CREATURE_PLANS = {
   },
 
   massiff: {
-    hide: 0x6f6455, plate: 0x8b7f68, belly: 0x9a8f79, eye: 0xd8a832,
+    hide: 0x5b4c3e, plate: 0x9a8668, belly: 0xb5a78c, eye: 0xd8a832,
     hip: 0.44, trunk: [0.10, -0.10, 0.86], pitch: -0.06, girth: 0.28,
     /* Shoulder and haunch, both slight: this animal is a spine with a head on
      * it and the silhouette should read as length rather than as bulk. */
@@ -10306,7 +10307,17 @@ export const CREATURE_PLANS = {
      * a cone — and armour plate says that from forty metres in a way a row of
      * spikes does not.
      */
-    back: 'scutes', tail: [3, 0.40, 0.09, 0.12, -0.10],
+    back: 'scutes', tail: [3, 0.52, 0.12, 0.10, -0.10],
+    /* The reference (assets/reference/units/creatures/Massiff.webp): a row of
+     * long quills from the crown down past the shoulder, and shoulders that
+     * are a wall of bony plate. Those two are the whole read at range. */
+    quills: { n: 8, from: 0.50, to: 1.0, h: 0.50, peak: 0.96, lean: 0.50, rise: 0.05 },
+    armour: [
+      { t: 0.70, phi: 0.95, w: 0.17, h: 0.13, d: 0.21, sink: 0.07 },
+      { t: 0.80, phi: 0.80, w: 0.15, h: 0.12, d: 0.17, sink: 0.06 },
+      { t: 0.93, phi: 0.55, w: 0.11, h: 0.09, d: 0.12, sink: 0.05 },
+      { t: 0.40, phi: 1.05, w: 0.14, h: 0.11, d: 0.19, sink: 0.07 },
+    ],
     limbs: [
       { role: 'leg', x: 0.24, y: 0.04, z: 0.46, plant: 0.34, femur: 0.26, tibia: 0.28, tarsus: 0.10,
         girth: 0.92, pole: [0.20, 0.34, 0.90], foot: 'paw',
@@ -10568,7 +10579,7 @@ export const CREATURE_PLANS = {
      * belly is the palest in the file (0xe2dac8 against the massiff's
      * 0x9a8f79) because the underside is what you see when you are holding
      * it, which is where this animal spends the fights it survives. */
-    hide: 0xa89c8a, plate: 0xbdb2a0, belly: 0xe2dac8, eye: 0x74c8ff,
+    hide: 0xb3a48e, plate: 0xc9bfad, belly: 0xe8e0cc, eye: 0x74c8ff,
     hip: 0.30, trunk: [0.07, -0.05, 0.52], pitch: 0.02, girth: 0.30,
     /* ROUND IS THE POINT, and it is the girth-to-trunk ratio that says so:
      * 0.30/0.52 = 0.58 against the massiff's 0.28/0.86 = 0.33 and the nexu's
@@ -10833,7 +10844,7 @@ export const CREATURE_PLANS = {
    * the spine rather than quills raked off the shoulders.
    */
   tuk: {
-    hide: 0x4a4038, plate: 0x9a9282, belly: 0x6b5f52, eye: 0xff3a2a,
+    hide: 0x3d342c, plate: 0xa39b8a, belly: 0x6b5f52, eye: 0xff3a2a,
     /**
      * LEGGY, AND THAT IS BOTH THE DESIGN AND THE MEASUREMENT.
      *
@@ -10888,7 +10899,9 @@ export const CREATURE_PLANS = {
      * note there — because that is the row that had drifted. The longer tail
      * stays: on a low body the tail is the part that carries at range, which
      * is the nexu's own argument at 2.40. */
-    back: 'ridge', tail: [5, 1.15, 0.055, 0.16, -0.14],
+    back: 'ridge', tail: [5, 1.15, 0.07, 0.16, -0.14],
+    quills: { n: 9, from: 0.55, to: 1.0, h: 0.34, peak: 0.95, lean: 0.55, rise: 0.05 },
+    armour: [{ t: 0.80, phi: 0.95, w: 0.13, h: 0.09, d: 0.16, sink: 0.05 }],
     limbs: [
       /* The nexu's fore leg, shortened and thinned. `pole` keeps its direction
        * and loses its length with the body; `femurRest`/`tibiaRest` are
@@ -10963,7 +10976,7 @@ export const CREATURE_PLANS = {
     /* Lighter than the rancor's 0x6b6152 hide and 0x585044 plate, because
      * every one of those greys is weathering and this animal has not had
      * any yet; the eye keeps the family's amber but paler. */
-    hide: 0x7d7360, plate: 0x6a6152, belly: 0x9c9280, eye: 0xffe08a,
+    hide: 0x6e6452, plate: 0x4a4338, belly: 0x9c9280, eye: 0xffe08a,
     hip: 0.78, trunk: [0.10, -0.08, 0.62],
     /* LESS upright than the rancor's 1.02, which looks backwards and is not.
      * The pose the reference is always in puts the knuckles on the sand, and
@@ -10984,6 +10997,8 @@ export const CREATURE_PLANS = {
     section: { n0: 2.1, n1: 2.4, back: 0.03, keel: 0.04, waist: 0.02 },
     headAt: [0.54, 0.30], neck: [1, 0.10, 0.30, 0.30, 0], head: 'tusked',
     back: 'ridge',
+    quills: { n: 7, from: 0.30, to: 0.95, h: 0.30, peak: 0.70, lean: 0.55, rise: 0.05 },
+    armour: [{ t: 0.72, phi: 1.00, w: 0.16, h: 0.10, d: 0.18, sink: 0.05 }, { t: 0.86, phi: 0.70, w: 0.12, h: 0.08, d: 0.13, sink: 0.05 }],
     /* Shorter, and shorter than the shrink: 0.72 of reach against the
      * rancor's 1.30 is 1.16 trunk-lengths where the rancor is 1.76. A tail
      * as long as the adult's would be the one part of the outline that read
@@ -11127,7 +11142,7 @@ export const CREATURE_PLANS = {
      * on predators. `emissiveMat` runs at 2.8 either way, and a lamp burning
      * on the head of the thing you are sitting behind is a lantern pointed at
      * your own night route. */
-    hide: 0xb9b2a4, plate: 0x8e8577, belly: 0xd8d2c4, eye: 0x8a5a2e,
+    hide: 0xd6d0c2, plate: 0x8e8577, belly: 0xf0ece2, eye: 0x8a5a2e,
     /**
      * IT STANDS LIKE A RUNNER NOW, AND IT WAS HANGING NOSE-DOWN.
      *
@@ -11333,7 +11348,7 @@ export const CREATURE_PLANS = {
      * animals at a distance where neither's outline has resolved yet. The eye
      * stays the reference's red, which is now the only warm thing on the body
      * and reads at range for exactly that reason. */
-    hide: 0x74798a, plate: 0x8f96a6, belly: 0xaeb4be, eye: 0xb8452c,
+    hide: 0x8a7d66, plate: 0x6b6250, belly: 0xbfb49a, eye: 0xb8452c,
     /* Scale 1.7 is declared on the archetype and is deliberately the NEXU's,
      * to the digit: same size, opposite proportions, so the pair says out loud
      * that these rows are the animal and not its bounding box. Against that
@@ -11784,6 +11799,9 @@ export function buildQuadruped(opts = {}) {
    * paragraph refusing for the iris.
    */
   const pupil = hideMat(0x140f0b, 0.30);
+  /* THE CREST — the varactyl's feathers, a fourth colour a kind can own. Falls
+   * back to the plate so a kind without one builds byte-identically. */
+  const crest = hideMat(opts.crest ?? P.crest ?? P.plate, 0.80);
 
   /**
    * ── WHAT AN ANIMAL THAT HAS BEEN ALIVE A WHILE SHOWS ─────────────────
@@ -12243,6 +12261,49 @@ export function buildQuadruped(opts = {}) {
    * as ONE tube rather than as a chain of capped limbs — six capped segments
    * bury five pairs of end caps inside themselves, which is 60% of the
    * triangles on geometry nobody can see (see tubeGeo). */
+  /**
+   * ── QUILLS AND ARMOUR, PLAN-DRIVEN AND INDEPENDENT OF `back` ──────────
+   *
+   * Two features a kind can wear on top of whatever `back` treatment it has,
+   * because the massiff's reference is BOTH: a row of long spines from the
+   * crown to the loin AND a wall of bony shoulder plate, and `back` is one
+   * word. The old massiff had six low scute bumps and read as a grey dog at
+   * three metres; the quills are its silhouette and the shoulder is its mass.
+   *
+   * `quills`  { n, from, to, h, peak, lean }  — n spines from station `from`
+   *           to `to` along the hull (1 = the head end), each `h·S` tall at
+   *           the `peak` station and shrinking away from it, raked back by
+   *           `lean` radians. Seated on the hull with a quarter of the root
+   *           inside the hide, like `ridge`.
+   * `armour`  [{ t, phi, w, h, d, sink }]  — bony bosses, one per row and its
+   *           mirror, aimed down the hull normal at station `t` and angle
+   *           `phi` (0 dorsal, ±π/2 flank). Same seat as `scutes`.
+   */
+  if (P.quills) {
+    const { n = 12, from = 0.30, to = 0.98, h = 0.34, peak = 0.82, lean = 0.55, rise = 0 } = P.quills;
+    for (let i = 0; i < n; i++) {
+      const t = from + (i / (n - 1)) * (to - from);
+      const fall = Math.abs(t - peak) / Math.max(0.05, Math.max(peak - from, to - peak));
+      const hh = h * S * (1 - fall * 0.72);
+      /* `ks` and not `trunkParts`: the trunk was baked two hundred lines up,
+       * and a part pushed to that list here is a part nobody draws. */
+      const seat = hull(t, 0, 0);
+      const up = hullN(0);
+      ks.add(plate, clawGeo(hh, 0.075 * S, 0.008 * S, -0.30, 5, 3),
+        [seat[0] + up[0] * (rise * S), seat[1] + up[1] * (rise * S), seat[2] + up[2] * (rise * S)],
+        [-lean - P.pitch, 0, 0]);
+    }
+  }
+  if (P.armour) {
+    for (const a of P.armour) {
+      for (const sx of (a.phi ? [1, -1] : [1])) {
+        const phi = sx * (a.phi || 0);
+        ks.aim(plate, new THREE.SphereGeometry(1, 10, 8), hull(a.t, phi, (a.sink ?? 0.05) * S), hullN(phi),
+          [a.w * S, a.h * S, a.d * S]);
+      }
+    }
+  }
+
   if (P.tail[0] > 0) {
     /**
      * ── AND IT IS RESAMPLED, FOR THE NECK'S REASON AND NOT A NEW ONE ────
@@ -12278,6 +12339,25 @@ export function buildQuadruped(opts = {}) {
       z -= Math.cos(a) * step; y += Math.sin(a) * step; a += (curl * n) / (RT - 1);
     }
     ks.add(hide, tubeGeo(nodes, 9), [0, 0, 0]);
+    /**
+     * THE TAIL PLUME — `P.plume: { from, n, len, w }`, a double row of vanes
+     * standing up and back off the last stretch of the tail, in the crest
+     * colour. The varactyl's reference is a green lizard with a blue-green
+     * fan at both ends, and without this one it was a green lizard.
+     */
+    if (P.plume) {
+      const { from = 0.50, n: pn = 9, len = 0.30, w = 0.06 } = P.plume;
+      for (let i = 0; i < pn; i++) {
+        const u = from + (i / Math.max(1, pn - 1)) * (1 - from);
+        const [x, y, z, r] = nodes[Math.min(RT - 1, Math.round(u * (RT - 1)))];
+        const L2 = len * S * (1 - (i / pn) * 0.45);
+        for (const sx of [1, -1]) {
+          const d = new THREE.Vector3(sx * 0.32, 0.92, -0.30).normalize();
+          const g = new THREE.SphereGeometry(1, 7, 5); g.scale(w * S, L2 * 0.5, 0.008 * S);
+          ks.aim(crest, g, [x + d.x * L2 * 0.5 + sx * r * 0.4, y + d.y * L2 * 0.5 + r * 0.6, z + d.z * L2 * 0.5], d);
+        }
+      }
+    }
   }
   /**
    * ── RIBBED FLANKS, AND THEY ARE RIBS NOW ───────────────────────────────
@@ -12463,7 +12543,7 @@ export function buildQuadruped(opts = {}) {
    * animal's own half-width at that station, swells and superellipse and all.
    * See the neck's own note for what it is used for and what typing a number
    * here instead cost. */
-  buildCreatureHead(rig, P, S, { hide, plate, belly, eye, tooth, pupil,
+  buildCreatureHead(rig, P, S, { hide, plate, belly, eye, tooth, pupil, crest,
     trunkR: Math.abs(hull(P.headAt[1] / P.trunk[2], Math.PI / 2)[0]) });
 
   /* ── the limbs ── */
@@ -13586,7 +13666,7 @@ function buildCreatureHead(rig, P, S, M) {
         { rings: 3, capN: 2, capY0: 0.14, capY1: 0.55, section: ovalSection(0.26, 2.2) });
       k.add(M.belly, earInner, [sx * 0.190 * S, hy + 0.205 * S, hz + 0.012 * S], [0.08, 0, sx * -0.34]);
       /* THE EYE, and it is the biggest in the file relative to its skull. */
-      eyeAt(sx * 0.148, 0.005, 0.255, 0.105);
+      eyeAt(sx * 0.148, 0.005, 0.255, 0.080);
       /* THE WHISKER PAD — one soft swelling either side of the nose. A cat's
        * muzzle is two pads and a nose, and without them the blunt lathe above
        * ends in a flat wall. `M.belly` because a tooka's is pale. */
@@ -13623,6 +13703,31 @@ function buildCreatureHead(rig, P, S, M) {
       k.row(3, (i, t) => k.add(M.hide, clawGeo(0.28 * S, 0.085 * S, 0.015 * S, 0.5, 5, 2),
         [sx * (0.20 + t * 0.08) * S, hy - (0.06 + t * 0.10) * S, hz - 0.02 * S], [1.6 + t * 0.4, 0, sx * (1.1 - t * 0.3)]));
     });
+  } else if (K === 'crested') {
+    /* THE VARACTYL'S OWN HEAD. It wore the wampa's (`horned-ape`, horns and a
+     * fur ruff) because that branch existed. The reference is a long, flat,
+     * beak-edged lizard skull with a fan of blue-green feathers standing off
+     * the back of it — so: a duck-bill muzzle, a crest of vanes. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.40 * S, 12, 9); g.scale(1.00, 0.84, 1.16); return g; })(),
+      [0, hy + 0.06 * S, hz + 0.12 * S]]);
+    parts.push(muzzle(0.66, 0.30, 0.20, -0.08, 0.20, 0.06, { flat: 0.84, n: 3.2, chin: 0.16, crown: 0.06 }));
+    for (const sx of [1, -1]) parts.push(cheek(sx * 0.24, -0.06, 0.14, 0.20, 1.0, 0.86, 1.15));
+    k.pair((sx) => {
+      eyeAt(sx * 0.20, 0.14, 0.34, 0.050);
+      k.row(5, (i, t) => k.add(M.tooth, clawGeo(0.09 * S, 0.018 * S, 0.003 * S, 0.3, 4, 2),
+        [sx * (0.09 + t * 0.10) * S, hy - 0.14 * S, hz + (0.66 - t * 0.14) * S], [1.2 + t * 0.4, 0, 0]));
+    });
+    const vane = (w, len) => { const g = new THREE.SphereGeometry(1, 7, 5); g.scale(w, len * 0.5, 0.010 * S); return g; };
+    const rootAt = [0, hy + 0.22 * S, hz - 0.14 * S];
+    for (const [rowN, base, spread, lift] of [[11, 0.95, 1.05, 0.80], [9, 0.70, 0.85, 0.50], [7, 0.48, 0.65, 0.25]]) {
+      k.row(rowN, (i, t) => {
+        const th = (t * 2 - 1) * spread;
+        const len = (base - Math.abs(t * 2 - 1) * 0.30) * S;
+        const d = new THREE.Vector3(Math.sin(th) * 0.80, lift, -0.75 + Math.abs(th) * 0.10).normalize();
+        k.aim(M.crest, vane(0.11 * S, len),
+          [rootAt[0] + d.x * len * 0.5, rootAt[1] + d.y * len * 0.5, rootAt[2] + d.z * len * 0.5], d);
+      });
+    }
   } else if (K === 'beak') {
     /**
      * THE VHAL'KIR HAWK — the sixth branch, and the first head in this
