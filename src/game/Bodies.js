@@ -10579,7 +10579,7 @@ export const CREATURE_PLANS = {
      * belly is the palest in the file (0xe2dac8 against the massiff's
      * 0x9a8f79) because the underside is what you see when you are holding
      * it, which is where this animal spends the fights it survives. */
-    hide: 0xb3a48e, plate: 0xc9bfad, belly: 0xe8e0cc, eye: 0x74c8ff,
+    hide: 0xc4884f, plate: 0x8a5a33, belly: 0xf1e6d2, eye: 0x74c8ff,
     hip: 0.30, trunk: [0.07, -0.05, 0.52], pitch: 0.02, girth: 0.30,
     /* ROUND IS THE POINT, and it is the girth-to-trunk ratio that says so:
      * 0.30/0.52 = 0.58 against the massiff's 0.28/0.86 = 0.33 and the nexu's
@@ -10659,7 +10659,7 @@ export const CREATURE_PLANS = {
      * where an enemy seen for four seconds across a wave is not. What it
      * costs is one more `else if` in a function that already has six, and it
      * touches no other body. See `buildCreatureHead` for the numbers. */
-    headAt: [0.18, 0.44], neck: [1, 0.09, 0.16, 0.10, 0], head: 'kitten',
+    headAt: [0.18, 0.44], neck: [1, 0.09, 0.16, 0.10, 0], head: 'kitten', headScale: 1.12,
     /* ONE neck segment, and the shortest in the file at 0.09 against the
      * massiff's two of 0.14. A kit has no neck — the head sits straight on
      * the shoulders, which is the second half of "the head is too big for
@@ -11451,7 +11451,7 @@ export const CREATURE_PLANS = {
      *
      * The rancor (0.62 of girth clear) and the wampa (1.01) were already
      * compensated by hand by whoever authored them; nothing here moves them. */
-    headAt: [0.58, 0.86], neck: [3, 0.105, 0.145, -0.35, -0.09], head: 'maw',
+    headAt: [0.58, 0.86], neck: [3, 0.105, 0.145, -0.35, -0.09], head: 'maw', headScale: 1.18,
     back: 'folds', tail: [3, 0.46, 0.17, -0.10, -0.12],
     /* THE BLANKET, and it is the warm thing on a cold animal. The span is
      * shifted forward of the tauntaun's — 0.32-0.70 against 0.30-0.68 — because
@@ -11601,7 +11601,7 @@ export const CREATURE_PLANS = {
      * hangar's own light, with the pale coverts the plumage treatment lays
      * over it invisible against it. The countershading only reads if the dark
      * half is a colour rather than an absence. */
-    hide: 0x6f5f4a, plate: 0xc9bda2, belly: 0xf0e7d3, eye: 0xf2b21c,
+    hide: 0x4e3f2e, plate: 0xb9a482, belly: 0xf3ead6, eye: 0xf2b21c,
     /* THE BODY IS A TEARDROP AND NOT A BALL, and the first build was a ball:
      * `girth` 0.13 with a 1.40 shoulder swell is a 36 cm barrel on a 52 cm
      * trunk, which rendered as a fat mammal with wings on. A hawk's body is
@@ -11621,7 +11621,7 @@ export const CREATURE_PLANS = {
      * — which is the S every bird's neck is, done in two segments. */
     /* SHORTER STILL: 2 × 0.055 of neck (was 0.070), because a raptor's head
      * sits ON its shoulders — the neck only shows as the S the head turns on. */
-    headAt: [0.14, 0.42], neck: [2, 0.055, 0.062, 0.42, -0.30], head: 'beak',
+    headAt: [0.14, 0.42], neck: [2, 0.055, 0.062, 0.42, -0.30], head: 'beak', headScale: 1.25,
     back: 'plumage', tail: [0, 0, 0, 0, 0],
     /* `z` 0.36 IS THE SHOULDER AND IT WAS -0.04, WHICH WAS THE TAIL.
      * `creatureSkeleton` places a wing root in the BODY BONE's frame, where +Y
