@@ -47,3 +47,12 @@ single-file build is. Just the file and one line saying what changed since the
 last one — and merge, so the link above is the same game.
 
 Do this without being asked again at the end of any work worth playing.
+
+## Never report a state you have not observed
+
+Checks, logs and docs are evidence about the code. They are not evidence about
+what the player sees or plays. If the question is about the experience, the
+only valid answer comes from deploying it and looking, including at anything
+opt-in (a companion, a mount, a room). If you have not looked, say
+"unverified" instead of "good". Screenshots cost minutes on this box; a wrong
+"it's fine" costs a day.
