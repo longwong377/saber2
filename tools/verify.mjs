@@ -3831,6 +3831,21 @@ check('destruction: an explosion takes a bite out of a wall without levelling it
    * passed — the same defect as a suite exporting no `run()` and being counted
    * as a green 0/0, which this harness already refuses further down.
    */
+  /* SABER_CHECK_ONLY=beasts,characters RUNS THE NAMED SUITES AND NOTHING
+   * ELSE — for iterating on one area without the twenty-minute run. Not a
+   * tier and not a gate: a name with no file behind it fails, for the fast
+   * tier's reason. */
+  const only = (process.env.SABER_CHECK_ONLY || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (only.length) {
+    const have = new Set(files);
+    const missing = only.filter(n => !have.has(`${n}.mjs`));
+    if (missing.length) {
+      console.error(`\n  SABER_CHECK_ONLY names ${missing.length} suite(s) that do not exist: ${missing.join(', ')}\n`);
+      process.exit(2);
+    }
+    const want = new Set(only.map(n => `${n}.mjs`));
+    files = files.filter(f => want.has(f));
+  }
   const tier = process.env.SABER_CHECK_TIER;
   if (tier === 'fast') {
     const { FAST } = await import('./tiers.mjs');
