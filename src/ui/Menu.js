@@ -1013,6 +1013,9 @@ export const DEFAULT_SETTINGS = {
    * from it; after that the record is the one writer and this is ignored.
    */
   companionLook: {},
+  /** THE NAME YOU GAVE A KIND YOU HAVE NOT TAKEN OUT YET — `adopt` seeds the
+   *  record from it; after that the record's own name is the one. */
+  companionName: '',
   /**
    * THE MINIMAP, on by default and switchable off.
    *
@@ -1292,6 +1295,7 @@ export const SETTING_READERS = {
    * adoption all ask it rather than reading the key a second time. */
   companion:       ['main.js', 'const want = s?.companion'],
   companionLook:   ['main.js', 's?.companionLook?.[want]'],
+  companionName:   ['main.js', 's?.companionName || null'],
   minimap:         ['ui/HUD.js', 'settings.minimap !== false'],
   minimapSense:    ['ui/HUD.js', 'settings.minimapSense !== false'],
   reticleShape:    ['ui/HUD.js', 'shapeAt(s.reticleShape)'],
@@ -6164,6 +6168,33 @@ export class Menu {
   }
 
   /**
+   * THE NAME FIELD. Writes the kennel record when there is one of this kind,
+   * and `settings.companionName` until there is — the same split the paint
+   * takes, for the same reason: the record is created at deploy.
+   */
+  _wireCompanionName(kind, live) {
+    const row = document.getElementById('companion-name-row');
+    const input = document.getElementById('companion-name');
+    if (!row || !input) return;
+    row.classList.toggle('hidden', !kind);
+    if (!kind) return;
+    const current = live ? (live.name || '') : (this.s.companionName || '');
+    if (document.activeElement !== input) input.value = current;
+    if (!input.dataset.cmpBound) {
+      input.dataset.cmpBound = '1';
+      input.addEventListener('change', () => {
+        const v = input.value.trim().slice(0, 18);
+        const k = loadKennel();
+        const kindNow = (k.live && k.live.kind) || (this.s.companion !== 'none' ? this.s.companion : null);
+        if (k.live && k.live.kind === kindNow) dressCompanion(k.live.id, { name: v });
+        this.s.companionName = v;
+        saveSettings(this.s);
+        this._syncKennel();
+      });
+    }
+  }
+
+  /**
    * Draw and bind the companion's colours. Rebuilt whole on every kind change,
    * because a hawk and a wookiee do not wear the same words and a row left
    * over from the last pick is a control that writes a slot the builder will
@@ -6174,6 +6205,7 @@ export class Menu {
     if (!host) return;
     const k = loadKennel();
     const kind = (k.live && k.live.kind) || (this.s.companion !== 'none' ? this.s.companion : null);
+    this._wireCompanionName(kind, k.live && k.live.kind === kind ? k.live : null);
     if (!kind) { host.innerHTML = ''; return; }
     /* BEFORE THE FIRST RUN THERE IS NO RECORD, AND YOU CAN STILL PAINT IT. The
      * kennel record is created at deploy (`fieldFromKennel`), so the swatches

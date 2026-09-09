@@ -367,7 +367,16 @@ function warm(fig) {
  */
 export function callTheCompanion(world) {
   if (!world || world._companionDeck) return world?._companionDeck || null;
-  const rec = loadKennel().live;
+  /* THE ANIMAL YOU CHOSE, not whatever the kennel last held. The record is
+   * only re-adopted at deploy, so a player who picked a new kind on the menu
+   * saw the OLD animal on the deck — "a duplicate of a past companion". The
+   * kennel's record is used when it is that kind (its name, its paint, its
+   * growth); otherwise a fresh one of the chosen kind stands in. */
+  const want = world.settings?.companion;
+  let rec = loadKennel().live;
+  if (want && COMPANION_KINDS[want] && (!rec || rec.kind !== want)) {
+    rec = { kind: want, look: {}, xp: 0, runs: 0, name: null };
+  }
   if (!rec) return null;
   const K = COMPANION_KINDS[rec.kind];
   if (!K) return null;

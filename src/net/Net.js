@@ -1580,6 +1580,7 @@ export const LOCAL_KEYS = {
    */
   companion: 'which animal you bring; it crosses per peer on the roster instead',
   companionLook: 'the paint you chose for a kind you have not taken out yet; the record carries it after',
+  companionName: 'the name you gave it; the record carries it after, and the card crosses on the roster',
   /**
    * WHAT YOU OWN, AND IT IS NOT THE HOST'S TO SAY — V16's keepsakes.
    *

@@ -5703,7 +5703,7 @@ function myCompanion(s = settings) {
    * `settings.companionLook[kind]`, the swatches' store before there is a
    * record to write into. */
   return (k.live && k.live.kind === want) ? k.live
-    : adoptCompanion(want, null, s?.companionLook?.[want] || {});
+    : adoptCompanion(want, s?.companionName || null, s?.companionLook?.[want] || {});
 }
 
 /** It is standing beside you, and this is the one line that says so. */
@@ -5741,6 +5741,11 @@ function greetCompanion(w, rec) {
  */
 function fieldFromKennel(w, player) {
   if (!w || !player) return null;
+  /* NOT ON THE FLIGHT DECK. The hangar has its own animal — `callTheCompanion`
+   * in CompanionDeck.js builds a deck figure that walks up in the lift with
+   * you — so a live one fielded here as well was the second massiff at your
+   * heel that every hangar visit had. One body per place. */
+  if (w.settings?.mode === 'hangar' || w.level?.key === 'hangar') return null;
   const rec = myCompanion(w.settings);
   /* PUBLISHED BEFORE THE `!rec` RETURN, AND ON BOTH ENDS, because "I am
    * bringing nothing" is a thing that has to be sendable. A player who joins

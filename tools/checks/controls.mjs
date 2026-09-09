@@ -2058,7 +2058,7 @@ export async function run({ check, assert }) {
      * and the menu has to write the key by name — so this is a third shape of
      * control, not a third way to be excused from having one.
      */
-    const TYPED = { playerName: 'opt-name', seed: 'opt-seed' };
+    const TYPED = { playerName: 'opt-name', seed: 'opt-seed', companionName: 'companion-name' };
     /**
      * THE ONE SETTING EXCUSED FROM HAVING A CONTROL, AND THE EXCUSE IS DERIVED
      * RATHER THAN ASSERTED.
