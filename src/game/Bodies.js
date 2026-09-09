@@ -10995,7 +10995,7 @@ export const CREATURE_PLANS = {
      * superellipse. The waist drops to 0.02 from the rancor's 0.04 for the
      * same reason: a barrel does not pinch. */
     section: { n0: 2.1, n1: 2.4, back: 0.03, keel: 0.04, waist: 0.02 },
-    headAt: [0.54, 0.30], neck: [1, 0.10, 0.30, 0.30, 0], head: 'tusked',
+    headAt: [0.54, 0.30], neck: [1, 0.10, 0.30, 0.30, 0], head: 'tusked', headScale: 1.3,
     back: 'ridge',
     quills: { n: 7, from: 0.30, to: 0.95, h: 0.30, peak: 0.70, lean: 0.55, rise: 0.05 },
     armour: [{ t: 0.72, phi: 1.00, w: 0.16, h: 0.10, d: 0.18, sink: 0.05 }, { t: 0.86, phi: 0.70, w: 0.12, h: 0.08, d: 0.13, sink: 0.05 }],
@@ -11041,7 +11041,7 @@ export const CREATURE_PLANS = {
        * infant that walks on its knuckles is and what the adult is not. It
        * costs nothing: `girth` scales the limb lathe's radius, not its
        * segment count. */
-      { role: 'arm', x: 0.40, y: 0.32, z: 0.20, femur: 0.36, tibia: 0.38, tarsus: 0.20,
+      { role: 'arm', x: 0.40, y: 0.32, z: 0.20, femur: 0.46, tibia: 0.48, tarsus: 0.22,
         girth: 1.50, pole: [0.52, -0.08, -0.80], foot: 'talon',
         femurRest: [0.16, -0.96, 0.22], tibiaRest: [0.06, -0.98, 0.16],
         hand: [0.54, -0.16, 0.54] },
@@ -11218,7 +11218,7 @@ export const CREATURE_PLANS = {
      * short broad face where a tauntaun has a muzzle, and an underbite of
      * fangs on an animal that does not bite anything. No new string was
      * invented for it. */
-    back: 'shag', tail: [4, 0.80, 0.15, 0.10, -0.06],
+    back: 'shag', shagN: 2, tail: [4, 0.98, 0.19, 0.10, -0.06],
     /* THE BLANKET — `[colour, at0, at1, phi, lift]`, and see the seat in
      * `buildQuadruped` for what each one does. The span is 0.30-0.68 of the
      * spine because that is the flat of this animal's back between the
@@ -12054,16 +12054,28 @@ export function buildQuadruped(opts = {}) {
      * and every position is untouched — this is the same coat, curved. It
      * costs 14 triangles a clump on fourteen clumps, which `frame-budget`
      * measures and passes. */
-    ks.row(4, (i, t) => ks.pair((sx) => {
+    /* `P.shagN` multiplies the clump count — the tauntaun's reference is a
+     * coat, not fourteen tufts, and at 2 the flank row closes into one. */
+    const sm = P.shagN ?? 1;
+    ks.row(Math.round(4 * sm), (i, t) => ks.pair((sx) => {
       const p = fwd(0.10 + t * 0.80);
       ks.add(hide, clawGeo((0.30 + t * 0.12) * S, 0.11 * S, 0.02 * S, 0.5, 6, 3),
         [sx * (0.30 + t * 0.10) * S, p[1] + 0.10 * S, p[2] - 0.06 * S], [1.9, 0, sx * (0.9 - t * 0.4)]);
     }));
-    ks.row(3, (i, t) => ks.pair((sx) => {
+    ks.row(Math.round(3 * sm), (i, t) => ks.pair((sx) => {
       const p = fwd(0.74 + t * 0.20);
       ks.add(hide, clawGeo(0.34 * S, 0.12 * S, 0.02 * S, 0.4, 6, 3),
         [sx * 0.34 * S, p[1] + 0.24 * S, p[2]], [2.3, 0, sx * 1.25]);
     }));
+    if (sm > 1) {
+      /* …and a low row under the belly line, hanging, which is where a coat
+       * breaks the outline on a body seen from the side. */
+      ks.row(Math.round(4 * sm), (i, t) => ks.pair((sx) => {
+        const p = fwd(0.14 + t * 0.72);
+        ks.add(hide, clawGeo((0.26 + t * 0.06) * S, 0.10 * S, 0.02 * S, 0.5, 6, 3),
+          [sx * 0.26 * S, p[1] - 0.16 * S, p[2] - 0.04 * S], [2.6, 0, sx * (0.5 - t * 0.2)]);
+      }));
+    }
   } else if (P.back === 'down') {
     /**
      * THE UNDERCOAT — the fifth dorsal treatment, and the only one that is
@@ -12543,7 +12555,9 @@ export function buildQuadruped(opts = {}) {
    * animal's own half-width at that station, swells and superellipse and all.
    * See the neck's own note for what it is used for and what typing a number
    * here instead cost. */
-  buildCreatureHead(rig, P, S, { hide, plate, belly, eye, tooth, pupil, crest,
+  /* `P.headScale` grows the head geometry alone — the rancor is a head with a
+   * body attached, and its pup was built at the massiff's proportions. */
+  buildCreatureHead(rig, P, S * (P.headScale ?? 1), { hide, plate, belly, eye, tooth, pupil, crest,
     trunkR: Math.abs(hull(P.headAt[1] / P.trunk[2], Math.PI / 2)[0]) });
 
   /* ── the limbs ── */
