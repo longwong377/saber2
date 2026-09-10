@@ -1151,6 +1151,11 @@ export const HILT_ANCHOR = HILT;
  * not the chin. The blade's own angle (33.8° up) does not move: the guard
  * point and the cursor are untouched, only the height the pair hang at.
  */
+/* NOT LOWERED. Taking this to −0.16 to drop the elbow ("constantly holding
+ * it up") moved the swing pivot with it: the single blade's 600-frame
+ * recording drifted 24 m/s at the tip and the remaining blade of a thrown
+ * pair stopped blocking. The carry height is the pivot; the elbow wants a
+ * separate rest offset for the ARM, not the blade. Left as shipped. */
 const HILT_RISE_THIRD = 0.04;
 
 /**
@@ -3792,7 +3797,12 @@ export class Player {
     // ── camera
     this.camera = new CameraRig(world.engine.camera);
     this.camera.yaw = Math.PI;
-    this.eyeHeight = EYE_H;   // re-derived from the species below, once the rig exists
+    /* NOT RESET HERE. This line was `this.eyeHeight = EYE_H` with a note that
+     * the species re-derives it "below" — nothing below did, so the eye set
+     * from `limbs.stand` in `_buildRig` above was thrown away and every
+     * species looked out from 1.62 m. Measured: a smallfolk with stand 0.34
+     * at eye 1.62. */
+    if (!(this.eyeHeight > 0)) this.eyeHeight = EYE_H;
 
     /**
      * ── physics proxy so props, rubble and corpses collide with us
@@ -5232,7 +5242,7 @@ export class Player {
     // blade cursor resting 22 deg above screen centre. The fix landed in
     // SaberController and was undone from here every time the view mode was
     // applied, which includes every respawn. READY_GUARD owns the numbers now.
-    this.control.setViewMode(fp);
+    this.control.setViewMode(fp, this.saberSet);
   }
 
   /* ── locomotion ──────────────────────────────────────────────────── */
@@ -6228,7 +6238,11 @@ export class Player {
     this.gripAnchor.copy(fp ? this.camera.eyePosition(this.position, eyeH, _v5) : this.chest)
       .addScaledVector(_v4.set(0, 1, 0).applyQuaternion(this.camera.aimQuat),
         (fp ? HILT.rise : HILT_RISE_THIRD) * A - (fp ? eyeH - chestH : 0))
-      .addScaledVector(_v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat), HILT.fwd * A);
+      /* The staff's shaft pivots about its middle, so its anchor sits further
+       * out in front: a shaft pivoting at the chest swings its low blade
+       * through the torso on every cut. */
+      .addScaledVector(_v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat),
+        HILT.fwd * A * (this.saberSet === 'staff' && !fp ? 2.1 : 1));
     // The same two heights EYE_H/EYE_H_CROUCH already name, and on the same
     // body scale — they were typed again here, unscaled, which is the shape
     // HANDOFF 2.4 is about even on a field nothing currently reads.

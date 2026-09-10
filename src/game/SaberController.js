@@ -130,6 +130,12 @@ const FLOURISH = { dur: 0.62, turns: 2, radius: 0.30 };
  */
 export const READY_GUARD = {
   third: { x: 0.30, y: 0.08 },
+  /* THE STAFF RESTS PITCHED UP AND OUT. Its second blade runs the other way
+   * down the shaft, so a near-level rest put a metre of lit blade back
+   * through the player's own legs and cloak — photographed on a stock
+   * deploy. Pitched to this the low blade points at the ground ahead of the
+   * boot, and further out to the right keeps it off the thigh. */
+  staff: { third: { x: 0.56, y: 0.80 }, first: { x: 0.30, y: 0.36 } },
   /* THE FIRST-PERSON HOLD IS LOW, and the authority is the player's own
    * reference (assets/reference/first-person): a fist near the BOTTOM edge of
    * the frame with the whole hilt standing clear above it and almost no arm
@@ -1250,8 +1256,10 @@ export class SaberController {
    * readyX/readyY: a caller says WHICH POSE it wants, never what the numbers
    * are, so the pair can only ever be tuned in READY_GUARD above.
    */
-  setViewMode(firstPerson) {
-    const r = firstPerson ? READY_GUARD.first : READY_GUARD.third;
+  setViewMode(firstPerson, setId = this.setId) {
+    this.setId = setId || 'single';
+    const table = READY_GUARD[this.setId] || READY_GUARD;
+    const r = firstPerson ? table.first : table.third;
     this.readyX = r.x;
     this.readyY = r.y;
     return this;
