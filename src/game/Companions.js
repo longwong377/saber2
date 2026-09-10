@@ -3282,6 +3282,7 @@ export class CompanionPack {
      * are on it.
      */
     const taken = boundariesTaken(this.world);
+    this._fadeNearCamera(dt);
     for (let i = this.list.length - 1; i >= 0; i--) {
       const e = this.list[i];
       if (!e || e.dead || e.disposed) { this.list.splice(i, 1); continue; }
@@ -3417,6 +3418,47 @@ export class CompanionPack {
    * change as a field on the world would otherwise hand `keepCompanion` a body
    * that was disposed two levels ago — alive, undowned and gone. Null is the
    * true sentence there: nothing of yours is on this field. */
+  /**
+   * IT GOES SEE-THROUGH WHEN IT IS IN YOUR FACE. The heel keeps it out of the
+   * crosshair while you walk; it cannot keep a two-metre tauntaun out of a
+   * third-person camera that has just swung round it, and "the companions
+   * obscure your view" survived every station fix. So the one body that is
+   * yours fades to a ghost while it stands inside the camera's near cone —
+   * between the lens and the reticle, closer than NEAR — and comes back the
+   * moment it is not. The materials are the body's own (`buildQuadruped`
+   * makes fresh ones per call), so nothing else in the scene changes.
+   */
+  _fadeNearCamera(dt) {
+    const e = this.mine;
+    const cam = this.world?.engine?.camera;
+    if (!e || !cam || e.dead || !e.rig?.root) return;
+    _v1.copy(e.position).sub(cam.position);
+    const d = _v1.length();
+    cam.getWorldDirection(_v2);
+    const ahead = d > 1e-3 ? _v1.dot(_v2) / d : 0;
+    const size = Math.max(1, e.A?.scale ?? 1) * (e.bodyScale ?? 1);
+    const NEAR = 4.5 * size;
+    const want = (d < NEAR && ahead > 0.76) ? 0.22 : 1;
+    const cur = e._cmpGhost ?? 1;
+    if (Math.abs(want - cur) < 1e-3) return;
+    const next = cur + (want - cur) * Math.min(1, dt * 9);
+    e._cmpGhost = Math.abs(next - want) < 1e-3 ? want : next;
+    const ghost = e._cmpGhost < 0.999;
+    e.rig.root.traverse((o) => {
+      const m = o.material;
+      if (!m) return;
+      for (const mat of (Array.isArray(m) ? m : [m])) {
+        if (!mat || mat.userData?.role === 'eye') continue;
+        if (mat.userData._ghostBase == null) mat.userData._ghostBase = mat.opacity ?? 1;
+        const base = mat.userData._ghostBase;
+        const wantT = ghost || base < 1;
+        if (mat.transparent !== wantT) { mat.transparent = wantT; mat.needsUpdate = true; }
+        mat.opacity = base * e._cmpGhost;
+        mat.depthWrite = !ghost;
+      }
+    });
+  }
+
   dispose() { this.list.length = 0; this.mine = null; }
 
   /**

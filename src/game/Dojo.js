@@ -380,9 +380,13 @@ export class DojoDirector {
     const s = L.setup || {};
     this.wave = this.index + 1;
 
-    // clear the room, then set it up for this lesson only
-    for (const e of w.enemies) e.dispose();
+    // clear the room, then set it up for this lesson only — YOURS STAYS. The
+    // companion at your heel is in `enemies` like every body, and clearing
+    // the room for a lesson was the reason it never came to the dojo.
+    const mine = w.enemies.filter((e) => e.companion || e._cmpKind);
+    for (const e of w.enemies) if (!(e.companion || e._cmpKind)) e.dispose();
     w.enemies.length = 0;
+    w.enemies.push(...mine);
     w.locks.length = 0;
     this.remotes.length = 0; this.dummies.length = 0; this.spar = null;
     this._crossing.length = 0;

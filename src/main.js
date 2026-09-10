@@ -5694,8 +5694,11 @@ function foldCompanion(stats = null) {
  * construction — see Net.LOCAL_KEYS.
  */
 function myCompanion(s = settings) {
-  const M = MODES[s?.mode];
-  if (M?.dojo || M?.solo) return null;
+  /* IN EVERY MODE. This returned null for `dojo` and `solo`, so the dojo's
+   * sandbox room and the duel were the two places the animal never came —
+   * against COMPANIONS.md's first beat, which is that it is the one body that
+   * is yours in all eleven. The army is barred there (`Menu._syncSessionNeed`),
+   * the companion is not the army. */
   const want = s?.companion;
   if (!want || want === 'none' || !COMPANION_KINDS[want]) return null;
   const k = loadKennel();

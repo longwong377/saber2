@@ -7569,6 +7569,20 @@ export class Player {
      * the shoulders where this camera cannot see it, so simulating it there is
      * paying for nothing. `_applyViewMode` already hides the rigid shell by
      * traversing the neck; this is not under that bone, so it needs its own. */
+    /* WOUNDS ARE ON THE BODY, AND IN FIRST PERSON THE BODY IS UNDER THE LENS.
+     * `Injury` hangs its blood and tear meshes off the bones, and nothing
+     * hid them with the cloak — so an injured player in first person saw
+     * their own shoulder wound as a red smear in the lower right of the
+     * screen. Hidden with the rest of the body dressing; re-swept every
+     * half second so a wound taken while already in first person goes too. */
+    {
+      const fpNow = !!this.camera.firstPerson;
+      this._injuryTick = (this._injuryTick || 0) + 1;
+      if (this._injuryFp !== fpNow || (fpNow && this._injuryTick % 30 === 0)) {
+        this._injuryFp = fpNow;
+        this.rig?.root?.traverse?.((o) => { if (o.userData?.injury) o.visible = !fpNow; });
+      }
+    }
     if (this.hoodDrape) {
       /* In first person there is no head in the frame to hang it on, so the
        * dome is left alone with the fall. */
@@ -7710,7 +7724,13 @@ export class Player {
     this.camera.update(dt, this.position, {
       physics: ctx.physics, terrain: ctx.terrain,
       /* seated, the eye is at a sitting height — the seat's top plus the trunk */
-      eyeHeight: this.seat ? lerp(1.62, Math.max(0.9, (this.seat.y - this.position.y) + 0.72), smoothstep(0, 1, this.seat.blend)) : lerp(1.62, 1.22, this.crouch),
+      /* `this.eyeHeight`, NOT 1.62: that constant is a human's, and this line
+       * ignored the species-scaled eye derived in `_buildRig` — so the small
+       * species looked out from a human's height in first person. Crouch and
+       * the seat scale with it. */
+      eyeHeight: this.seat
+        ? lerp(this.eyeHeight, Math.max(0.9 * this.limbs.stand, (this.seat.y - this.position.y) + 0.72 * this.limbs.stand), smoothstep(0, 1, this.seat.blend))
+        : lerp(this.eyeHeight, this.eyeHeight * (1.22 / 1.62), this.crouch),
       // The whole pelvis, not the bob and not half of it. _updateBody runs
       // before this, so `pelvis` is this frame's, not last frame's.
       pelvis: this.animator?.pelvis,

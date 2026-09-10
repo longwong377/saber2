@@ -15,9 +15,9 @@ const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromi
   args: ['--no-sandbox','--disable-dev-shm-usage','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader','--ignore-gpu-blocklist','--enable-webgl'] });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 page.on('pageerror', e => console.log('PAGEERR', e.message));
-await page.addInitScript(() => { window.__frame = (ms=20000) => new Promise((res, rej) => { const t = setTimeout(() => rej(new Error('no frame')), ms); requestAnimationFrame(() => { clearTimeout(t); res(); }); }); });
+await page.addInitScript((m) => { window.__MODE = m; window.__frame = (ms=20000) => new Promise((res, rej) => { const t = setTimeout(() => rej(new Error('no frame')), ms); requestAnimationFrame(() => { clearTimeout(t); res(); }); }); }, process.env.MODE || 'roguelite');
 await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded' });
-await page.evaluate((kind) => { localStorage.setItem('saber.settings.v2', JSON.stringify({ instantSpawn: true, quality: 'low', resolutionScale: 1.0, difficulty: 'knight', mode: 'roguelite', volume: 0, music: 0, grassScale: 0.5, particleScale: 0.6, companion: kind })); }, KIND);
+await page.evaluate((kind) => { localStorage.setItem('saber.settings.v2', JSON.stringify({ instantSpawn: true, quality: 'low', resolutionScale: 1.0, difficulty: 'knight', mode: (window.__MODE || 'roguelite'), volume: 0, music: 0, grassScale: 0.5, particleScale: 0.6, companion: kind })); }, KIND);
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForSelector('#menu:not(.hidden)', { timeout: 120000 });
 // companion select screen

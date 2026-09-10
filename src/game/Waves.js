@@ -4501,8 +4501,12 @@ export class WaveDirector {
       for (const e of this.world.enemies) tuneFireRate(e, cfg.fire);
     }
 
+    /* YOURS ARE NOT THE ROOM'S. The quota below keeps `cfg.count` bodies and
+     * disposes the rest, and a companion at your heel is a body: dial the
+     * room to two droids and the third-nearest thing — your massiff — was
+     * deleted. The sandbox counts what it composed, never what you brought. */
     const alive = [];
-    for (const e of this.world.enemies) if (!e.dead) alive.push(e);
+    for (const e of this.world.enemies) if (!e.dead && !e.companion && !e._cmpKind) alive.push(e);
     if (cfg.fire <= 0) for (const e of alive) holdFire(e);
     /* A body that arrived by ship missed the `_fireApplied` edge above — that
      * only fires when the SLIDER moves — so it would come off the ramp at the

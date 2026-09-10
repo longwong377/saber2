@@ -1000,6 +1000,10 @@ export const TERSE = {
 export class CompanionPlate {
   constructor(root = document) {
     this.el = root.getElementById ? root.getElementById('companion-plate') : null;
+    /* …and the bar in the vitals column — see index.play.html's `.bars`. */
+    const g = (id) => (root.getElementById ? root.getElementById(id) : null);
+    this.line = g('bar-cmp-line'); this.lineName = g('bar-cmp-name');
+    this.lineNum = g('bar-cmp-num'); this.lineFill = g('bar-cmp');
     this._key = '';
   }
 
@@ -1012,7 +1016,10 @@ export class CompanionPlate {
     const el = this.el;
     if (!el) return;
     if (!body || body.dead) {
-      if (this._key !== 'none') { this._key = 'none'; el.classList.add('hidden'); el.textContent = ''; }
+      if (this._key !== 'none') {
+        this._key = 'none'; el.classList.add('hidden'); el.textContent = '';
+        this.line?.classList.add('hidden');
+      }
       return;
     }
     const hp = Math.max(0, Math.round(body.hp));
@@ -1031,6 +1038,13 @@ export class CompanionPlate {
     el.classList.remove('hidden');
     const bar = Math.round(frac * 100);
     const hurt = body.downed ? 'down' : frac < 0.34 ? 'bad' : frac < 0.67 ? 'low' : '';
+    if (this.line) {
+      this.line.classList.remove('hidden', 'low', 'bad', 'down');
+      if (hurt) this.line.classList.add(hurt);
+      if (this.lineName) this.lineName.textContent = name;
+      if (this.lineNum) this.lineNum.textContent = body.downed ? `DOWN ${down.toFixed(0)}s` : String(hp);
+      if (this.lineFill) this.lineFill.style.transform = `scaleX(${frac.toFixed(3)})`;
+    }
     el.innerHTML = `<div class="cmp-plate ${hurt}">`
       + `<b>${escKey(name)}</b>`
       + `<span class="cmp-bar"><i style="width:${bar}%"></i></span>`

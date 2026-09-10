@@ -1596,6 +1596,10 @@ button{font-family:inherit}
 .bar u{position:absolute;inset:2px;width:auto;transform-origin:left;background:var(--danger);
   transition:transform .5s .25s cubic-bezier(.22,1,.36,1);opacity:.55}
 .bar.hp i{background:var(--accent);box-shadow:0 0 12px rgba(72,216,255,.55)}
+.bar.cp{width:190px}
+.bar.cp i{background:#7fd4a0;box-shadow:0 0 12px rgba(127,212,160,.55)}
+.barline.cmp.low .bar.cp i{background:#e8c85a}
+.barline.cmp.bad .bar.cp i,.barline.cmp.down .bar.cp i{background:var(--danger)}
 .bar.fc{width:190px}
 .bar.fc i{background:var(--force);box-shadow:0 0 12px rgba(160,125,255,.6)}
 .bar.st{width:154px;height:9px}
