@@ -6242,7 +6242,7 @@ export class Player {
        * out in front: a shaft pivoting at the chest swings its low blade
        * through the torso on every cut. */
       .addScaledVector(_v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat),
-        HILT.fwd * A * (this.saberSet === 'staff' && !fp ? 2.1 : 1));
+        HILT.fwd * A);
     // The same two heights EYE_H/EYE_H_CROUCH already name, and on the same
     // body scale — they were typed again here, unscaled, which is the shape
     // HANDOFF 2.4 is about even on a field nothing currently reads.
